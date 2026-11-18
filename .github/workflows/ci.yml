@@ -1,0 +1,73 @@
+name: DAEP CI
+
+on:
+  push:
+    branches: ["main", "release/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daep-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile
+        run: python -m compileall -q app daep_mcp daep_agent_bridge daep_worker
+      - name: Tests
+        env:
+          DAEP_ADMIN_TOKEN: "ci-admin-token-abcdefghijklmnopqrstuvwxyz-012345"
+          DAEP_WORKER_TOKEN: "ci-worker-token-abcdefghijklmnopqrstuvwxyz-678901"
+        run: pytest -q
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: daep_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d daep_ci"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Upgrade schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/daep_ci
+        run: alembic upgrade head
+      - name: Generate migration SQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/daep_ci
+        run: alembic upgrade head --sql > /tmp/daep-migrations.sql
+      - name: Verify RLS policies
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -c "SELECT tablename, rowsecurity, forcerowsecurity FROM pg_tables WHERE schemaname='public' AND tablename IN ('members','projects','events','artifacts','outbox','messages') ORDER BY tablename;"
