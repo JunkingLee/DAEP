@@ -712,7 +712,7 @@ def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(N
             if dep==parent_id or not c.execute('SELECT 1 FROM tasks WHERE id=?',(dep,)).fetchone(): raise HTTPException(400,'Invalid dependency')
             require_task_access(c,dep,a)
             if task_project(c,dep)!=project_id: raise HTTPException(400,'Dependencies must belong to the same project')
-        req=c.execute('SELECT id FROM requirements WHERE project_id=? ORDER BY created_at LIMIT 1',(project_id,)).fetchone()
+        req=c.execute('SELECT r.id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(parent_id,)).fetchone()
         if not req: raise HTTPException(409,'Create a requirement before adding work packages')
         stamp=now()
         c.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)',(child_id,req['id'],b.title,b.description,'READY',0,stamp,stamp))
