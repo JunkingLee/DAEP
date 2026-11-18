@@ -29,7 +29,7 @@ async def tenant_context(request, call_next):
             lookup_reset=_auth_lookup_ctx.set(True)
             try:
                 with conn() as c:
-                    row=c.execute("SELECT tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(digest,now())).fetchone()
+                    row=(c.execute("SELECT tenant_id,role FROM daep_authenticate_member(?,?)",(digest,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(digest,now())).fetchone())
             finally:
                 _auth_lookup_ctx.reset(lookup_reset)
             if row:
@@ -248,7 +248,7 @@ def actor(authorization):
     token=hashlib.sha256(authorization[7:].encode()).hexdigest()
     lookup_reset=_auth_lookup_ctx.set(True)
     try:
-        with conn() as c: r=c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone()
+        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
     finally:
         _auth_lookup_ctx.reset(lookup_reset)
     if not r: raise HTTPException(401,'Invalid token')
@@ -765,7 +765,7 @@ async def websocket_endpoint(ws:WebSocket,token:str=''):
     # Best-effort online notification channel. The durable inbox remains the source of truth.
     lookup_reset=_auth_lookup_ctx.set(True)
     try:
-        with conn() as c: member=c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone()
+        with conn() as c: member=(c.execute("SELECT id,tenant_id,role FROM daep_authenticate_member(?,?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone())
     finally:
         _auth_lookup_ctx.reset(lookup_reset)
     if not member: await ws.close(code=1008); return
