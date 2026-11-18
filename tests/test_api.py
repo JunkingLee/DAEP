@@ -1,4 +1,4 @@
-import os, tempfile, hashlib, sqlite3
+import os, tempfile, hashlib, sqlite3, json
 os.environ['DAEP_DB_PATH']=os.path.join(tempfile.gettempdir(),'daep-test-suite-v3.db')
 os.environ['DAEP_ADMIN_TOKEN']='test-admin-token-with-32-characters-minimum'
 os.environ['DAEP_WORKER_TOKEN']='test-worker-token-with-32-characters-minimum'
@@ -33,6 +33,10 @@ def test_project_requirement_task_message_flow():
     n=client.get('/api/v1/me/notifications',headers=nh); assert len(n.json()['items'])==1
     assert n.json()['next_cursor'] > 0
     ack=client.post('/api/v1/messages/'+msg.json()['id']+'/ack',headers=nh,json={'status':'ACKNOWLEDGED'}); assert ack.status_code==200
+    duplicate=client.post('/api/v1/messages/'+msg.json()['id']+'/ack',headers=nh,json={'status':'ACKNOWLEDGED'})
+    assert duplicate.status_code==200 and duplicate.json()['idempotent'] is True
+    conflict=client.post('/api/v1/messages/'+msg.json()['id']+'/ack',headers=nh,json={'status':'REJECTED'})
+    assert conflict.status_code==409
     pr=client.post(f'/api/v1/tasks/{tid}/progress',headers=nh,json={'progress':100,'note':'Ready for review'}); assert pr.status_code==200
     assert client.get(f'/api/v1/tasks/{tid}',headers=nh).json()['status']=='REVIEW'
 
@@ -343,3 +347,45 @@ def test_rc8_git_webhook_requires_tenant_for_unscoped_events():
     finally:
         if old is None: module.os.environ.pop('DAEP_GIT_WEBHOOK_SECRET',None)
         else: module.os.environ['DAEP_GIT_WEBHOOK_SECRET']=old
+
+
+def test_dead_letter_operator_replay_is_audited_and_admin_only():
+    import sqlite3
+    _,mid,_,tid=setup_project_task()
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Dead letter','content':'recover me'})
+    assert sent.status_code==200
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    outbox_id=db.execute("SELECT id FROM outbox WHERE json_extract(payload,'$.message_id')=?",(sent.json()['id'],)).fetchone()[0]
+    db.execute("UPDATE outbox SET status='DEAD',attempts=8,last_error='gateway unavailable' WHERE id=?",(outbox_id,))
+    db.commit(); db.close()
+    _,_,member_token,_=setup_project_task()
+    member_headers={'Authorization':f'Bearer {member_token}'}
+    assert client.get('/api/v1/admin/outbox/dead',headers=member_headers).status_code==403
+    listing=client.get('/api/v1/admin/outbox/dead',headers=ADMIN)
+    assert listing.status_code==200 and any(x['id']==outbox_id for x in listing.json()['items'])
+    missing_reason=client.post(f'/api/v1/admin/outbox/{outbox_id}/replay',headers=ADMIN,json={})
+    assert missing_reason.status_code==422
+    replay=client.post(f'/api/v1/admin/outbox/{outbox_id}/replay',headers=ADMIN,json={'reason':'Broker credentials rotated'})
+    assert replay.status_code==200 and replay.json()['status']=='PENDING'
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    row=db.execute("SELECT status,attempts,lease_token,last_error FROM outbox WHERE id=?",(outbox_id,)).fetchone()
+    audit=db.execute("SELECT payload FROM events WHERE event_type='outbox.dead.replayed' ORDER BY created_at DESC LIMIT 1").fetchone()
+    db.close()
+    assert row==('PENDING',0,None,None)
+    assert json.loads(audit[0])['reason']=='Broker credentials rotated'
+    duplicate=client.post(f'/api/v1/admin/outbox/{outbox_id}/replay',headers=ADMIN,json={'reason':'duplicate'})
+    assert duplicate.status_code==409
+
+
+def test_websocket_can_resume_from_client_cursor():
+    _,mid,token,tid=setup_project_task()
+    first=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Cursor one','content':'one'}).json()
+    second=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Cursor two','content':'two'}).json()
+    headers={'Authorization':f'Bearer {token}'}
+    inbox=client.get('/api/v1/me/notifications',headers=headers).json()
+    seqs={x['id']:x['seq'] for x in inbox['items']}
+    with client.websocket_connect(f"/ws/v1?token={token}&after={seqs[first['id']]}") as ws:
+        connected=ws.receive_json()
+        assert connected['type']=='connected' and connected['cursor']==seqs[first['id']]
+        event=ws.receive_json()
+        assert event['type']=='notification' and event['message']['id']==second['id']
