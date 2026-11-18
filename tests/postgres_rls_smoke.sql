@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
