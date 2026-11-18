@@ -430,7 +430,7 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
         _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
         with conn() as c:
             eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id}
+        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
     finally:
         _service_ctx.reset(service_reset)
 
