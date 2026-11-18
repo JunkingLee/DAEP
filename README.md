@@ -71,3 +71,10 @@ Members can register their own workstation-operated Agents per project, advertis
 An assigned member can offer a task to another project member's registered, recently-online local Agent. The recipient receives a durable `TASK_DELEGATION` inbox message and must explicitly accept or reject it. Acceptance adds the recipient as a task assignee; rejection leaves assignments unchanged. Offers have a bounded expiry (60 seconds to 7 days), and expired offers are marked when queried or answered. Delegation transitions are recorded in the task event history and delegation records are tenant-isolated by PostgreSQL RLS. MCP tools: `offer_task_delegation`, `respond_task_delegation`, and `list_task_delegations`.
 
 This is a persistent offer/inbox workflow, not a remote execution command. DAEP cannot guarantee that a sleeping MCP Host or local Agent will wake up; recipients process the offer when their Host polls or reconnects.
+
+ 
+### Multi-Agent work packages (RC15)
+
+A project member with write access can split a parent task into child work packages and assign each package to another project member's registered, recently-online local Agent. The platform creates a child task, assignment, durable `WORK_PACKAGE_ASSIGNED` inbox message and audit event. Agents report progress, blockers and artifacts against their own child task. Parent-level summary endpoints aggregate package counts, average progress, blocked children and artifact counts; the parent task itself remains under the existing review/approval workflow.
+
+MCP tools: `create_task_work_package`, `list_task_work_packages`, and `get_task_work_summary`. Work packages are tenant-isolated in PostgreSQL. This remains coordination metadata: DAEP does not execute, host or wake any local Agent.
