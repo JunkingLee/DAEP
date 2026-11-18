@@ -12,7 +12,7 @@ DAEP writes each collaboration message and its `outbox` event in one database tr
 
 ## Delivery semantics
 
-The contract is **at-least-once**, not exactly-once. A crash after downstream publish but before `/complete` can cause a duplicate. Consumers must deduplicate by outbox ID. The member inbox remains authoritative and must be used for recovery; WebSocket notifications are best-effort only.
+The contract is **at-least-once**, not exactly-once. A crash after downstream publish but before `/complete` can cause a duplicate. Consumers must deduplicate by outbox ID. The member inbox remains authoritative and must be used for recovery; WebSocket notifications are best-effort only. Reconnect with `after=<last processed message seq>` to resume the live stream from a client-maintained cursor; the inbox endpoint remains the durable recovery path. Message acknowledgements are idempotent when the same terminal status is repeated.
 
 ## Security
 
@@ -22,7 +22,7 @@ The contract is **at-least-once**, not exactly-once. A crash after downstream pu
 - The worker also requires a separate `DAEP_BROKER_WEBHOOK_TOKEN` (at least 32 characters) when HTTP gateway delivery is enabled. It is sent as a Bearer credential and must be validated by the gateway.
 - Each HTTP delivery includes `X-DAEP-Outbox-ID` as a stable idempotency key and `X-DAEP-Delivery-Attempt`; gateways should persist deduplication by outbox ID.
 - Rotate the credential in the secret manager and restart both services together.
-- Monitor pending/in-flight and dead-letter counts; `/health` exposes pending/in-flight counts. Dead-letter inspection and operator replay UI remain future work.
+- Monitor pending/in-flight and dead-letter counts; `/health` exposes pending/in-flight counts. Platform administrators can inspect dead letters through `GET /api/v1/admin/outbox/dead` and replay an item with `POST /api/v1/admin/outbox/{id}/replay`, supplying a mandatory reason. Replay resets the delivery attempt counter and records an `outbox.dead.replayed` audit event. A graphical operator UI remains future work.
 
 ## Current limitations
 
