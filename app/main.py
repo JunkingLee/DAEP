@@ -82,7 +82,14 @@ class _PGConn:
         import psycopg
         from psycopg.rows import dict_row
         self.c=psycopg.connect(url,row_factory=dict_row)
-    def __enter__(self): return self
+    def __enter__(self):
+        # PostgreSQL RLS context is transaction-local. Establish it before any
+        # query so a connection can never execute under a stale tenant context.
+        tenant = _tenant_ctx.get('')
+        platform_admin = _admin_ctx.get(False) or _auth_lookup_ctx.get(False) or _service_ctx.get(False)
+        self.c.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant or '',))
+        self.c.execute("SELECT set_config('app.platform_admin', %s, true)", ('true' if platform_admin else 'false',))
+        return self
     def __exit__(self,typ,val,tb):
         if typ: self.c.rollback()
         else: self.c.commit()
