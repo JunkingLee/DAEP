@@ -451,7 +451,7 @@ def readiness():
         with conn() as c:
             c.execute('SELECT 1').fetchone()
             if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute(\"SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'\").fetchone()
+                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
         return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
     except Exception as exc:
         raise HTTPException(503,f'DAEP database is not ready: {exc}')
