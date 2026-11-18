@@ -118,6 +118,16 @@ def report_work_package_result(task_id: str, outcome: str, summary: str, idempot
         'outcome':outcome,'summary':summary,'idempotency_key':idempotency_key})
 
 @mcp.tool()
+def scan_project_work_health(project_id: str) -> dict:
+    """Recalculate work-package SLA and dependency risk states for a project."""
+    return call('POST',f'/api/v1/projects/{project_id}/work-packages/scan-health',{})
+
+@mcp.tool()
+def get_project_work_health(project_id: str) -> dict:
+    """Get project work-package health score, SLA risks and dependency blockers."""
+    return call('GET',f'/api/v1/projects/{project_id}/work-health')
+
+@mcp.tool()
 def scan_stalled_work_packages(project_id: str, stale_after_seconds: int = 3600) -> dict:
     """Mark inactive work packages for manager attention; never auto-reassigns them."""
     return call('POST',f'/api/v1/projects/{project_id}/work-packages/scan-stalled',{
