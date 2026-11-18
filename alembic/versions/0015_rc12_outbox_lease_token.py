@@ -10,7 +10,7 @@ depends_on = None
 def upgrade():
     if op.get_bind().dialect.name != "postgresql":
         return
-    if not sa.inspect(op.get_bind()).has_column("outbox", "lease_token"):
+    if "lease_token" not in {column["name"] for column in sa.inspect(op.get_bind()).get_columns("outbox")}:
         op.add_column("outbox", sa.Column("lease_token", sa.Text(), nullable=True))
 
 def downgrade():
