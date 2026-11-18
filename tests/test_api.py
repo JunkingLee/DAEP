@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0019_rc17_work_package_stall (head)' in heads
+    assert '0020_rc18_work_package_correlation (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -593,3 +593,25 @@ def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_ne
     events=client.get(f'/api/v1/tasks/{parent_id}/events',headers=ADMIN).json()
     assert any(x['event_type']=='task.work_package.stalled' for x in events)
     assert any(x['event_type']=='task.work_package.reassigned' for x in events)
+
+
+def test_rc18_work_timeline_correlates_assignment_result_and_artifact():
+    pid,_,_,parent_id=setup_project_task()
+    member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Timeline Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':member['id'],'role':'member'}).status_code==200
+    mh={'Authorization':'Bearer '+member['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={'agent_name':'timeline-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={'title':'Timeline package','assignee_member_id':member['id'],'agent_name':'timeline-agent'})
+    assert created.status_code==200
+    package=created.json(); child=package['task_id']; cid=package['correlation_id']
+    assert cid.startswith('corr_')
+    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/abc123','commit_sha':'abc123','metadata':{}}).status_code==200
+    assert client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={'outcome':'COMPLETE','summary':'Completed with artifact','idempotency_key':'timeline-result'}).status_code==200
+    timeline=client.get(f'/api/v1/tasks/{parent_id}/work-timeline',headers=ADMIN)
+    assert timeline.status_code==200
+    body=timeline.json()
+    assert body['work_packages'][0]['correlation_id']==cid
+    assert any(x['kind']=='message' and x['correlation_id']==cid for x in body['items'])
+    assert any(x['kind']=='artifact' and x['correlation_id']==cid for x in body['items'])
+    reported=next(x for x in body['items'] if x.get('event_type')=='task.work_package.reported')
+    assert reported['payload']['correlation_id']==cid
