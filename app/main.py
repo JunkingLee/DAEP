@@ -835,7 +835,7 @@ def scan_stalled_work_packages(pid:str,b:WorkPackageScanIn,authorization:str=Hea
             reason=f"No task activity for at least {b.stale_after_seconds} seconds"
             changed=c.execute('UPDATE task_work_packages SET needs_attention=1,stalled_at=?,stall_reason=?,updated_at=? WHERE id=? AND needs_attention=0',(stamp,reason,stamp,row['id']))
             if changed.rowcount:
-                event(c,'task.work_package.stalled',a['id'],row['parent_task_id'],{'work_package_id':row['id'],'child_task_id':row['child_task_id'],'assignee_member_id':row['assignee_member_id'],'stalled_at':stamp,'reason':reason})
+                event(c,'task.work_package.stalled',a['id'],row['parent_task_id'],{'work_package_id':row['id'],'correlation_id':c.execute('SELECT correlation_id FROM task_work_packages WHERE id=?',(row['id'],)).fetchone()['correlation_id'],'child_task_id':row['child_task_id'],'assignee_member_id':row['assignee_member_id'],'stalled_at':stamp,'reason':reason})
                 marked.append({'work_package_id':row['id'],'child_task_id':row['child_task_id'],'title':row['title'],'task_status':row['status'],'assignee_member_id':row['assignee_member_id'],'stalled_at':stamp,'reason':reason})
     return {'project_id':pid,'stale_after_seconds':b.stale_after_seconds,'marked_count':len(marked),'items':marked}
 
