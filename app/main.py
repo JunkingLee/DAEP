@@ -674,6 +674,8 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/projects/{pid}/agents/register')
 def register_project_agent(pid:str,b:AgentPresenceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    agent_name=b.agent_name.strip()
+    if not agent_name: raise HTTPException(422,'agent_name must not be blank')
     clean_caps=sorted({str(x).strip().lower() for x in b.capabilities if str(x).strip()})
     clean_protocols=sorted({str(x).strip().lower() for x in b.protocols if str(x).strip()})
     if any(len(x)>80 for x in clean_caps) or any(len(x)>40 for x in clean_protocols):
@@ -683,15 +685,15 @@ def register_project_agent(pid:str,b:AgentPresenceIn,authorization:str=Header(No
     with conn() as c:
         require_project_access(c,pid,a)
         tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
-        existing=c.execute('SELECT id,created_at FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(pid,a['id'],b.agent_name.strip())).fetchone()
+        existing=c.execute('SELECT id,created_at FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(pid,a['id'],agent_name)).fetchone()
         aid=existing['id'] if existing else 'agt_'+uuid.uuid4().hex
         created=existing['created_at'] if existing else now()
         stamp=now()
         c.execute("""INSERT INTO project_agents(id,project_id,member_id,tenant_id,agent_name,capabilities,protocols,status,metadata,last_seen,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(project_id,member_id,agent_name) DO UPDATE SET capabilities=excluded.capabilities,protocols=excluded.protocols,status=excluded.status,metadata=excluded.metadata,last_seen=excluded.last_seen,updated_at=excluded.updated_at""",
-        (aid,pid,a['id'],tenant,b.agent_name.strip(),json.dumps(clean_caps),json.dumps(clean_protocols),b.status,json.dumps(b.metadata),stamp,created,stamp))
-        event(c,'agent.presence.updated',a['id'],None,{'project_id':pid,'agent_id':aid,'agent_name':b.agent_name.strip(),'status':b.status},tenant_override=tenant)
+        (aid,pid,a['id'],tenant,agent_name,json.dumps(clean_caps),json.dumps(clean_protocols),b.status,json.dumps(b.metadata),stamp,created,stamp))
+        event(c,'agent.presence.updated',a['id'],None,{'project_id':pid,'agent_id':aid,'agent_name':agent_name,'status':b.status},tenant_override=tenant)
     return {'id':aid,'project_id':pid,'member_id':a['id'],'agent_name':b.agent_name.strip(),'status':b.status,'capabilities':clean_caps,'protocols':clean_protocols,'last_seen':stamp}
 
 @app.post('/api/v1/projects/{pid}/agents/heartbeat')
@@ -702,11 +704,13 @@ def heartbeat_project_agent(pid:str,body:dict,authorization:str=Header(None)):
     if status not in ('AVAILABLE','BUSY','OFFLINE'): raise HTTPException(422,'Invalid agent status')
     with conn() as c:
         require_project_access(c,pid,a)
-        cur=c.execute('UPDATE project_agents SET status=?,last_seen=?,updated_at=? WHERE project_id=? AND member_id=? AND agent_name=?',(status,now(),now(),pid,a['id'],name))
-        if not cur.rowcount: raise HTTPException(404,'Agent registration not found; register the agent first')
-        row=c.execute('SELECT id FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(pid,a['id'],name)).fetchone()
-        event(c,'agent.heartbeat',a['id'],None,{'project_id':pid,'agent_id':row['id'],'status':status})
-    return {'id':row['id'],'status':status,'last_seen':now()}
+        previous=c.execute('SELECT id,status FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(pid,a['id'],name)).fetchone()
+        if not previous: raise HTTPException(404,'Agent registration not found; register the agent first')
+        stamp=now()
+        c.execute('UPDATE project_agents SET status=?,last_seen=?,updated_at=? WHERE id=?',(status,stamp,stamp,previous['id']))
+        if previous['status'] != status:
+            event(c,'agent.presence.changed',a['id'],None,{'project_id':pid,'agent_id':previous['id'],'status':status})
+    return {'id':previous['id'],'status':status,'last_seen':stamp}
 
 @app.get('/api/v1/projects/{pid}/agents')
 def discover_project_agents(pid:str,authorization:str=Header(None),capability:str='',protocol:str=''):
