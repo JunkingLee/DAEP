@@ -498,3 +498,56 @@ def test_rc15_work_package_rejects_offline_agent_and_cross_project_dependency():
         'title':'Should fail','assignee_member_id':member['id'],'agent_name':'offline'})
     assert res.status_code==409
 
+
+
+def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
+    pid,_,_,parent_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC16 Result Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'result-agent','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
+        'title':'Implement feature','assignee_member_id':recipient['id'],'agent_name':'result-agent'})
+    assert created.status_code==200
+    child=created.json()['task_id']
+    no_artifact=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
+        'outcome':'COMPLETE','summary':'Implementation finished','idempotency_key':'result-1'})
+    assert no_artifact.status_code==409
+    artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=rh,json={
+        'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/def456',
+        'commit_sha':'def456','metadata':{}})
+    assert artifact.status_code==200
+    reported=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
+        'outcome':'COMPLETE','summary':'Implementation and tests finished','idempotency_key':'result-1'})
+    assert reported.status_code==200 and reported.json()['status']=='REVIEW'
+    replay=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
+        'outcome':'COMPLETE','summary':'Implementation and tests finished','idempotency_key':'result-1'})
+    assert replay.status_code==200 and replay.json()['idempotent_replay'] is True
+    parent_blocked=client.post(f'/api/v1/tasks/{parent_id}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert parent_blocked.status_code==409
+    child_approved=client.post(f'/api/v1/tasks/{child}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert child_approved.status_code==200 and child_approved.json()['status']=='DONE'
+    parent_approved=client.post(f'/api/v1/tasks/{parent_id}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert parent_approved.status_code==200 and parent_approved.json()['status']=='DONE'
+    summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=ADMIN).json()
+    assert summary['all_done'] is True and summary['artifact_count']==1
+    assert summary['artifacts'][0]['commit_sha']=='def456'
+
+
+def test_rc16_failed_work_package_becomes_blocked():
+    pid,_,_,parent_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC16 Failed Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'failure-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
+        'title':'Potential failure','assignee_member_id':recipient['id'],'agent_name':'failure-agent'})
+    assert created.status_code==200
+    child=created.json()['task_id']
+    failed=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
+        'outcome':'FAILED','summary':'External dependency unavailable'})
+    assert failed.status_code==200 and failed.json()['status']=='BLOCKED'
+    detail=client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()
+    assert detail['status']=='BLOCKED'
