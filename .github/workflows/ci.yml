@@ -75,4 +75,4 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -c "SELECT tablename, rowsecurity, forcerowsecurity FROM pg_tables WHERE schemaname='public' AND tablename IN ('members','projects','events','artifacts','outbox','messages') ORDER BY tablename;"
+          psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -c "SELECT c.relname AS tablename, c.relrowsecurity AS rowsecurity, c.relforcerowsecurity AS forcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('members','projects','events','artifacts','outbox','messages') ORDER BY c.relname;"
