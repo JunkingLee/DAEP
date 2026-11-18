@@ -99,3 +99,8 @@ MCP tools: `scan_stalled_work_packages` and `reassign_stalled_work_package`. Thi
 ### Cross-member work-package observability (RC18)
 
 Every work package receives a stable correlation ID propagated through assignment/reassignment inbox messages, lifecycle events, result reports and artifact submissions. Query `GET /api/v1/tasks/{parent_task_id}/work-timeline` (MCP: `get_task_work_timeline`) for a chronological view combining lifecycle events, durable messages and submitted artifacts. Access is inherited from the parent task's project authorization. This is coordination/audit visibility; DAEP does not inspect local Agent internals or guarantee delivery/wakeup.
+
+
+### Work-package governance and health (RC19)
+
+Work packages may be created with an optional `sla_seconds` value (300 seconds to 30 days). Managers can recalculate project risk with `POST /api/v1/projects/{project_id}/work-packages/scan-health` and read the report at `GET /api/v1/projects/{project_id}/work-health`. The report identifies overdue SLAs, unresolved task dependencies, stalled packages and completion/review states, with a project health score. Risk transitions are audited. Scans never auto-reassign, execute, start, stop or wake local Agents. MCP tools: `scan_project_work_health` and `get_project_work_health`.
