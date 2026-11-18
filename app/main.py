@@ -593,6 +593,7 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
         c.execute('INSERT INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role',(pid,mid,role,now()))
+        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role}
 @app.post('/api/v1/projects/{pid}/role-change-requests')
 def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
