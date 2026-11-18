@@ -26,7 +26,79 @@ services:
       - |
         python -c "import app.main as m; m.bootstrap()"
         alembic upgrade head
-        python -c "import os, psycopg; c=psycopg.connect(os.environ['DATABASE_URL']); c.execute('GRANT daep_privileged TO daep_privileged_login'); c.execute('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.execute('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.commit(); c.close()"
+        python -c "import os, psycopg; c=psycopg.connect(os.environ['DATABASE_URL']); c.execute('GRANT daep_privileged TO daep_privileged_login'); c.execute('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.execute('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.execute('''DO \\$\\$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO daep_privileged_login', r.tablename); END LOOP; FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP EXECUTE format('ALTER SEQUENCE public.%I OWNER TO daep_privileged_login', r.sequencename); END LOOP; END \\$\\
+    environment:
+      DAEP_ADMIN_TOKEN: ${DAEP_ADMIN_TOKEN:?Set DAEP_ADMIN_TOKEN}
+      DATABASE_URL: postgresql://daep_bootstrap:${DAEP_POSTGRES_PASSWORD}@postgres:5432/daep
+      DAEP_PRIVILEGED_DATABASE_URL: postgresql://daep_bootstrap:${DAEP_POSTGRES_PASSWORD}@postgres:5432/daep
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+
+  daep-api:
+    build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${DAEP_BIND_ADDRESS:-127.0.0.1}:${DAEP_PORT:-8000}:8000"
+    environment:
+      DAEP_ADMIN_TOKEN: ${DAEP_ADMIN_TOKEN:?Set DAEP_ADMIN_TOKEN}
+      DAEP_WORKER_TOKEN: ${DAEP_WORKER_TOKEN:?Set DAEP_WORKER_TOKEN}
+      DATABASE_URL: postgresql://daep_runtime:${DAEP_RUNTIME_DB_PASSWORD}@postgres:5432/daep
+      DAEP_PRIVILEGED_DATABASE_URL: postgresql://daep_privileged_login:${DAEP_PRIVILEGED_DB_PASSWORD}@postgres:5432/daep
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      DAEP_GIT_WEBHOOK_SECRET: ${DAEP_GIT_WEBHOOK_SECRET:-}
+      DAEP_GITHUB_WEBHOOK_SECRET: ${DAEP_GITHUB_WEBHOOK_SECRET:-}
+      DAEP_GITLAB_WEBHOOK_SECRET: ${DAEP_GITLAB_WEBHOOK_SECRET:-}
+      DAEP_OIDC_ISSUER: ${DAEP_OIDC_ISSUER:-}
+      DAEP_OIDC_CLIENT_ID: ${DAEP_OIDC_CLIENT_ID:-}
+      DAEP_OIDC_CLIENT_SECRET: ${DAEP_OIDC_CLIENT_SECRET:-}
+      DAEP_OIDC_REDIRECT_URI: ${DAEP_OIDC_REDIRECT_URI:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    init: true
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+    networks: [backend]
+
+  daep-worker:
+    profiles: ["broker"]
+    build: .
+    command: ["python", "-m", "daep_worker.worker"]
+    environment:
+      DAEP_API_URL: http://daep-api:8000
+      DAEP_WORKER_TOKEN: ${DAEP_WORKER_TOKEN:?Set DAEP_WORKER_TOKEN}
+      DAEP_BROKER_WEBHOOK_URL: ${DAEP_BROKER_WEBHOOK_URL:-}
+      DAEP_BROKER_WEBHOOK_TOKEN: ${DAEP_BROKER_WEBHOOK_TOKEN:-}
+      DAEP_WORKER_ID: ${DAEP_WORKER_ID:-worker-1}
+    depends_on:
+      daep-api:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    restart: unless-stopped
+    networks: [backend]
+
+volumes:
+  daep-postgres:
+
+networks:
+  backend:
+    driver: bridge
+''); c.commit(); c.close()"
     environment:
       DAEP_ADMIN_TOKEN: ${DAEP_ADMIN_TOKEN:?Set DAEP_ADMIN_TOKEN}
       DATABASE_URL: postgresql://daep_bootstrap:${DAEP_POSTGRES_PASSWORD}@postgres:5432/daep
