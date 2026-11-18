@@ -63,6 +63,11 @@ class AgentPresenceIn(BaseModel):
     protocols:list[str]=Field(default_factory=lambda:['mcp'],max_length=10)
     status:str=Field(default='AVAILABLE',pattern='^(AVAILABLE|BUSY|OFFLINE)$')
     metadata:dict=Field(default_factory=dict)
+class DelegationIn(BaseModel):
+    recipient_member_id:str=Field(min_length=1,max_length=120)
+    agent_name:str=Field(min_length=1,max_length=120)
+    reason:str=Field(default='',max_length=4000)
+    expires_in_seconds:int=Field(default=86400,ge=60,le=604800)
 class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80); uri:str=Field(min_length=1,max_length=2048); commit_sha:Optional[str]=None; metadata:dict=Field(default_factory=dict)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
@@ -158,6 +163,8 @@ def init():
         CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,artifact_type TEXT,uri TEXT,commit_sha TEXT,metadata TEXT,created_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',FOREIGN KEY(task_id) REFERENCES tasks(id));
         CREATE TABLE IF NOT EXISTS project_agents(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,member_id TEXT NOT NULL,tenant_id TEXT NOT NULL,agent_name TEXT NOT NULL,capabilities TEXT NOT NULL,protocols TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'AVAILABLE',metadata TEXT NOT NULL DEFAULT '{}',last_seen TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(project_id,member_id,agent_name),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_project_agents_discovery ON project_agents(project_id,status,last_seen);
+        CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
+        CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,lease_token TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE INDEX IF NOT EXISTS idx_outbox_ready ON outbox(status,available_at,lease_until);
         '''
@@ -733,6 +740,73 @@ def discover_project_agents(pid:str,authorization:str=Header(None),capability:st
             if protocol and protocol.lower() not in protocols: continue
             items.append({'id':row['id'],'member_id':row['member_id'],'member_name':row['member_name'],'agent_name':row['agent_name'],'capabilities':caps,'protocols':protocols,'status':row['status'] if live else 'OFFLINE','last_seen':row['last_seen'],'metadata':json.loads(row['metadata'] or '{}')})
         return {'items':items,'count':len(items),'presence_ttl_seconds':120}
+
+@app.post('/api/v1/tasks/{tid}/delegations')
+def create_task_delegation(tid:str,b:DelegationIn,authorization:str=Header(None)):
+    a=actor(authorization)
+    if b.recipient_member_id == a['id']: raise HTTPException(400,'A task cannot be delegated to yourself')
+    agent_name=b.agent_name.strip()
+    if not agent_name: raise HTTPException(422,'agent_name must not be blank')
+    did='dlg_'+uuid.uuid4().hex
+    with conn() as c:
+        require_task_access(c,tid,a,assigned_only=True)
+        pid=task_project(c,tid)
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        recipient=c.execute('SELECT tenant_id FROM members WHERE id=?',(b.recipient_member_id,)).fetchone()
+        if not recipient or recipient['tenant_id'] != project['tenant_id']: raise HTTPException(404,'Recipient not found in this tenant')
+        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,b.recipient_member_id)).fetchone(): raise HTTPException(400,'Recipient is not a project member')
+        agent=c.execute("SELECT id,status,last_seen FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?",(pid,b.recipient_member_id,agent_name)).fetchone()
+        if not agent: raise HTTPException(404,'Recipient Agent is not registered in this project')
+        if agent['status']=='OFFLINE' or agent['last_seen'] < datetime.fromtimestamp(time.time()-120,timezone.utc).isoformat():
+            raise HTTPException(409,'Recipient Agent presence is offline or stale')
+        stamp=now(); expiry=datetime.fromtimestamp(time.time()+b.expires_in_seconds,timezone.utc).isoformat()
+        mid='msg_'+uuid.uuid4().hex[:12]
+        title='Task delegation offer: '+tid
+        content=json.dumps({'delegation_id':did,'task_id':tid,'agent_name':agent_name,'reason':b.reason,'expires_at':expiry},ensure_ascii=False)
+        c.execute("INSERT INTO task_delegations(id,task_id,project_id,tenant_id,requester_member_id,recipient_member_id,agent_name,reason,status,message_id,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,tid,pid,project['tenant_id'],a['id'],b.recipient_member_id,agent_name,b.reason,'PENDING',mid,expiry,stamp,stamp))
+        c.execute("INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(mid,b.recipient_member_id,project['tenant_id'],tid,'TASK_DELEGATION',title,content,'HIGH','PENDING',stamp,None))
+        payload={'message_id':mid,'recipient_member_id':b.recipient_member_id,'project_id':pid,'task_id':tid,'message_type':'TASK_DELEGATION','title':title,'content':content,'priority':'HIGH'}
+        c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload), 'PENDING',0,stamp,stamp,project['tenant_id']))
+        event(c,'task.delegation.offered',a['id'],tid,{'delegation_id':did,'recipient_member_id':b.recipient_member_id,'agent_name':agent_name})
+    return {'id':did,'task_id':tid,'recipient_member_id':b.recipient_member_id,'agent_name':agent_name,'status':'PENDING','expires_at':expiry,'message_id':mid}
+
+@app.post('/api/v1/delegations/{did}/respond')
+def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization); decision=b.get('decision')
+    if decision not in ('ACCEPT','REJECT'): raise HTTPException(422,'decision must be ACCEPT or REJECT')
+    with conn() as c:
+        row=c.execute('SELECT * FROM task_delegations WHERE id=?',(did,)).fetchone()
+        if not row or row['recipient_member_id'] != a['id']: raise HTTPException(404,'Delegation not found')
+        if row['status'] != 'PENDING': raise HTTPException(409,'Delegation is no longer pending')
+        if row['expires_at'] <= now():
+            c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=?",(now(),did))
+            event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':did})
+            raise HTTPException(410,'Delegation offer has expired')
+        if decision=='ACCEPT':
+            c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(row['task_id'],a['id']))
+            c.execute('INSERT OR IGNORE INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?)',(row['project_id'],a['id'],'member',now()))
+            status='ACCEPTED'
+        else: status='REJECTED'
+        stamp=now()
+        c.execute('UPDATE task_delegations SET status=?,responded_at=?,updated_at=? WHERE id=? AND status=\'PENDING\'',(status,stamp,stamp,did))
+        event(c,'task.delegation.'+status.lower(),a['id'],row['task_id'],{'delegation_id':did,'agent_name':row['agent_name']})
+        return {'id':did,'task_id':row['task_id'],'status':status,'responded_at':stamp}
+
+@app.get('/api/v1/tasks/{tid}/delegations')
+def list_task_delegations(tid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_task_access(c,tid,a)
+        rows=c.execute('SELECT * FROM task_delegations WHERE task_id=? ORDER BY created_at DESC',(tid,)).fetchall()
+        result=[]
+        for raw in rows:
+            row=dict(raw)
+            if row['status']=='PENDING' and row['expires_at'] <= now():
+                c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(now(),row['id']))
+                event(c,'task.delegation.expired',a['id'],tid,{'delegation_id':row['id']})
+                row['status']='EXPIRED'
+            result.append(row)
+        return result
 
 @app.post('/api/v1/messages')
 def send_message(b:MessageIn,authorization:str=Header(None)):
