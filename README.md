@@ -64,3 +64,10 @@ RC8 adds PostgreSQL transaction-local tenant context, explicit inbox tenant owne
 ### Local Agent collaboration registry (RC13)
 
 Members can register their own workstation-operated Agents per project, advertise capabilities and MCP protocol support, refresh presence, and discover other project members' Agents. DAEP stores only capability/presence metadata; it does not launch, host, supervise, or wake local Agent runtimes. Presence expires after 120 seconds without a heartbeat. Use the member's MCP adapter tools `register_local_agent`, `discover_project_agents`, and `heartbeat_local_agent`.
+
+ 
+### Task delegation workflow (RC14)
+
+An assigned member can offer a task to another project member's registered, recently-online local Agent. The recipient receives a durable `TASK_DELEGATION` inbox message and must explicitly accept or reject it. Acceptance adds the recipient as a task assignee; rejection leaves assignments unchanged. Offers have a bounded expiry (60 seconds to 7 days), and expired offers are marked when queried or answered. Delegation transitions are recorded in the task event history and delegation records are tenant-isolated by PostgreSQL RLS. MCP tools: `offer_task_delegation`, `respond_task_delegation`, and `list_task_delegations`.
+
+This is a persistent offer/inbox workflow, not a remote execution command. DAEP cannot guarantee that a sleeping MCP Host or local Agent will wake up; recipients process the offer when their Host polls or reconnects.
