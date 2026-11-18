@@ -653,7 +653,7 @@ def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authoriz
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        sql="SELECT e.* FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?)"
+        sql="SELECT e.* FROM events e LEFT JOIN tasks t ON t.id=e.task_id LEFT JOIN requirements r ON r.id=t.requirement_id WHERE (r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?))"
         args=[pid,'%\"project_id\":\"'+pid+'\"%']
         if before: sql+=" AND e.created_at<?"; args.append(before)
         if event_type: sql+=" AND e.event_type=?"; args.append(event_type)
@@ -667,8 +667,8 @@ def export_project_audit(pid:str,limit:int=5000,authorization:str=Header(None)):
     with conn() as c:
         require_project_access(c,pid,a)
         rows=c.execute("""SELECT e.id,e.event_type,e.actor_member_id,e.task_id,e.payload,e.created_at
-            FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id
-            WHERE r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?) ORDER BY e.created_at DESC LIMIT ?""",(pid,'%\"project_id\":\"'+pid+'\"%',limit)).fetchall()
+            FROM events e LEFT JOIN tasks t ON t.id=e.task_id LEFT JOIN requirements r ON r.id=t.requirement_id
+            WHERE (r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?)) ORDER BY e.created_at DESC LIMIT ?""",(pid,'%\"project_id\":\"'+pid+'\"%',limit)).fetchall()
         def q(v): return '"'+str(v if v is not None else '').replace('"','""')+'"'
         lines=['id,event_type,actor_member_id,task_id,created_at,payload']
         for x in rows: lines.append(','.join(q(v) for v in (x['id'],x['event_type'],x['actor_member_id'],x['task_id'],x['created_at'],x['payload'])))
