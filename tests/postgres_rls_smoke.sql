@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -52,6 +52,7 @@ INSERT INTO task_delegations(id,task_id,project_id,tenant_id,requester_member_id
 
 INSERT INTO tasks (id,requirement_id,title,description,status,progress,created_at,updated_at) VALUES ('rls-child-a','rls-req-a','A child','','READY',0,now()::text,now()::text),('rls-child-b','rls-req-b','B child','','READY',0,now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES ('rls-work-package-a','rls-task-a','rls-child-a','rls-probe-a','tenant-a','rls-member-a','agent-a','ACTIVE',now()::text,now()::text),('rls-work-package-b','rls-task-b','rls-child-b','rls-probe-b','tenant-b','rls-member-b','agent-b','ACTIVE',now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
+INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES ('rls-approval-a','rls-probe-a','tenant-a','rls-member-a','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text),('rls-approval-b','rls-probe-b','tenant-b','rls-member-b','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text) ON CONFLICT (id) DO NOTHING;
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
 SELECT set_config('app.tenant_id', 'tenant-a', true);
@@ -106,6 +107,9 @@ BEGIN
 
   IF (SELECT count(*) FROM task_work_packages WHERE id IN ('rls-work-package-a','rls-work-package-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS work package isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM project_approvals WHERE id IN ('rls-approval-a','rls-approval-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project approval isolation failed';
   END IF;
 
   UPDATE projects SET name = 'cross-tenant-write' WHERE id = 'rls-probe-b';
