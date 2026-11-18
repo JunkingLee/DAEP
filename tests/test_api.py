@@ -1,6 +1,7 @@
 import os, tempfile, hashlib, sqlite3
 os.environ['DAEP_DB_PATH']=os.path.join(tempfile.gettempdir(),'daep-test-suite-v3.db')
 os.environ['DAEP_ADMIN_TOKEN']='test-admin-token-with-32-characters-minimum'
+os.environ['DAEP_WORKER_TOKEN']='test-worker-token-with-32-characters-minimum'
 try: os.remove(os.environ['DAEP_DB_PATH'])
 except FileNotFoundError: pass
 from fastapi.testclient import TestClient
@@ -110,9 +111,9 @@ def test_transactional_outbox_claim_and_lease_ownership():
     claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a','limit':10,'lease_seconds':30})
     assert claim.status_code==200 and claim.json()['count']>=1
     item=next(x for x in claim.json()['items'] if x['payload']['message_id']==sent.json()['id'])
-    wrong=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-b'})
+    wrong=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-a','lease_token':'x'*40})
     assert wrong.status_code==409
-    done=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-a'})
+    done=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-a','lease_token':item['lease_token']})
     assert done.status_code==200 and done.json()['status']=='SENT'
     empty=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a'})
     assert empty.json()['count']==0
@@ -122,7 +123,7 @@ def test_outbox_failure_schedules_retry():
     client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Retry','content':'hello'})
     claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-retry'}).json()
     item=next(x for x in claim['items'] if x['payload']['title']=='Retry')
-    failed=client.post(f"/internal/v1/outbox/{item['id']}/fail",headers=WORKER,json={'worker_id':'worker-retry','error':'temporary broker outage'})
+    failed=client.post(f"/internal/v1/outbox/{item['id']}/fail",headers=WORKER,json={'worker_id':'worker-retry','lease_token':item['lease_token'],'error':'temporary broker outage'})
     assert failed.status_code==200 and failed.json()['status']=='PENDING'
     # Backoff keeps it unavailable until retry time; the inbox copy remains durable.
     assert client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-retry'}).json()['count']==0
@@ -316,7 +317,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0014_rc12_auth_lookup_fn (head)' in heads
+    assert '0015_rc12_outbox_lease_token (head)' in heads
     assert '0013_rc11_db_privileged_role' in heads or '0014_rc12_auth_lookup_fn' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
