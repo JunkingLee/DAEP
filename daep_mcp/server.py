@@ -15,7 +15,10 @@ def call(method, path, payload=None):
     try:
         with urllib.request.urlopen(req,timeout=20) as r:
             raw=r.read()
-            return json.loads(raw) if raw else {'ok':True}
+            content_type=r.headers.get('Content-Type','')
+            if 'json' in content_type:
+                return json.loads(raw) if raw else {'ok':True}
+            return {'content_type':content_type,'body':raw.decode('utf-8',errors='replace')}
     except urllib.error.HTTPError as e:
         detail=e.read().decode(errors='replace')
         raise RuntimeError(f'DAEP API {e.code}: {detail}') from e
