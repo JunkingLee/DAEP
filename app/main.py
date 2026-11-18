@@ -151,7 +151,7 @@ def init():
         CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,actor_member_id TEXT,task_id TEXT,payload TEXT NOT NULL,created_at TEXT NOT NULL,idempotency_key TEXT UNIQUE,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE TABLE IF NOT EXISTS messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,recipient_member_id TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',task_id TEXT,message_type TEXT,title TEXT,content TEXT,priority TEXT,status TEXT NOT NULL DEFAULT 'PENDING',created_at TEXT NOT NULL,acked_at TEXT,attempts INTEGER NOT NULL DEFAULT 0,last_attempt_at TEXT);
         CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,artifact_type TEXT,uri TEXT,commit_sha TEXT,metadata TEXT,created_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',FOREIGN KEY(task_id) REFERENCES tasks(id));
-        CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
+        CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,lease_token TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE INDEX IF NOT EXISTS idx_outbox_ready ON outbox(status,available_at,lease_until);
         '''
         if DATABASE_URL.startswith(('postgresql://','postgres://')):
@@ -177,6 +177,8 @@ def init():
             if col not in table_cols['members']: c.execute(f'ALTER TABLE members ADD COLUMN {col} {ddl}')
         for table in ('projects','events','artifacts','outbox'):
             if 'tenant_id' not in table_cols[table]: c.execute(f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'tenant-default'")
+        if 'lease_token' not in table_cols['outbox']:
+            c.execute('ALTER TABLE outbox ADD COLUMN lease_token TEXT')
         c.execute("CREATE INDEX IF NOT EXISTS idx_members_tenant ON members(tenant_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_events_tenant_created ON events(tenant_id,created_at)")
@@ -727,37 +729,45 @@ def claim_outbox(body:dict,authorization:str=Header(None)):
     limit=max(1,min(int(body.get('limit',20)),100)); lease_seconds=max(10,min(int(body.get('lease_seconds',60)),900))
     claimed=[]; timestamp=datetime.now(timezone.utc); stamp=timestamp.isoformat()
     with conn() as c:
-        c.execute('BEGIN IMMEDIATE')
-        rows=c.execute("SELECT * FROM outbox WHERE (status='PENDING' AND available_at<=?) OR (status='IN_FLIGHT' AND lease_until<=?) ORDER BY created_at LIMIT ?",(stamp,stamp,limit)).fetchall()
+        is_pg=DATABASE_URL.startswith(('postgresql://','postgres://'))
+        if not is_pg: c.execute('BEGIN IMMEDIATE')
+        query="SELECT * FROM outbox WHERE (status='PENDING' AND available_at<=?) OR (status='IN_FLIGHT' AND lease_until<=?) ORDER BY created_at LIMIT ?"
+        if is_pg: query += " FOR UPDATE SKIP LOCKED"
+        rows=c.execute(query,(stamp,stamp,limit)).fetchall()
         for row in rows:
-            lease=(timestamp.timestamp()+lease_seconds)
-            lease_until=datetime.fromtimestamp(lease,timezone.utc).isoformat()
-            cur=c.execute("UPDATE outbox SET status='IN_FLIGHT',attempts=attempts+1,lease_until=?,lease_owner=? WHERE id=? AND ((status='PENDING' AND available_at<=?) OR (status='IN_FLIGHT' AND lease_until<=?))",(lease_until,worker,row['id'],stamp,stamp))
+            lease_until=datetime.fromtimestamp(timestamp.timestamp()+lease_seconds,timezone.utc).isoformat()
+            lease_token=secrets.token_urlsafe(32)
+            cur=c.execute("UPDATE outbox SET status='IN_FLIGHT',attempts=attempts+1,lease_until=?,lease_owner=?,lease_token=? WHERE id=? AND ((status='PENDING' AND available_at<=?) OR (status='IN_FLIGHT' AND lease_until<=?))",(lease_until,worker,lease_token,row['id'],stamp,stamp))
             if cur.rowcount:
-                item=dict(row); item.update(status='IN_FLIGHT',attempts=row['attempts']+1,lease_until=lease_until,lease_owner=worker,payload=json.loads(row['payload']))
+                item=dict(row); item.update(status='IN_FLIGHT',attempts=row['attempts']+1,lease_until=lease_until,lease_owner=worker,lease_token=lease_token,payload=json.loads(row['payload']))
                 claimed.append(item)
     return {'items':claimed,'count':len(claimed)}
 
 @app.post('/internal/v1/outbox/{outbox_id}/complete')
 def complete_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
     require_worker(authorization)
-    worker=str(body.get('worker_id','')).strip()
+    worker=str(body.get('worker_id','')).strip(); lease_token=str(body.get('lease_token',''))
+    if not worker or len(worker)>120 or len(lease_token)<32: raise HTTPException(422,'worker_id and lease_token are required')
     with conn() as c:
-        cur=c.execute("UPDATE outbox SET status='SENT',sent_at=?,lease_until=NULL,lease_owner=NULL,last_error=NULL WHERE id=? AND status='IN_FLIGHT' AND lease_owner=?",(now(),outbox_id,worker))
+        stamp=now()
+        cur=c.execute("UPDATE outbox SET status='SENT',sent_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL WHERE id=? AND status='IN_FLIGHT' AND lease_owner=? AND lease_token=? AND lease_until>?",(stamp,outbox_id,worker,lease_token,stamp))
         if not cur.rowcount: raise HTTPException(409,'Outbox lease not owned by worker or item is not in flight')
     return {'id':outbox_id,'status':'SENT'}
 
 @app.post('/internal/v1/outbox/{outbox_id}/fail')
 def fail_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
     require_worker(authorization)
-    worker=str(body.get('worker_id','')).strip(); error=str(body.get('error','Delivery failed'))[:2000]
+    worker=str(body.get('worker_id','')).strip(); lease_token=str(body.get('lease_token','')); error=str(body.get('error','Delivery failed'))[:2000]
+    if not worker or len(worker)>120 or len(lease_token)<32: raise HTTPException(422,'worker_id and lease_token are required')
     with conn() as c:
-        row=c.execute("SELECT attempts FROM outbox WHERE id=? AND status='IN_FLIGHT' AND lease_owner=?",(outbox_id,worker)).fetchone()
-        if not row: raise HTTPException(409,'Outbox lease not owned by worker or item is not in flight')
+        stamp=now()
+        row=c.execute("SELECT attempts FROM outbox WHERE id=? AND status='IN_FLIGHT' AND lease_owner=? AND lease_token=? AND lease_until>?",(outbox_id,worker,lease_token,stamp)).fetchone()
+        if not row: raise HTTPException(409,'Outbox lease not owned, expired, or item is not in flight')
         attempts=row['attempts']; terminal=attempts>=8
         delay=min(3600,5*(2**min(attempts-1,10)))
         available=datetime.fromtimestamp(datetime.now(timezone.utc).timestamp()+delay,timezone.utc).isoformat()
-        c.execute('UPDATE outbox SET status=?,available_at=?,lease_until=NULL,lease_owner=NULL,last_error=? WHERE id=?',('DEAD' if terminal else 'PENDING',available,error,outbox_id))
+        cur=c.execute("UPDATE outbox SET status=?,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=? WHERE id=? AND status='IN_FLIGHT' AND lease_owner=? AND lease_token=? AND lease_until>?",('DEAD' if terminal else 'PENDING',available,error,outbox_id,worker,lease_token,stamp))
+        if not cur.rowcount: raise HTTPException(409,'Outbox lease changed or expired during failure acknowledgement')
     return {'id':outbox_id,'status':'DEAD' if terminal else 'PENDING','retry_after_seconds':None if terminal else delay}
 
 @app.websocket('/ws/v1')
