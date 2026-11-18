@@ -75,7 +75,7 @@ class WorkPackageIn(BaseModel):
     agent_name:str=Field(min_length=1,max_length=120)
     dependencies:list[str]=Field(default_factory=list)
 class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80); uri:str=Field(min_length=1,max_length=2048); commit_sha:Optional[str]=None; metadata:dict=Field(default_factory=dict)
-class WorkResultIn(BaseModel): outcome:str=Field(pattern='^(COMPLETE|FAILED)
+class WorkResultIn(BaseModel): outcome:str=Field(pattern='^(COMPLETE|FAILED)$'); summary:str=Field(min_length=1,max_length=5000); idempotency_key:str=Field(default='',max_length=200)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
