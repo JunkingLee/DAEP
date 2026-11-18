@@ -50,6 +50,7 @@ services:
       DAEP_API_URL: http://daep-api:8000
       DAEP_WORKER_TOKEN: ${DAEP_WORKER_TOKEN:?Set DAEP_WORKER_TOKEN}
       DAEP_BROKER_WEBHOOK_URL: ${DAEP_BROKER_WEBHOOK_URL:-}
+      DAEP_BROKER_WEBHOOK_TOKEN: ${DAEP_BROKER_WEBHOOK_TOKEN:-}
       DAEP_WORKER_ID: ${DAEP_WORKER_ID:-worker-1}
     depends_on: [daep-api]
     restart: unless-stopped
