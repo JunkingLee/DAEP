@@ -115,7 +115,7 @@ def test_transactional_outbox_claim_and_lease_ownership():
     assert wrong.status_code==409
     done=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-a','lease_token':item['lease_token']})
     assert done.status_code==200 and done.json()['status']=='SENT'
-    empty=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a'})
+    empty=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a','lease_token':item['lease_token']})
     assert empty.json()['count']==0
 
 def test_outbox_failure_schedules_retry():
