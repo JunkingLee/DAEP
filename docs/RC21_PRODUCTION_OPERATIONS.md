@@ -34,11 +34,11 @@ Migrations are forward-only operational changes. Do not assume a downgrade is a 
 
 ## Backup
 
-Set `DAEP_BACKUP_DIR` to a directory accessible to the operator with restricted permissions, then run `scripts/backup_postgres.sh`. It creates a PostgreSQL custom-format dump and SHA-256 sidecar with restrictive file permissions. Copy backups off-host, encrypt them using the organization's KMS/backup system, and enforce retention independently. The script does not configure offsite replication or encryption at rest by itself.
+Set `DAEP_BACKUP_DIR` to a directory accessible to the operator with restricted permissions, then run `scripts/backup_postgres.sh`. It creates a PostgreSQL custom-format dump, a globals-only SQL snapshot (including sensitive role credential hashes), and a portable SHA-256 manifest with restrictive file permissions. Protect both files as highly sensitive, copy them off-host, encrypt them using the organization's KMS/backup system, and enforce retention independently. The globals snapshot is not automatically replayed during restore: on a new cluster, a DBA must review and provision the required global roles/passwords without blindly recreating the existing bootstrap administrator. The script does not configure offsite replication or encryption at rest by itself.
 
 ## Restore drill
 
-1. Provision a separate, empty PostgreSQL database named by `DAEP_RESTORE_DATABASE` (default `daep_restore`) and ensure the bootstrap login can connect.
+1. Provision a separate, empty PostgreSQL database named by `DAEP_RESTORE_DATABASE` (default `daep_restore`) in the same PostgreSQL cluster, where the DAEP global roles already exist, and ensure the bootstrap login can connect. For a new cluster, first have a DBA recreate the runtime, privileged-login and `daep_privileged` roles from the protected globals snapshot, preserving the non-superuser/NOBYPASSRLS constraints.
 2. Set `DAEP_BACKUP_FILE` to the dump and `DAEP_CONFIRM_RESTORE=YES`.
 3. Run `scripts/restore_postgres.sh`. It verifies the SHA-256 sidecar and archive readability, then restores without dropping existing objects.
 4. Run schema checks, API smoke tests and tenant/RLS isolation checks against the restored database before any cutover.
