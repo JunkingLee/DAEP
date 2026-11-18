@@ -112,6 +112,12 @@ def create_task_work_package(parent_task_id: str, title: str, assignee_member_id
         'agent_name':agent_name,'dependencies':dependencies or []})
 
 @mcp.tool()
+def report_work_package_result(task_id: str, outcome: str, summary: str, idempotency_key: str = '') -> dict:
+    """Report a child work package as complete (requires artifacts) or blocked/failed."""
+    return call('POST',f'/api/v1/tasks/{task_id}/work-result',{
+        'outcome':outcome,'summary':summary,'idempotency_key':idempotency_key})
+
+@mcp.tool()
 def list_task_work_packages(parent_task_id: str) -> list:
     """List child work packages, current task states and their submitted artifacts."""
     return call('GET',f'/api/v1/tasks/{parent_task_id}/work-packages')
