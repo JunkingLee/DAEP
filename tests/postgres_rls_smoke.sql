@@ -60,6 +60,15 @@ BEGIN
     RAISE EXCEPTION 'RLS read isolation failed: expected 1 visible project, got %', visible_count;
   END IF;
 
+  -- Caller-controlled custom GUCs must not grant privileged bypass.
+  PERFORM set_config('app.platform_admin', 'true', true);
+  PERFORM set_config('app.internal_service', 'true', true);
+  IF (SELECT count(*) FROM projects WHERE id IN ('rls-probe-a','rls-probe-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS privilege escalation: caller-set GUC bypassed tenant isolation';
+  END IF;
+  PERFORM set_config('app.platform_admin', 'false', true);
+  PERFORM set_config('app.internal_service', 'false', true);
+
   IF (SELECT count(*) FROM requirements WHERE id IN ('rls-req-a','rls-req-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS requirement isolation failed';
   END IF;
