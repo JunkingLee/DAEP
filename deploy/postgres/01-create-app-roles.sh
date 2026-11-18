@@ -9,6 +9,7 @@ CREATE ROLE daep_runtime LOGIN PASSWORD :'runtime_password' NOSUPERUSER NOCREATE
 CREATE ROLE daep_privileged_login LOGIN PASSWORD :'privileged_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 GRANT CONNECT ON DATABASE daep TO daep_runtime, daep_privileged_login;
 GRANT USAGE ON SCHEMA public TO daep_runtime, daep_privileged_login;
+GRANT CREATE ON SCHEMA public TO daep_privileged_login;
 ALTER DEFAULT PRIVILEGES FOR ROLE daep_bootstrap IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO daep_runtime, daep_privileged_login;
 ALTER DEFAULT PRIVILEGES FOR ROLE daep_bootstrap IN SCHEMA public
