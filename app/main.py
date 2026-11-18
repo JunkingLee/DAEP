@@ -57,8 +57,13 @@ class TaskIn(BaseModel): requirement_id:str; title:str=Field(min_length=1,max_le
 class ProgressIn(BaseModel): progress:int=Field(ge=0,le=100); note:str=Field(default='',max_length=2000)
 class MessageIn(BaseModel): recipient_member_id:str; project_id:Optional[str]=None; task_id:Optional[str]=None; message_type:str='COLLABORATION'; title:str=Field(min_length=1,max_length=200); content:str=Field(min_length=1,max_length=20000); priority:str=Field(default='NORMAL',pattern='^(LOW|NORMAL|HIGH|URGENT)$')
 class AckIn(BaseModel): status:str='ACKNOWLEDGED'
-class AgentPresenceIn(BaseModel): agent_name:str=Field(min_length=1,max_length=120); capabilities:list[str]=Field(default_factory=list,max_length=50); protocols:list[str]=Field(default_factory=lambda:['mcp'],max_length=10); status:str=Field(default='AVAILABLE',pattern='^(AVAILABLE|BUSY|OFFLINE)
-
+class AgentPresenceIn(BaseModel):
+    agent_name:str=Field(min_length=1,max_length=120)
+    capabilities:list[str]=Field(default_factory=list,max_length=50)
+    protocols:list[str]=Field(default_factory=lambda:['mcp'],max_length=10)
+    status:str=Field(default='AVAILABLE',pattern='^(AVAILABLE|BUSY|OFFLINE)$')
+    metadata:dict=Field(default_factory=dict)
+class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80); uri:str=Field(min_length=1,max_length=2048); commit_sha:Optional[str]=None; metadata:dict=Field(default_factory=dict)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
