@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0021_rc19_health (head)' in heads
+    assert '0022_rc20_approvals (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -642,3 +642,31 @@ def test_rc19_project_health_detects_sla_overdue_and_dependency_blockers():
     assert any(x['blocking_dependencies'] for x in report.json()['items'])
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Health outsider'}).json()
     assert client.get(f'/api/v1/projects/{pid}/work-health',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
+
+
+def test_rc20_role_change_requires_independent_owner_approval_and_audit_export():
+    pid,member_id,token,parent_id=setup_project_task()
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'Second project owner'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':owner['id'],'role':'member'}).status_code==200
+    # Promote second member to owner only in the test fixture to exercise independent approval authority.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE project_members SET role='owner' WHERE project_id=? AND member_id=?",(pid,owner['id']))
+    db.commit();db.close()
+    req=client.post(f'/api/v1/projects/{pid}/role-change-requests',headers=ADMIN,json={'member_id':member_id,'new_role':'manager','reason':'Needs manager permissions'})
+    assert req.status_code==200
+    approval_id=req.json()['approval_id']
+    self_approve=client.post(f'/api/v1/projects/{pid}/approvals/{approval_id}/decision',headers=ADMIN,json={'decision':'APPROVE','reason':'Not allowed'})
+    assert self_approve.status_code==403
+    owner_h={'Authorization':'Bearer '+owner['token']}
+    nonowner=client.post(f'/api/v1/projects/{pid}/approvals/{approval_id}/decision',headers={'Authorization':'Bearer '+token},json={'decision':'APPROVE','reason':'Not an owner'})
+    assert nonowner.status_code==403
+    approved=client.post(f'/api/v1/projects/{pid}/approvals/{approval_id}/decision',headers=owner_h,json={'decision':'APPROVE','reason':'Approved for project governance'})
+    assert approved.status_code==200 and approved.json()['status']=='APPROVED'
+    members=client.get(f'/api/v1/projects/{pid}/members',headers=ADMIN).json()
+    assert next(x for x in members if x['id']==member_id)['project_role']=='manager'
+    audit=client.get(f'/api/v1/projects/{pid}/audit',headers=ADMIN)
+    assert audit.status_code==200 and any(x['event_type']=='project.role_change.approved' for x in audit.json()['items'])
+    csv=client.get(f'/api/v1/projects/{pid}/audit.csv',headers=ADMIN)
+    assert csv.status_code==200 and 'text/csv' in csv.headers['content-type'] and 'project.role_change.approved' in csv.text
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Audit outsider'}).json()
+    assert client.get(f'/api/v1/projects/{pid}/audit',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
