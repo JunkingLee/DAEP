@@ -43,7 +43,7 @@ VALUES ('rls-task-a','rls-member-a'),('rls-task-b','rls-member-b')
 ON CONFLICT DO NOTHING;
 
 BEGIN;
-SET ROLE daep_rls_probe;
+SET SESSION AUTHORIZATION daep_rls_probe;
 SELECT set_config('app.tenant_id', 'tenant-a', true);
 SELECT set_config('app.platform_admin', 'false', true);
 SELECT set_config('app.internal_service', 'false', true);
@@ -119,5 +119,5 @@ BEGIN
 END
 $$;
 
-RESET ROLE;
+RESET SESSION AUTHORIZATION;
 COMMIT;
