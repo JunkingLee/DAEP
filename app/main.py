@@ -705,10 +705,15 @@ def ack(mid:str,b:AckIn,authorization:str=Header(None)):
     a=actor(authorization)
     if b.status not in ('ACKNOWLEDGED','REJECTED'): raise HTTPException(422,'Invalid acknowledgement status')
     with conn() as c:
-        cur=c.execute("UPDATE messages SET status=?,acked_at=? WHERE id=? AND recipient_member_id=?",(b.status,now(),mid,a['id']))
-        if cur.rowcount==0: raise HTTPException(404,'Message not found for current member')
+        existing=c.execute('SELECT status FROM messages WHERE id=? AND recipient_member_id=?',(mid,a['id'])).fetchone()
+        if not existing: raise HTTPException(404,'Message not found for current member')
+        if existing['status'] in ('ACKNOWLEDGED','REJECTED'):
+            if existing['status'] != b.status: raise HTTPException(409,'Message has already reached a different terminal status')
+            return {'id':mid,'status':existing['status'],'idempotent':True}
+        cur=c.execute("UPDATE messages SET status=?,acked_at=? WHERE id=? AND recipient_member_id=? AND status='PENDING'",(b.status,now(),mid,a['id']))
+        if cur.rowcount==0: raise HTTPException(409,'Message status changed; retry the request')
         event(c,'message.acknowledged',a['id'],None,{'message_id':mid,'status':b.status})
-    return {'id':mid,'status':b.status}
+    return {'id':mid,'status':b.status,'idempotent':False}
 @app.get('/api/v1/tasks/{tid}/events')
 def task_events(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -770,8 +775,33 @@ def fail_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
         if not cur.rowcount: raise HTTPException(409,'Outbox lease changed or expired during failure acknowledgement')
     return {'id':outbox_id,'status':'DEAD' if terminal else 'PENDING','retry_after_seconds':None if terminal else delay}
 
+@app.get('/api/v1/admin/outbox/dead')
+def list_dead_outbox(limit:int=50,authorization:str=Header(None)):
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    limit=max(1,min(limit,200))
+    with conn() as c:
+        rows=c.execute("SELECT id,event_type,status,attempts,available_at,last_error,created_at,tenant_id FROM outbox WHERE status='DEAD' ORDER BY created_at LIMIT ?",(limit,)).fetchall()
+        return {'items':[dict(x) for x in rows],'count':len(rows)}
+
+@app.post('/api/v1/admin/outbox/{outbox_id}/replay')
+def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    reason=str(body.get('reason','')).strip()
+    if not reason or len(reason)>1000: raise HTTPException(422,'A replay reason (1-1000 characters) is required')
+    with conn() as c:
+        row=c.execute("SELECT tenant_id,status FROM outbox WHERE id=?",(outbox_id,)).fetchone()
+        if not row: raise HTTPException(404,'Outbox item not found')
+        if row['status']!='DEAD': raise HTTPException(409,'Only DEAD outbox items can be replayed')
+        stamp=now()
+        cur=c.execute("UPDATE outbox SET status='PENDING',attempts=0,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL,sent_at=NULL WHERE id=? AND status='DEAD'",(stamp,outbox_id))
+        if not cur.rowcount: raise HTTPException(409,'Outbox item changed; refresh and retry')
+        event(c,'outbox.dead.replayed',a['id'],None,{'outbox_id':outbox_id,'reason':reason},tenant_override=row['tenant_id'])
+    return {'id':outbox_id,'status':'PENDING','replayed':True}
+
 @app.websocket('/ws/v1')
-async def websocket_endpoint(ws:WebSocket,token:str=''):
+async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     # Best-effort online notification channel. The durable inbox remains the source of truth.
     lookup_reset=_auth_lookup_ctx.set(True)
     try:
@@ -779,10 +809,11 @@ async def websocket_endpoint(ws:WebSocket,token:str=''):
     finally:
         _auth_lookup_ctx.reset(lookup_reset)
     if not member: await ws.close(code=1008); return
+    cursor=max(0,after)
     _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
     await ws.accept(); cursor=0
     try:
-        await ws.send_json({'type':'connected','at':now(),'delivery':'best-effort; use inbox cursor for recovery'})
+        await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
         while True:
             with conn() as c:
                 rows=[dict(r) for r in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT 100",(member['id'],cursor))]
