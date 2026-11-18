@@ -11,7 +11,7 @@ compose=${DAEP_COMPOSE_FILE:-compose.production.yaml}
 docker compose -f "$compose" exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$file"
 test -s "$file"
 docker compose -f "$compose" exec -T postgres pg_restore --list < "$file" >/dev/null
-docker compose -f "$compose" exec -T postgres pg_dumpall -U "$POSTGRES_USER" --globals-only > "$globals"
+docker compose -f "$compose" exec -T postgres sh -ec 'pg_dumpall -U "$POSTGRES_USER" --globals-only' > "$globals"
 test -s "$globals"
 (cd "$DAEP_BACKUP_DIR" && sha256sum "$(basename "$file")" "$(basename "$globals")" > "$(basename "$file").sha256")
 chmod 600 "$file" "$globals" "$file.sha256"
