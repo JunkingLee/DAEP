@@ -29,3 +29,18 @@ The tenant ID GUC remains application-supplied context. RLS is defense-in-depth 
 ## Verification
 
 CI runs tests/postgres_rls_smoke.sql under a restricted session identity. It asserts that setting app.platform_admin=true or app.internal_service=true does not expose another tenant's rows.
+
+## Authentication lookup (RC12)
+
+The caller-settable app.auth_lookup flag is no longer an authorization mechanism.
+RC12 removes the members auth-lookup RLS policy and replaces direct PostgreSQL
+member-token SELECTs with public.daep_authenticate_member(token_hash, now).
+That function is SECURITY DEFINER, owned by a dedicated NOLOGIN BYPASSRLS role,
+and returns only the row matching the supplied SHA-256 token hash when the
+token is active and unexpired. The application stores only token hashes.
+
+The BYPASSRLS role is not a login and should not be granted to application
+logins. EXECUTE on the narrow function is granted so the runtime can validate
+a bearer token without broad SELECT access to the members table. The raw
+database credential remains trusted infrastructure: protect it and do not
+expose it to Agents or end users.
