@@ -135,6 +135,11 @@ def list_task_work_packages(parent_task_id: str) -> list:
     return call('GET',f'/api/v1/tasks/{parent_task_id}/work-packages')
 
 @mcp.tool()
+def get_task_work_timeline(parent_task_id: str, limit: int = 200) -> dict:
+    """Read the chronological work-package timeline, including events, messages and artifacts."""
+    return call('GET',f'/api/v1/tasks/{parent_task_id}/work-timeline?limit={max(1,min(limit,500))}')
+
+@mcp.tool()
 def get_task_work_summary(parent_task_id: str) -> dict:
     """Aggregate child work package progress, blockers and artifact count."""
     return call('GET',f'/api/v1/tasks/{parent_task_id}/work-summary')
