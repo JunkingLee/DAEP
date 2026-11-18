@@ -644,7 +644,7 @@ def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Hea
             c.execute('UPDATE project_members SET role=? WHERE project_id=? AND member_id=?',(payload['new_role'],pid,payload['member_id']))
         stamp=now()
         c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(decision+'D',a['id'],reason,stamp,approval_id,'PENDING'))
-        event(c,'project.role_change.'+decision.lower()+'d',a['id'],None,{'approval_id':approval_id,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
+        event(c,'project.role_change.'+('approved' if decision=='APPROVE' else 'rejected'),a['id'],None,{'approval_id':approval_id,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
         return {'approval_id':approval_id,'status':decision+'D','member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
 
 @app.get('/api/v1/projects/{pid}/audit')
