@@ -103,3 +103,18 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -f tests/postgres_rls_smoke.sql
+
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate operational shell scripts
+        run: |
+          bash -n deploy/postgres/01-create-app-roles.sh
+          bash -n scripts/backup_postgres.sh
+          bash -n scripts/restore_postgres.sh
+      - name: Build production container
+        run: docker build --tag daep:rc21-ci .
+      - name: Verify non-root runtime
+        run: |
+          test "$(docker image inspect daep:rc21-ci --format '{{.Config.User}}')" = "daep"
