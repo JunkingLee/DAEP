@@ -68,6 +68,12 @@ class DelegationIn(BaseModel):
     agent_name:str=Field(min_length=1,max_length=120)
     reason:str=Field(default='',max_length=4000)
     expires_in_seconds:int=Field(default=86400,ge=60,le=604800)
+class WorkPackageIn(BaseModel):
+    title:str=Field(min_length=1,max_length=200)
+    description:str=Field(default='',max_length=10000)
+    assignee_member_id:str=Field(min_length=1,max_length=120)
+    agent_name:str=Field(min_length=1,max_length=120)
+    dependencies:list[str]=Field(default_factory=list)
 class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80); uri:str=Field(min_length=1,max_length=2048); commit_sha:Optional[str]=None; metadata:dict=Field(default_factory=dict)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
@@ -165,6 +171,8 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_project_agents_discovery ON project_agents(project_id,status,last_seen);
         CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
+        CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
+        CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
         CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,lease_token TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE INDEX IF NOT EXISTS idx_outbox_ready ON outbox(status,available_at,lease_until);
         '''
@@ -683,6 +691,69 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,100 if decision=='APPROVE' else 90,now(),tid))
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
+
+@app.post('/api/v1/tasks/{parent_id}/work-packages')
+def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(None)):
+    a=actor(authorization); child_id='tsk_'+uuid.uuid4().hex[:12]; package_id='wpk_'+uuid.uuid4().hex
+    agent_name=b.agent_name.strip()
+    if not agent_name: raise HTTPException(422,'agent_name must not be blank')
+    with conn() as c:
+        require_task_access(c,parent_id,a)
+        project_id=task_project(c,parent_id)
+        require_project_access(c,project_id,a,write=True)
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+        member=c.execute('SELECT tenant_id FROM members WHERE id=?',(b.assignee_member_id,)).fetchone()
+        if not member or member['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Assignee not found in this tenant')
+        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(project_id,b.assignee_member_id)).fetchone(): raise HTTPException(400,'Assignee is not a project member')
+        agent=c.execute('SELECT status,last_seen FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(project_id,b.assignee_member_id,agent_name)).fetchone()
+        if not agent: raise HTTPException(404,'Assignee Agent is not registered in this project')
+        if agent['status']=='OFFLINE' or agent['last_seen'] < datetime.fromtimestamp(time.time()-120,timezone.utc).isoformat(): raise HTTPException(409,'Assignee Agent presence is offline or stale')
+        for dep in b.dependencies:
+            if dep==parent_id or not c.execute('SELECT 1 FROM tasks WHERE id=?',(dep,)).fetchone(): raise HTTPException(400,'Invalid dependency')
+            require_task_access(c,dep,a)
+            if task_project(c,dep)!=project_id: raise HTTPException(400,'Dependencies must belong to the same project')
+        req=c.execute('SELECT id FROM requirements WHERE project_id=? ORDER BY created_at LIMIT 1',(project_id,)).fetchone()
+        if not req: raise HTTPException(409,'Create a requirement before adding work packages')
+        stamp=now()
+        c.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)',(child_id,req['id'],b.title,b.description,'READY',0,stamp,stamp))
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(child_id,b.assignee_member_id))
+        for dep in b.dependencies: c.execute('INSERT INTO dependencies(task_id,depends_on_task_id) VALUES(?,?)',(child_id,dep))
+        c.execute('INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(package_id,parent_id,child_id,project_id,project['tenant_id'],b.assignee_member_id,agent_name,'ACTIVE',stamp,stamp))
+        mid='msg_'+uuid.uuid4().hex[:12]
+        title='Work package assigned: '+b.title
+        content=json.dumps({'work_package_id':package_id,'parent_task_id':parent_id,'task_id':child_id,'agent_name':agent_name,'title':b.title},ensure_ascii=False)
+        c.execute('INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(mid,b.assignee_member_id,project['tenant_id'],child_id,'WORK_PACKAGE_ASSIGNED',title,content,'HIGH','PENDING',stamp,None))
+        payload={'message_id':mid,'recipient_member_id':b.assignee_member_id,'project_id':project_id,'task_id':child_id,'message_type':'WORK_PACKAGE_ASSIGNED','title':title,'content':content,'priority':'HIGH'}
+        c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,stamp,stamp,project['tenant_id']))
+        event(c,'task.work_package.created',a['id'],parent_id,{'work_package_id':package_id,'child_task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name})
+    return {'id':package_id,'parent_task_id':parent_id,'task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'status':'ACTIVE','message_id':mid}
+
+@app.get('/api/v1/tasks/{parent_id}/work-packages')
+def list_work_packages(parent_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_task_access(c,parent_id,a)
+        rows=c.execute('SELECT w.*,t.title,t.description,t.status AS task_status,t.progress,t.updated_at AS task_updated_at FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? ORDER BY w.created_at',(parent_id,)).fetchall()
+        result=[]
+        for raw in rows:
+            row=dict(raw)
+            row['artifacts']=[dict(x) for x in c.execute('SELECT id,artifact_type,uri,commit_sha,created_at FROM artifacts WHERE task_id=? ORDER BY created_at',(row['child_task_id'],))]
+            result.append(row)
+        return result
+
+@app.get('/api/v1/tasks/{parent_id}/work-summary')
+def work_package_summary(parent_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_task_access(c,parent_id,a)
+        rows=c.execute("SELECT t.status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(parent_id,)).fetchall()
+        total=len(rows)
+        counts={k:sum(1 for x in rows if x['status']==k) for k in ('READY','IN_PROGRESS','BLOCKED','REVIEW','DONE')}
+        progress=round(sum(int(x['progress'] or 0) for x in rows)/total) if total else 0
+        artifacts=c.execute('SELECT COUNT(*) AS n FROM artifacts a JOIN task_work_packages w ON w.child_task_id=a.task_id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\'',(parent_id,)).fetchone()['n']
+        blocked=c.execute("SELECT t.id,t.title,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE' AND t.status='BLOCKED'",(parent_id,)).fetchall()
+        return {'parent_task_id':parent_id,'work_package_count':total,'progress':progress,'status_counts':counts,'blocked_tasks':[dict(x) for x in blocked],'artifact_count':artifacts,'all_done':bool(total and counts['DONE']==total)}
+
 @app.post('/api/v1/projects/{pid}/agents/register')
 def register_project_agent(pid:str,b:AgentPresenceIn,authorization:str=Header(None)):
     a=actor(authorization)
