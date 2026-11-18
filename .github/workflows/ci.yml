@@ -62,7 +62,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/daep_ci
           DAEP_ADMIN_TOKEN: ${{ github.run_id }}-ci-admin-bootstrap-xxxxxxxxxxxxxxxxxxxx
-        run: python -c "import app.main"
+        run: python -c "import app.main; app.main.bootstrap()"
       - name: Upgrade schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/daep_ci
