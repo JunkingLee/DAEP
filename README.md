@@ -78,3 +78,10 @@ This is a persistent offer/inbox workflow, not a remote execution command. DAEP 
 A project member with write access can split a parent task into child work packages and assign each package to another project member's registered, recently-online local Agent. The platform creates a child task, assignment, durable `WORK_PACKAGE_ASSIGNED` inbox message and audit event. Agents report progress, blockers and artifacts against their own child task. Parent-level summary endpoints aggregate package counts, average progress, blocked children and artifact counts; the parent task itself remains under the existing review/approval workflow.
 
 MCP tools: `create_task_work_package`, `list_task_work_packages`, and `get_task_work_summary`. Work packages are tenant-isolated in PostgreSQL. This remains coordination metadata: DAEP does not execute, host or wake any local Agent.
+
+
+### Work package result and parent completion gate (RC16)
+
+A local Agent reports a work-package outcome with `POST /api/v1/tasks/{child_task_id}/work-result` (MCP: `report_work_package_result`). A `COMPLETE` report requires at least one previously submitted artifact and moves the child task to `REVIEW`; it does not approve the work. A `FAILED` report moves the child task to `BLOCKED` for follow-up. Optional idempotency keys make repeated identical reports safe and reject conflicting replays.
+
+A reviewer must approve each child task through the existing review workflow. The parent task cannot be approved until every active child work package is `DONE` and each has at least one artifact. The parent still requires its own explicit review. Work summaries now include artifact references (URI and commit SHA), not only counts. These gates are workflow checks; DAEP still does not execute or wake local Agents.
