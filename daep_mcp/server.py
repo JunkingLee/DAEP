@@ -85,6 +85,25 @@ def send_collaboration_message(recipient_member_id: str, title: str, content: st
         'recipient_member_id':recipient_member_id,'project_id':project_id or None,'task_id':task_id or None,
         'message_type':'COLLABORATION','title':title,'content':content,'priority':priority})
 
+@mcp.tool()
+def offer_task_delegation(task_id: str, recipient_member_id: str, agent_name: str, reason: str = '', expires_in_seconds: int = 86400) -> dict:
+    """Offer an assigned task to another project member's online local Agent."""
+    return call('POST',f'/api/v1/tasks/{task_id}/delegations',{
+        'recipient_member_id':recipient_member_id,'agent_name':agent_name,
+        'reason':reason,'expires_in_seconds':expires_in_seconds})
+
+@mcp.tool()
+def respond_task_delegation(delegation_id: str, decision: str) -> dict:
+    """Accept or reject a task delegation addressed to the authenticated member."""
+    if decision not in ('ACCEPT','REJECT'): raise ValueError('decision must be ACCEPT or REJECT')
+    return call('POST',f'/api/v1/delegations/{delegation_id}/respond',{'decision':decision})
+
+@mcp.tool()
+def list_task_delegations(task_id: str) -> list:
+    """List delegation offers and their current status for a task."""
+    return call('GET',f'/api/v1/tasks/{task_id}/delegations')
+
+
 if __name__=='__main__':
     import urllib.parse
     mcp.run(transport='stdio')
