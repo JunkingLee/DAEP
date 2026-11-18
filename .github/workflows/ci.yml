@@ -90,3 +90,9 @@ jobs:
           ")
           test "$result" = "t"
           psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -c "SELECT tablename, policyname, cmd FROM pg_policies WHERE schemaname='public' ORDER BY tablename, policyname;"
+
+      - name: Verify tenant isolation as restricted database role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -f tests/postgres_rls_smoke.sql
