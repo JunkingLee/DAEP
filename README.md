@@ -104,3 +104,10 @@ Every work package receives a stable correlation ID propagated through assignmen
 ### Work-package governance and health (RC19)
 
 Work packages may be created with an optional `sla_seconds` value (300 seconds to 30 days). Managers can recalculate project risk with `POST /api/v1/projects/{project_id}/work-packages/scan-health` and read the report at `GET /api/v1/projects/{project_id}/work-health`. The report identifies overdue SLAs, unresolved task dependencies, stalled packages and completion/review states, with a project health score. Risk transitions are audited. Scans never auto-reassign, execute, start, stop or wake local Agents. MCP tools: `scan_project_work_health` and `get_project_work_health`.
+
+
+### Project governance, approvals and audit export (RC20)
+
+Project roles are explicitly separated: owners and managers may administer project membership; only owners may directly grant the manager role. Managers can submit role-change requests, and a different project owner must approve or reject them. Self-approval is forbidden, and stale requests fail if the target role changed before approval. APIs: `POST /api/v1/projects/{id}/role-change-requests`, `GET /api/v1/projects/{id}/approvals`, and `POST /api/v1/projects/{id}/approvals/{approval_id}/decision`.
+
+Project audit records are available through `GET /api/v1/projects/{id}/audit` with event-type and cursor filters, or as CSV through `GET /api/v1/projects/{id}/audit.csv`. Both endpoints enforce project membership and tenant boundaries. MCP tools cover role-change requests, approval decisions and audit access.
