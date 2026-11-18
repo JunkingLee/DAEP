@@ -76,6 +76,8 @@ class _PGCursor:
         return dict(r) if hasattr(r,'keys') else r
     def fetchall(self):
         rows=self.cur.fetchall(); return [dict(r) if hasattr(r,'keys') else r for r in rows]
+    def __iter__(self):
+        return iter(self.fetchall())
 
 class _PGConn:
     def __init__(self,url):
