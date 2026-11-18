@@ -501,7 +501,8 @@ def test_rc15_work_package_rejects_offline_agent_and_cross_project_dependency():
 
 
 def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
-    pid,_,_,parent_id=setup_project_task()
+    pid,_,owner_token,parent_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+owner_token}
     recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC16 Result Agent'}).json()
     assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
     rh={'Authorization':'Bearer '+recipient['token']}
@@ -524,6 +525,7 @@ def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
     replay=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
         'outcome':'COMPLETE','summary':'Implementation and tests finished','idempotency_key':'result-1'})
     assert replay.status_code==200 and replay.json()['idempotent_replay'] is True
+    assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_headers,json={'progress':100,'note':'Ready for review'}).status_code==200
     parent_blocked=client.post(f'/api/v1/tasks/{parent_id}/review',headers=ADMIN,json={'decision':'APPROVE'})
     assert parent_blocked.status_code==409
     child_approved=client.post(f'/api/v1/tasks/{child}/review',headers=ADMIN,json={'decision':'APPROVE'})
