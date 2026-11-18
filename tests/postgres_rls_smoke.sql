@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -47,6 +47,8 @@ VALUES
  ('rls-agent-a','rls-probe-a','rls-member-a','tenant-a','agent-a','["python"]','["mcp"]','AVAILABLE','{}',now()::text,now()::text,now()::text),
  ('rls-agent-b','rls-probe-b','rls-member-b','tenant-b','agent-b','["python"]','["mcp"]','AVAILABLE','{}',now()::text,now()::text,now()::text)
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO task_delegations(id,task_id,project_id,tenant_id,requester_member_id,recipient_member_id,agent_name,reason,status,expires_at,created_at,updated_at) VALUES ('rls-delegation-a','rls-task-a','rls-probe-a','tenant-a','rls-member-a','rls-member-a','agent-a','','PENDING','2027-01-01T00:00:00+00:00',now()::text,now()::text), ('rls-delegation-b','rls-task-b','rls-probe-b','tenant-b','rls-member-b','rls-member-b','agent-b','','PENDING','2027-01-01T00:00:00+00:00',now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
@@ -94,6 +96,10 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM project_agents WHERE id IN ('rls-agent-a','rls-agent-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS project Agent isolation failed';
+  END IF;
+
+  IF (SELECT count(*) FROM task_delegations WHERE id IN ('rls-delegation-a','rls-delegation-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS task delegation isolation failed';
   END IF;
 
   UPDATE projects SET name = 'cross-tenant-write' WHERE id = 'rls-probe-b';
