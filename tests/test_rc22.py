@@ -29,6 +29,8 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
     owner = client.post("/api/v1/members", headers=ADMIN, json={"name": "Requester"}).json()
     recipient = client.post("/api/v1/members", headers=ADMIN, json={"name": "Agent Member"}).json()
     assert client.post(f"/api/v1/projects/{pid}/members", headers=ADMIN,
+                       json={"member_id": owner["id"], "role": "member"}).status_code == 200
+    assert client.post(f"/api/v1/projects/{pid}/members", headers=ADMIN,
                        json={"member_id": recipient["id"], "role": "member"}).status_code == 200
 
     owner_h = {"Authorization": f"Bearer {owner['token']}"}
