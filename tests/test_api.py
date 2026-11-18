@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0017_rc14_task_delegations (head)' in heads
+    assert '0018_rc15_task_work_packages (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -461,7 +461,7 @@ def test_rc15_work_packages_progress_blockers_and_artifact_aggregation():
     rh={'Authorization':'Bearer '+recipient['token']}
     assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
         'agent_name':'worker-python','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
-    oh={'Authorization':'Bearer '+owner_token}
+    oh=ADMIN
     created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=oh,json={
         'title':'Implement API layer','description':'Build and test endpoints',
         'assignee_member_id':recipient['id'],'agent_name':'worker-python'})
@@ -494,7 +494,7 @@ def test_rc15_work_package_rejects_offline_agent_and_cross_project_dependency():
     h={'Authorization':'Bearer '+member['token']}
     assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=h,json={
         'agent_name':'offline','capabilities':[],'protocols':['mcp'],'status':'OFFLINE'}).status_code==200
-    res=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers={'Authorization':'Bearer '+owner_token},json={
+    res=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
         'title':'Should fail','assignee_member_id':member['id'],'agent_name':'offline'})
     assert res.status_code==409
 
