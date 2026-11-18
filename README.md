@@ -1,4 +1,4 @@
-# DAEP Enterprise Release — 1.0.0-rc8
+# DAEP Enterprise Release — 1.0.0-rc22
 
 **Distributed Agentic Engineering Platform** is a task-centric engineering control plane. It manages organizations' project work, requirements, task assignments, collaboration messages, artifacts and acceptance workflow. Developers start and operate their own local Agent Runtime; DAEP does not create, host or control those runtimes. Local Agents connect through the MCP-compatible adapter.
 
@@ -32,15 +32,21 @@ Install dependencies on the developer's own workstation and configure the Host t
 
 ## Verification
 
-- Python syntax compilation: passed.
-- API and workflow tests: 26 passed.
-- MCP SDK runtime and real Host compatibility: not verified in this offline build environment.
-- Docker image build and production deployment: not run here.
+- Python 3.11/3.12/3.13 CI tests: 45 passed on each version.
+- PostgreSQL 17 migrations and RLS isolation: passed in CI.
+- Production Compose rendering: passed in CI with required secret interpolation.
+- Production container build and non-root runtime check: passed in CI.
+- Cross-member Agent collaboration end-to-end acceptance: passed in CI.
+- Real MCP Host compatibility, live TLS/OIDC/webhooks/broker and production deployment: still require deployment-owner acceptance.
 
 ## Release boundary
 
 This is a release candidate, not a production-certified GA release. The current release supports tenant-scoped accounts/resources, a PostgreSQL compatibility path via `DATABASE_URL`, optional OIDC with state/nonce/PKCE protections, member token lifecycle, a standalone broker worker with a separate least-privilege credential and provider-neutral Git webhook ingestion. It is still a release candidate: no live PostgreSQL, external IdP, broker, Git provider, Docker build, load, disaster-recovery or independent security certification was performed in this offline build environment. PostgreSQL RLS and Alembic are implemented in RC8, but live PostgreSQL integration and RLS isolation testing remain required. See `docs/OUTBOX_WORKER.md` for downstream delivery semantics and `docs/SECURITY_AND_GAPS.md` before deployment. Do not use this baseline for regulated or sensitive workloads or expose it to the public internet without additional controls.
 
+
+## RC22 candidate acceptance
+
+RC22 adds automated production Compose validation, a production smoke-check script, and an end-to-end cross-member Agent collaboration acceptance path covering delegation, explicit acceptance, work-package delivery, durable message ACK, artifact/result reporting, parent review gating, correlation timeline and outbox consumption. See `docs/RC22_CANDIDATE_ACCEPTANCE.md` and `scripts/production_smoke.sh`.
 
 ## RC6 enterprise hardening
 
