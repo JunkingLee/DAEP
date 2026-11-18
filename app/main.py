@@ -781,7 +781,7 @@ def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
         if row['expires_at'] <= now():
             c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=?",(now(),did))
             event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':did})
-            raise HTTPException(410,'Delegation offer has expired')
+            return JSONResponse(status_code=410,content={'detail':'Delegation offer has expired','status':'EXPIRED'})
         if decision=='ACCEPT':
             c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(row['task_id'],a['id']))
             c.execute('INSERT OR IGNORE INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?)',(row['project_id'],a['id'],'member',now()))
