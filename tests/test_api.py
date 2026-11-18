@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0020_rc18_corr (head)' in heads
+    assert '0021_rc19_work_package_health (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -615,3 +615,30 @@ def test_rc18_work_timeline_correlates_assignment_result_and_artifact():
     assert any(x['kind']=='artifact' and x['correlation_id']==cid for x in body['items'])
     reported=next(x for x in body['items'] if x.get('event_type')=='task.work_package.reported')
     assert reported['payload']['correlation_id']==cid
+
+
+def test_rc19_project_health_detects_sla_overdue_and_dependency_blockers():
+    pid,member_id,token,parent_id=setup_project_task()
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    req_id=db.execute('SELECT requirement_id FROM tasks WHERE id=?',(parent_id,)).fetchone()[0]
+    db.close()
+    dep=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req_id,'title':'External prerequisite','assignee_member_ids':[member_id]})
+    assert dep.status_code==200
+    mh={'Authorization':'Bearer '+token}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={'agent_name':'health-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    overdue=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={'title':'SLA package','assignee_member_id':member_id,'agent_name':'health-agent','sla_seconds':300})
+    blocked=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={'title':'Dependent package','assignee_member_id':member_id,'agent_name':'health-agent','dependencies':[dep.json()['id']]})
+    assert overdue.status_code==200 and blocked.status_code==200
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE task_work_packages SET sla_due_at='2000-01-01T00:00:00+00:00' WHERE id=?",(overdue.json()['id'],))
+    db.commit();db.close()
+    scan=client.post(f'/api/v1/projects/{pid}/work-packages/scan-health',headers=ADMIN)
+    assert scan.status_code==200
+    assert scan.json()['risk_counts']['OVERDUE']==1
+    assert scan.json()['risk_counts']['BLOCKED_DEPENDENCY']==1
+    report=client.get(f'/api/v1/projects/{pid}/work-health',headers=ADMIN)
+    assert report.status_code==200
+    assert report.json()['at_risk_count']==2 and report.json()['health_score']==0
+    assert any(x['blocking_dependencies'] for x in report.json()['items'])
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Health outsider'}).json()
+    assert client.get(f'/api/v1/projects/{pid}/work-health',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
