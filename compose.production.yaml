@@ -26,7 +26,7 @@ services:
       - |
         python -c "import app.main as m; m.bootstrap()"
         alembic upgrade head
-        python -c "import os, psycopg; c=psycopg.connect(os.environ['DATABASE_URL']); c.execute('GRANT daep_privileged TO daep_privileged_login'); c.execute('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.execute('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO daep_runtime, daep_privileged_login'); c.execute('''DO \\$\\$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO daep_privileged_login', r.tablename); END LOOP; FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP EXECUTE format('ALTER SEQUENCE public.%I OWNER TO daep_privileged_login', r.sequencename); END LOOP; END \\$\\
+        python deploy/postgres/finalize-roles.py
     environment:
       DAEP_ADMIN_TOKEN: ${DAEP_ADMIN_TOKEN:?Set DAEP_ADMIN_TOKEN}
       DATABASE_URL: postgresql://daep_bootstrap:${DAEP_POSTGRES_PASSWORD}@postgres:5432/daep
