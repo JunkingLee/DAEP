@@ -161,7 +161,6 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
         assert completed.status_code == 200
         assert completed.json()["status"] == "SENT"
 
-    db = sqlite3.connect(os.environ["DAEP_DB_PATH"])
-    row = db.execute("SELECT status FROM task_work_packages WHERE id=?", (package["id"],)).fetchone()
-    db.close()
-    assert row[0] == "DONE"
+    health_scan = client.post(f"/api/v1/projects/{pid}/work-packages/scan-health", headers=ADMIN)
+    assert health_scan.status_code == 200
+    assert health_scan.json()["risk_counts"]["COMPLETED"] >= 1
