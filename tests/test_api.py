@@ -6,6 +6,7 @@ try: os.remove(os.environ['DAEP_DB_PATH'])
 except FileNotFoundError: pass
 from fastapi.testclient import TestClient
 from app.main import app, init
+import app.main as main_module
 init()
 client=TestClient(app)
 ADMIN={'Authorization':'Bearer test-admin-token-with-32-characters-minimum'}
@@ -13,6 +14,16 @@ WORKER={'Authorization':'Bearer test-worker-token-with-32-characters-minimum'}
 
 def test_health():
     assert client.get('/health').json()['status']=='ok'
+    assert client.get('/readyz').json()['status']=='ready'
+
+def test_readiness_does_not_leak_database_exception(monkeypatch):
+    def fail_conn():
+        raise RuntimeError('postgres://secret-password@db/daep')
+    monkeypatch.setattr(main_module,'conn',fail_conn)
+    response=client.get('/readyz')
+    assert response.status_code==503
+    assert 'secret-password' not in response.text
+    assert 'readiness check failed' in response.text
 
 def setup_project_task():
     p=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Demo'}); assert p.status_code==200; pid=p.json()['id']
