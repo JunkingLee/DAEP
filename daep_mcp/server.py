@@ -60,6 +60,24 @@ def submit_task_artifact(task_id: str, artifact_type: str, uri: str, commit_sha:
         'artifact_type':artifact_type,'uri':uri,'commit_sha':commit_sha or None,'metadata':{}})
 
 @mcp.tool()
+def register_local_agent(project_id: str, agent_name: str, capabilities: list, protocols: list = None, status: str = 'AVAILABLE', metadata: dict = None) -> dict:
+    """Register this member's locally operated Agent and its project-scoped capabilities."""
+    return call('POST',f'/api/v1/projects/{project_id}/agents/register',{
+        'agent_name':agent_name,'capabilities':capabilities,'protocols':protocols or ['mcp'],
+        'status':status,'metadata':metadata or {}})
+
+@mcp.tool()
+def discover_project_agents(project_id: str, capability: str = '', protocol: str = 'mcp') -> dict:
+    """Discover project members' registered local Agents by capability and protocol."""
+    query=urllib.parse.urlencode({k:v for k,v in {'capability':capability,'protocol':protocol}.items() if v})
+    return call('GET',f'/api/v1/projects/{project_id}/agents'+(('?'+query) if query else ''))
+
+@mcp.tool()
+def heartbeat_local_agent(project_id: str, agent_name: str, status: str = 'AVAILABLE') -> dict:
+    """Refresh presence for an already registered local Agent."""
+    return call('POST',f'/api/v1/projects/{project_id}/agents/heartbeat',{'agent_name':agent_name,'status':status})
+
+@mcp.tool()
 def send_collaboration_message(recipient_member_id: str, title: str, content: str,
                                task_id: str = '', project_id: str = '', priority: str = 'NORMAL') -> dict:
     """Send a persistent collaboration message to another platform member."""
