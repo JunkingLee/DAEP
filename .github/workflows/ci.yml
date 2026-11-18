@@ -78,13 +78,13 @@ jobs:
         run: |
           result=$(psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -Atqc "
             SELECT
-              (SELECT count(*) = 9 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity)
+              (SELECT count(*) = 10 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity)
                FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-               WHERE n.nspname='public' AND c.relname IN ('members','projects','events','artifacts','outbox','messages','project_agents','task_delegations','task_work_packages'))
+               WHERE n.nspname='public' AND c.relname IN ('members','projects','events','artifacts','outbox','messages','project_agents','task_delegations','task_work_packages','project_approvals'))
               AND
-              (SELECT count(*) = 9 FROM pg_policies
+              (SELECT count(*) = 10 FROM pg_policies
                WHERE schemaname='public' AND policyname IN
-                 ('daep_members_tenant','daep_projects_tenant','daep_events_tenant','daep_artifacts_tenant','daep_outbox_tenant','daep_messages_tenant','daep_project_agents_tenant','daep_task_delegations_tenant','daep_task_work_packages_tenant'))
+                 ('daep_members_tenant','daep_projects_tenant','daep_events_tenant','daep_artifacts_tenant','daep_outbox_tenant','daep_messages_tenant','daep_project_agents_tenant','daep_task_delegations_tenant','daep_task_work_packages_tenant','daep_project_approvals_tenant'))
               AND
               (SELECT count(*) = 0 FROM pg_policies
                WHERE schemaname='public' AND tablename='members' AND policyname='daep_members_auth_lookup')
