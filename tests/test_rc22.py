@@ -36,10 +36,10 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
     owner_h = {"Authorization": f"Bearer {owner['token']}"}
     recipient_h = {"Authorization": f"Bearer {recipient['token']}"}
 
-    requirement = client.post("/api/v1/requirements", headers=owner_h,
+    requirement = client.post("/api/v1/requirements", headers=ADMIN,
                               json={"project_id": pid, "title": "RC22 requirement"})
     assert requirement.status_code == 200
-    task = client.post("/api/v1/tasks", headers=owner_h, json={
+    task = client.post("/api/v1/tasks", headers=ADMIN, json={
         "requirement_id": requirement.json()["id"],
         "title": "RC22 parent task",
         "assignee_member_ids": [owner["id"]],
