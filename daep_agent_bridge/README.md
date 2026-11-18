@@ -20,3 +20,6 @@ DAEP_AGENT_COMMAND='python local_agent_entry.py' \
 python -m daep_agent_bridge.bridge
 ```
 The message JSON is supplied on stdin to the configured command.
+
+
+For multi-member projects, each member may register their own local Agent through the DAEP MCP adapter. Discovery is project-scoped and capability-filtered. The bridge remains a message transport helper; it does not manage Agent runtimes or coordinate execution internally.
