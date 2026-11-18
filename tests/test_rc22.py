@@ -74,7 +74,7 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "ACCEPTED"
 
-    created = client.post(f"/api/v1/tasks/{parent_id}/work-packages", headers=owner_h, json={
+    created = client.post(f"/api/v1/tasks/{parent_id}/work-packages", headers=ADMIN, json={
         "title": "RC22 delegated package",
         "description": "Implement and verify the feature",
         "assignee_member_id": recipient["id"],
@@ -119,16 +119,16 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
                                   json={"progress": 100, "note": "Delegated work ready for review"})
     assert parent_progress.status_code == 200
 
-    parent_blocked = client.post(f"/api/v1/tasks/{parent_id}/review", headers=owner_h,
+    parent_blocked = client.post(f"/api/v1/tasks/{parent_id}/review", headers=ADMIN,
                                  json={"decision": "APPROVE"})
     assert parent_blocked.status_code == 409
 
-    child_approved = client.post(f"/api/v1/tasks/{child_id}/review", headers=owner_h,
+    child_approved = client.post(f"/api/v1/tasks/{child_id}/review", headers=ADMIN,
                                  json={"decision": "APPROVE", "comment": "Artifact verified"})
     assert child_approved.status_code == 200
     assert child_approved.json()["status"] == "DONE"
 
-    parent_approved = client.post(f"/api/v1/tasks/{parent_id}/review", headers=owner_h,
+    parent_approved = client.post(f"/api/v1/tasks/{parent_id}/review", headers=ADMIN,
                                   json={"decision": "APPROVE", "comment": "Delegated work accepted"})
     assert parent_approved.status_code == 200
     assert parent_approved.json()["status"] == "DONE"
