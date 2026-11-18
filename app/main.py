@@ -61,6 +61,7 @@ class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80)
 
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
+PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
 _admin_ctx=contextvars.ContextVar('daep_platform_admin',default=False)
 _auth_lookup_ctx=contextvars.ContextVar('daep_auth_lookup',default=False)
@@ -115,7 +116,13 @@ class _NoopCursor:
     def fetchall(self): return []
 
 def conn():
-    if DATABASE_URL.startswith(('postgresql://','postgres://')): return _PGConn(DATABASE_URL)
+    if DATABASE_URL.startswith(('postgresql://','postgres://')):
+        privileged = _admin_ctx.get() or _service_ctx.get()
+        if privileged:
+            if not PRIVILEGED_DATABASE_URL:
+                raise RuntimeError('DAEP_PRIVILEGED_DATABASE_URL is required for platform-admin and internal-service PostgreSQL operations')
+            return _PGConn(PRIVILEGED_DATABASE_URL)
+        return _PGConn(DATABASE_URL)
     os.makedirs(os.path.dirname(DB) or '.',exist_ok=True); c=sqlite3.connect(DB,timeout=5); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA busy_timeout=5000'); return c
 def bootstrap():
     service_reset=_service_ctx.set(True)
