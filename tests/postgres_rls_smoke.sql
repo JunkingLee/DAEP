@@ -68,6 +68,11 @@ BEGIN
   END IF;
   PERFORM set_config('app.platform_admin', 'false', true);
   PERFORM set_config('app.internal_service', 'false', true);
+  PERFORM set_config('app.auth_lookup', 'true', true);
+  IF (SELECT count(*) FROM members WHERE id IN ('rls-member-a','rls-member-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS privilege escalation: caller-forged auth_lookup exposed foreign members';
+  END IF;
+  PERFORM set_config('app.auth_lookup', 'false', true);
 
   IF (SELECT count(*) FROM requirements WHERE id IN ('rls-req-a','rls-req-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS requirement isolation failed';
