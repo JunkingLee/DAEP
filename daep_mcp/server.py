@@ -104,6 +104,24 @@ def list_task_delegations(task_id: str) -> list:
     return call('GET',f'/api/v1/tasks/{task_id}/delegations')
 
 
+@mcp.tool()
+def create_task_work_package(parent_task_id: str, title: str, assignee_member_id: str, agent_name: str, description: str = '', dependencies: list = None) -> dict:
+    """Create and assign a child work package to another member's registered local Agent."""
+    return call('POST',f'/api/v1/tasks/{parent_task_id}/work-packages',{
+        'title':title,'description':description,'assignee_member_id':assignee_member_id,
+        'agent_name':agent_name,'dependencies':dependencies or []})
+
+@mcp.tool()
+def list_task_work_packages(parent_task_id: str) -> list:
+    """List child work packages, current task states and their submitted artifacts."""
+    return call('GET',f'/api/v1/tasks/{parent_task_id}/work-packages')
+
+@mcp.tool()
+def get_task_work_summary(parent_task_id: str) -> dict:
+    """Aggregate child work package progress, blockers and artifact count."""
+    return call('GET',f'/api/v1/tasks/{parent_task_id}/work-summary')
+
+
 if __name__=='__main__':
     import urllib.parse
     mcp.run(transport='stdio')
