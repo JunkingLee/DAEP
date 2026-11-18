@@ -16,6 +16,7 @@ VALUES
   ('rls-probe-b', 'RLS tenant B', '', NULL, now()::text, 'tenant-b')
 ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id;
 
+BEGIN;
 SET ROLE daep_rls_probe;
 SELECT set_config('app.tenant_id', 'tenant-a', true);
 SELECT set_config('app.platform_admin', 'false', true);
@@ -53,3 +54,4 @@ END
 $$;
 
 RESET ROLE;
+COMMIT;
