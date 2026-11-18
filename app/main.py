@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Cookie, Request
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -177,6 +177,8 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
+        CREATE TABLE IF NOT EXISTS project_approvals(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',decided_by TEXT,decision_reason TEXT,created_at TEXT NOT NULL,decided_at TEXT,FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id));
+        CREATE INDEX IF NOT EXISTS idx_project_approvals_status ON project_approvals(project_id,status,created_at);
         CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,lease_token TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE INDEX IF NOT EXISTS idx_outbox_ready ON outbox(status,available_at,lease_until);
         '''
@@ -580,15 +582,97 @@ def project_members(pid:str,authorization:str=Header(None)):
 def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     mid=b.get('member_id'); role=b.get('role','member')
-    if role not in ('member','manager','reviewer'): raise HTTPException(422,'Invalid project role')
+    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
+        if role=='manager' and not is_admin(a):
+            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
         member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
         c.execute('INSERT INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role',(pid,mid,role,now()))
         return {'project_id':pid,'member_id':mid,'role':role}
+@app.post('/api/v1/projects/{pid}/role-change-requests')
+def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
+    reason=str(b.get('reason','')).strip()
+    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
+        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
+    with conn() as c:
+        require_project_access(c,pid,a,write=True)
+        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
+        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
+        if current==new_role: raise HTTPException(409,'Member already has requested role')
+        aid='apr_'+uuid.uuid4().hex
+        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
+        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
+                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
+        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,**payload},tenant_override=project['tenant_id'])
+        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
+
+@app.get('/api/v1/projects/{pid}/approvals')
+def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
+    a=actor(authorization); limit=max(1,min(limit,200))
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute('SELECT * FROM project_approvals WHERE project_id=? AND status=? ORDER BY created_at DESC LIMIT ?',(pid,status,limit)).fetchall()
+        return {'items':[{'id':x['id'],'action':x['action'],'payload':json.loads(x['payload']),'status':x['status'],'requester_member_id':x['requester_member_id'],'decided_by':x['decided_by'],'decision_reason':x['decision_reason'],'created_at':x['created_at'],'decided_at':x['decided_at']} for x in rows]}
+
+@app.post('/api/v1/projects/{pid}/approvals/{approval_id}/decision')
+def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization); decision=str(b.get('decision','')).upper(); reason=str(b.get('reason','')).strip()
+    if decision not in ('APPROVE','REJECT') or not reason or len(reason)>1000: raise HTTPException(422,'decision must be APPROVE or REJECT and reason is required')
+    with conn() as c:
+        require_project_access(c,pid,a)
+        if not is_admin(a):
+            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+            if not own or own['role']!='owner': raise HTTPException(403,'Project owner approval required')
+        row=c.execute('SELECT * FROM project_approvals WHERE id=? AND project_id=?',(approval_id,pid)).fetchone()
+        if not row: raise HTTPException(404,'Approval not found')
+        if row['status']!='PENDING': raise HTTPException(409,'Approval already decided')
+        if row['requester_member_id']==a['id']: raise HTTPException(403,'Requester cannot approve their own request')
+        payload=json.loads(row['payload'])
+        if row['action']!='PROJECT_ROLE_CHANGE': raise HTTPException(409,'Unsupported approval action')
+        if decision=='APPROVE':
+            current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,payload['member_id'])).fetchone()
+            if not current or current['role']!=payload['previous_role']: raise HTTPException(409,'Target role changed since request; submit a new request')
+            c.execute('UPDATE project_members SET role=? WHERE project_id=? AND member_id=?',(payload['new_role'],pid,payload['member_id']))
+        stamp=now()
+        c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(decision+'D',a['id'],reason,stamp,approval_id,'PENDING'))
+        event(c,'project.role_change.'+decision.lower()+'d',a['id'],None,{'approval_id':approval_id,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
+        return {'approval_id':approval_id,'status':decision+'D','member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
+
+@app.get('/api/v1/projects/{pid}/audit')
+def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authorization:str=Header(None)):
+    a=actor(authorization); limit=max(1,min(limit,500))
+    with conn() as c:
+        require_project_access(c,pid,a)
+        sql="SELECT e.* FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=?"
+        args=[pid]
+        if before: sql+=" AND e.created_at<?"; args.append(before)
+        if event_type: sql+=" AND e.event_type=?"; args.append(event_type)
+        sql+=" ORDER BY e.created_at DESC LIMIT ?"; args.append(limit)
+        rows=c.execute(sql,args).fetchall()
+        return {'project_id':pid,'items':[{'id':x['id'],'event_type':x['event_type'],'actor_member_id':x['actor_member_id'],'task_id':x['task_id'],'payload':json.loads(x['payload'] or '{}'),'created_at':x['created_at']} for x in rows]}
+
+@app.get('/api/v1/projects/{pid}/audit.csv')
+def export_project_audit(pid:str,limit:int=5000,authorization:str=Header(None)):
+    a=actor(authorization); limit=max(1,min(limit,10000))
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT e.id,e.event_type,e.actor_member_id,e.task_id,e.payload,e.created_at
+            FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id
+            WHERE r.project_id=? ORDER BY e.created_at DESC LIMIT ?""",(pid,limit)).fetchall()
+        def q(v): return '"'+str(v if v is not None else '').replace('"','""')+'"'
+        lines=['id,event_type,actor_member_id,task_id,created_at,payload']
+        for x in rows: lines.append(','.join(q(v) for v in (x['id'],x['event_type'],x['actor_member_id'],x['task_id'],x['created_at'],x['payload'])))
+        return Response(content='\n'.join(lines)+'\n',media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="daep-audit-{pid}.csv"'})
+
 @app.get('/api/v1/projects/{pid}/requirements')
 def project_requirements(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
