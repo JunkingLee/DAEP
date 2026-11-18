@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DAEP · Engineering Control Plane</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#182230;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}header{background:#172b4d;color:white;padding:20px 28px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:20px;margin:0}main{max-width:1200px;margin:24px auto;padding:0 18px}.panel{background:white;border:1px solid #e2e7ed;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #172b4d0a}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}h2{font-size:16px;margin:0 0 14px}label{display:block;font-size:12px;color:#5b6675;margin:9px 0 5px}input,textarea,select{width:100%;border:1px solid #ccd4df;border-radius:7px;padding:10px;font:inherit;background:white}textarea{min-height:65px}button{background:#2457a7;color:white;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;margin:6px 4px 0 0}button.secondary{background:#e9eef5;color:#23364d}.muted{color:#657286;font-size:13px}.item{border-top:1px solid #edf0f4;padding:10px 0}.item strong{display:block}.tag{font-size:11px;border-radius:20px;background:#edf2f8;padding:3px 8px;color:#42536a}.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}.status{color:#13724a}.error{color:#b42318;white-space:pre-wrap}.hidden{display:none}@media(max-width:600px){header{padding:16px}main{margin:14px auto}}
+</style></head><body>
+<header><h1>DAEP <span style="font-weight:400;opacity:.7">/ Distributed Agentic Engineering Platform</span></h1><span id="identity" class="muted" style="color:#d7e2f2">Not connected</span></header>
+<main>
+<section class="panel" id="auth"><h2>连接平台</h2><p class="muted">输入个人成员 Token。Token 仅保存在当前页面内存，不写入浏览器持久存储。</p><div class="row"><input id="token" type="password" placeholder="Bearer token（不含 Bearer 前缀）"><button onclick="connect()">连接</button></div><div id="authmsg" class="muted"></div></section>
+<div id="app" class="hidden">
+<div class="grid">
+<section class="panel"><h2>项目</h2><div class="row"><input id="projectName" placeholder="新项目名称"><button onclick="createProject()">创建项目</button></div><div id="projects"></div></section>
+<section class="panel"><h2>项目成员</h2><div id="members" class="muted">选择项目以查看成员</div><div class="row"><input id="newMemberId" placeholder="成员 ID"><select id="memberRole"><option>member</option><option>manager</option><option>reviewer</option></select></div><button onclick="addMember()">添加/更新成员</button></section>
+</div>
+<div class="grid">
+<section class="panel"><h2>需求</h2><input id="reqTitle" placeholder="需求标题"><label>描述</label><textarea id="reqDesc"></textarea><button onclick="createRequirement()">创建需求</button><div id="requirements"></div></section>
+<section class="panel"><h2>工程任务</h2><select id="reqSelect"><option value="">先创建或选择需求</option></select><input id="taskTitle" placeholder="任务标题"><label>描述</label><textarea id="taskDesc"></textarea><label>分配成员（可多选）</label><select id="assignees" multiple size="4"></select><button onclick="createTask()">创建任务</button><div id="tasks"></div></section>
+</div>
+<section class="panel"><h2>我的消息收件箱</h2><button class="secondary" onclick="loadInbox()">刷新消息</button><div id="inbox"></div></section>
+</div><div id="error" class="error"></div>
+</main>
+<script>
+let token='',me=null,projects=[],selectedProject=null,requirements=[];
+const $=id=>document.getElementById(id);const headers=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||r.statusText);return d}
+function showError(e){$('error').textContent=e.message||String(e)}
+async function connect(){try{token=$('token').value.trim();me=await api('/api/v1/me');$('identity').textContent=me.name+' · '+me.role;$('authmsg').textContent='连接成功';$('app').classList.remove('hidden');await loadProjects();await loadInbox()}catch(e){showError(e)}}
+async function loadProjects(){projects=await api('/api/v1/projects');$('projects').innerHTML=projects.map(p=>`<div class="item"><button class="secondary" onclick="selectProject('${p.id}')">打开</button><strong>${esc(p.name)}</strong><span class="muted">${esc(p.id)}</span></div>`).join('')||'<p class="muted">暂无项目</p>'}
+async function createProject(){try{const p=await api('/api/v1/projects',{method:'POST',body:JSON.stringify({name:$('projectName').value})});$('projectName').value='';await loadProjects();await selectProject(p.id)}catch(e){showError(e)}}
+async function selectProject(id){try{selectedProject=id;await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()])}catch(e){showError(e)}}
+async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);$('members').innerHTML=m.map(x=>`<div class="item">${esc(x.name)} <span class="tag">${x.project_role}</span><div class="muted">${x.id}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
+async function addMember(){try{await api(`/api/v1/projects/${selectedProject}/members`,{method:'POST',body:JSON.stringify({member_id:$('newMemberId').value,role:$('memberRole').value})});$('newMemberId').value='';await loadProjectMembers()}catch(e){showError(e)}}
+async function loadRequirements(){requirements=await api(`/api/v1/projects/${selectedProject}/requirements`);$('requirements').innerHTML=requirements.map(r=>`<div class="item"><strong>${esc(r.title)}</strong><span class="muted">${esc(r.id)}</span></div>`).join('')||'<p class="muted">暂无需求</p>';$('reqSelect').innerHTML=requirements.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')||'<option value="">先创建需求</option>'}
+async function createRequirement(){try{await api('/api/v1/requirements',{method:'POST',body:JSON.stringify({project_id:selectedProject,title:$('reqTitle').value,description:$('reqDesc').value})});$('reqTitle').value='';$('reqDesc').value='';await loadRequirements()}catch(e){showError(e)}}
+async function loadTasks(){const ts=await api(`/api/v1/projects/${selectedProject}/tasks`);$('tasks').innerHTML=ts.map(t=>`<div class="item"><strong>${esc(t.title)} <span class="tag">${t.status}</span></strong><span class="muted">${t.progress}% · ${esc(t.id)}</span></div>`).join('')||'<p class="muted">暂无任务</p>'}
+async function createTask(){try{const assignees=[...$('assignees').selectedOptions].map(o=>o.value);await api('/api/v1/tasks',{method:'POST',body:JSON.stringify({requirement_id:$('reqSelect').value,title:$('taskTitle').value,description:$('taskDesc').value,assignee_member_ids:assignees})});$('taskTitle').value='';$('taskDesc').value='';await loadTasks()}catch(e){showError(e)}}
+async function loadInbox(){try{const d=await api('/api/v1/me/notifications');$('inbox').innerHTML=d.items.map(m=>`<div class="item"><strong>${esc(m.title)} <span class="tag">${esc(m.priority)}</span></strong><p>${esc(m.content)}</p><span class="muted">${esc(m.created_at)}</span><button onclick="ack('${m.id}')">确认收到</button></div>`).join('')||'<p class="muted">没有待处理消息</p>'}catch(e){showError(e)}}
+async function ack(id){try{await api(`/api/v1/messages/${id}/ack`,{method:'POST',body:JSON.stringify({status:'ACKNOWLEDGED'})});await loadInbox()}catch(e){showError(e)}}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+</script></body></html>
