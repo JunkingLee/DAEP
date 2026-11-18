@@ -1,6 +1,6 @@
 """RC18: stable work-package correlation identifiers."""
 from alembic import op
-revision = "0020_rc18_work_package_correlation"
+revision = "0020_rc18_corr"
 down_revision = "0019_rc17_work_package_stall"
 branch_labels = None
 depends_on = None
