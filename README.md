@@ -111,3 +111,8 @@ Work packages may be created with an optional `sla_seconds` value (300 seconds t
 Project roles are explicitly separated: owners and managers may administer project membership; only owners may directly grant the manager role. Managers can submit role-change requests, and a different project owner must approve or reject them. Self-approval is forbidden, and stale requests fail if the target role changed before approval. APIs: `POST /api/v1/projects/{id}/role-change-requests`, `GET /api/v1/projects/{id}/approvals`, and `POST /api/v1/projects/{id}/approvals/{approval_id}/decision`.
 
 Project audit records are available through `GET /api/v1/projects/{id}/audit` with event-type and cursor filters, or as CSV through `GET /api/v1/projects/{id}/audit.csv`. Both endpoints enforce project membership and tenant boundaries. MCP tools cover role-change requests, approval decisions and audit access.
+
+
+## RC21 production operations
+
+For new production deployments, use `compose.production.yaml` and follow [the RC21 production operations and recovery runbook](docs/RC21_PRODUCTION_OPERATIONS.md). The production topology separates bootstrap, runtime and privileged PostgreSQL identities; keeps PostgreSQL off published host ports; uses a non-root, read-only API container; and provides guarded PostgreSQL backup/restore scripts. The legacy `docker-compose.rc8.yaml` remains for compatibility and local development. Passing CI does not replace a production restore drill, security review or release-owner acceptance.
