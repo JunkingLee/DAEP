@@ -612,7 +612,7 @@ def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
         payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
         c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
                   (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,**payload},tenant_override=project['tenant_id'])
+        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
         return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
 
 @app.get('/api/v1/projects/{pid}/approvals')
@@ -643,17 +643,18 @@ def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Hea
             if not current or current['role']!=payload['previous_role']: raise HTTPException(409,'Target role changed since request; submit a new request')
             c.execute('UPDATE project_members SET role=? WHERE project_id=? AND member_id=?',(payload['new_role'],pid,payload['member_id']))
         stamp=now()
-        c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(decision+'D',a['id'],reason,stamp,approval_id,'PENDING'))
-        event(c,'project.role_change.'+('approved' if decision=='APPROVE' else 'rejected'),a['id'],None,{'approval_id':approval_id,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
-        return {'approval_id':approval_id,'status':decision+'D','member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
+        approval_status='APPROVED' if decision=='APPROVE' else 'REJECTED'
+        c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(approval_status,a['id'],reason,stamp,approval_id,'PENDING'))
+        event(c,'project.role_change.'+('approved' if decision=='APPROVE' else 'rejected'),a['id'],None,{'approval_id':approval_id,'project_id':pid,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
+        return {'approval_id':approval_id,'status':approval_status,'member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
 
 @app.get('/api/v1/projects/{pid}/audit')
 def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        sql="SELECT e.* FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=?"
-        args=[pid]
+        sql="SELECT e.* FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?)"
+        args=[pid,'%\"project_id\":\"'+pid+'\"%']
         if before: sql+=" AND e.created_at<?"; args.append(before)
         if event_type: sql+=" AND e.event_type=?"; args.append(event_type)
         sql+=" ORDER BY e.created_at DESC LIMIT ?"; args.append(limit)
@@ -667,7 +668,7 @@ def export_project_audit(pid:str,limit:int=5000,authorization:str=Header(None)):
         require_project_access(c,pid,a)
         rows=c.execute("""SELECT e.id,e.event_type,e.actor_member_id,e.task_id,e.payload,e.created_at
             FROM events e JOIN tasks t ON t.id=e.task_id JOIN requirements r ON r.id=t.requirement_id
-            WHERE r.project_id=? ORDER BY e.created_at DESC LIMIT ?""",(pid,limit)).fetchall()
+            WHERE r.project_id=? OR (e.task_id IS NULL AND e.payload LIKE ?) ORDER BY e.created_at DESC LIMIT ?""",(pid,'%\"project_id\":\"'+pid+'\"%',limit)).fetchall()
         def q(v): return '"'+str(v if v is not None else '').replace('"','""')+'"'
         lines=['id,event_type,actor_member_id,task_id,created_at,payload']
         for x in rows: lines.append(','.join(q(v) for v in (x['id'],x['event_type'],x['actor_member_id'],x['task_id'],x['created_at'],x['payload'])))
