@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0016_rc13_project_agents (head)' in heads
+    assert '0017_rc14_task_delegations (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
