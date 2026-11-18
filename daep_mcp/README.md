@@ -29,3 +29,8 @@ Example host configuration:
 ```
 
 Never commit tokens. This adapter uses stdio and REST calls; Host idle-model wake-up is not guaranteed.
+
+
+## Local Agent collaboration tools
+
+The MCP adapter also exposes `register_local_agent`, `discover_project_agents`, and `heartbeat_local_agent`. Registration is scoped to a project the member belongs to. Advertise only capabilities actually available from the locally operated Agent. Presence is considered offline after 120 seconds without a heartbeat. DAEP stores metadata only and cannot guarantee waking an idle MCP Host.
