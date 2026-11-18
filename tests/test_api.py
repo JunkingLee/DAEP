@@ -423,3 +423,33 @@ def test_project_agent_registry_rejects_nonmember_and_invalid_protocol():
     assert invalid.status_code==422
     missing=client.post(f'/api/v1/projects/{pid}/agents/heartbeat',headers=mh,json={'agent_name':'not-registered'})
     assert missing.status_code==404
+
+def test_rc14_task_delegation_accept_reject_and_audit():
+    pid,requester_id,requester_token,tid=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Delegation Recipient'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    registered=client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'local-coder','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'})
+    assert registered.status_code==200
+    qh={'Authorization':'Bearer '+requester_token}
+    offered=client.post(f'/api/v1/tasks/{tid}/delegations',headers=qh,json={
+        'recipient_member_id':recipient['id'],'agent_name':'local-coder','reason':'Implement the API client'})
+    assert offered.status_code==200 and offered.json()['status']=='PENDING'
+    inbox=client.get('/api/v1/me/notifications',headers=rh).json()['items']
+    assert any(x['id']==offered.json()['message_id'] and x['message_type']=='TASK_DELEGATION' for x in inbox)
+    accepted=client.post(f"/api/v1/delegations/{offered.json()['id']}/respond",headers=rh,json={'decision':'ACCEPT'})
+    assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    detail=client.get(f'/api/v1/tasks/{tid}',headers=qh).json()
+    assert any(x['id']==recipient['id'] for x in detail['assignees'])
+    history=client.get(f'/api/v1/tasks/{tid}/delegations',headers=qh).json()
+    assert history[0]['status']=='ACCEPTED'
+    events=client.get(f'/api/v1/tasks/{tid}/events',headers=qh).json()
+    assert any(x['event_type']=='task.delegation.offered' for x in events)
+    assert any(x['event_type']=='task.delegation.accepted' for x in events)
+    rejected_offer=client.post(f'/api/v1/tasks/{tid}/delegations',headers=qh,json={
+        'recipient_member_id':recipient['id'],'agent_name':'local-coder','reason':'Second work package'})
+    assert rejected_offer.status_code==200
+    rejected=client.post(f"/api/v1/delegations/{rejected_offer.json()['id']}/respond",headers=rh,json={'decision':'REJECT'})
+    assert rejected.status_code==200 and rejected.json()['status']=='REJECTED'
+
