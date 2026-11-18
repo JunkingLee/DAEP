@@ -7,8 +7,9 @@
 ```bash
 cp .env.example .env
 # Set DAEP_ADMIN_TOKEN and DAEP_WORKER_TOKEN to different unique random secrets (at least 32 characters each)
+# For broker delivery also set DAEP_BROKER_WEBHOOK_URL and DAEP_BROKER_WEBHOOK_TOKEN (at least 32 characters)
 docker compose -f docker-compose.rc8.yaml up --build -d
-# Optional broker delivery (configure DAEP_BROKER_WEBHOOK_URL first):
+# Optional broker delivery (configure both broker URL and its independent credential):
 docker compose -f docker-compose.rc8.yaml --profile broker up --build -d
 ```
 
@@ -27,7 +28,7 @@ The first administrator token is `DAEP_ADMIN_TOKEN`. Create individual members t
 
 ## Local MCP adapter
 
-Install dependencies on the developer's own workstation and configure the Host to launch `daep_mcp/server.py` using that member's token. See `daep_mcp/README.md`. The adapter does not start an Agent Runtime and cannot force an idle MCP Host to wake its model. Platform messages remain in the durable inbox and can be polled after reconnecting. Message creation also writes a durable transactional outbox record; a separate worker can claim, retry and complete those records through the internal API. The separate broker worker uses its own `DAEP_WORKER_TOKEN`; do not reuse the platform admin token.
+Install dependencies on the developer's own workstation and configure the Host to launch `daep_mcp/server.py` using that member's token. See `daep_mcp/README.md`. The adapter does not start an Agent Runtime and cannot force an idle MCP Host to wake its model. Platform messages remain in the durable inbox and can be polled after reconnecting. Message creation also writes a durable transactional outbox record; a separate worker can claim, retry and complete those records through the internal API. The separate broker worker uses its own `DAEP_WORKER_TOKEN`; do not reuse the platform admin token. Its HTTP gateway also requires an independent `DAEP_BROKER_WEBHOOK_TOKEN`. Outbox claims include a per-lease capability token, and gateway requests include the stable outbox ID for deduplication.
 
 ## Verification
 
