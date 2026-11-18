@@ -50,6 +50,7 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO task_delegations(id,task_id,project_id,tenant_id,requester_member_id,recipient_member_id,agent_name,reason,status,expires_at,created_at,updated_at) VALUES ('rls-delegation-a','rls-task-a','rls-probe-a','tenant-a','rls-member-a','rls-member-a','agent-a','','PENDING','2027-01-01T00:00:00+00:00',now()::text,now()::text), ('rls-delegation-b','rls-task-b','rls-probe-b','tenant-b','rls-member-b','rls-member-b','agent-b','','PENDING','2027-01-01T00:00:00+00:00',now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO tasks (id,requirement_id,title,description,status,progress,created_at,updated_at) VALUES ('rls-child-a','rls-req-a','A child','','READY',0,now()::text,now()::text),('rls-child-b','rls-req-b','B child','','READY',0,now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES ('rls-work-package-a','rls-task-a','rls-child-a','rls-probe-a','tenant-a','rls-member-a','agent-a','ACTIVE',now()::text,now()::text),('rls-work-package-b','rls-task-b','rls-child-b','rls-probe-b','tenant-b','rls-member-b','agent-b','ACTIVE',now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
