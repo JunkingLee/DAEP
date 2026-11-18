@@ -321,7 +321,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0018_rc15_task_work_packages (head)' in heads
+    assert '0019_rc17_work_package_stall (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -553,3 +553,43 @@ def test_rc16_failed_work_package_becomes_blocked():
     assert failed.status_code==200 and failed.json()['status']=='BLOCKED'
     detail=client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()
     assert detail['status']=='BLOCKED'
+
+
+def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_new_agent():
+    pid,_,_,parent_id=setup_project_task()
+    old_member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stalled Agent'}).json()
+    new_member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Replacement Agent'}).json()
+    for member,name in ((old_member,'old-agent'),(new_member,'replacement-agent')):
+        h={'Authorization':'Bearer '+member['token']}
+        assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':member['id'],'role':'member'}).status_code==200
+        assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=h,json={
+            'agent_name':name,'capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
+        'title':'Stalled implementation','assignee_member_id':old_member['id'],'agent_name':'old-agent'})
+    assert created.status_code==200
+    package_id=created.json()['id']; child=created.json()['task_id']
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",(child,))
+    db.commit(); db.close()
+    premature=client.post(f'/api/v1/work-packages/{package_id}/reassign',headers=ADMIN,json={
+        'assignee_member_id':new_member['id'],'agent_name':'replacement-agent','reason':'Not yet reviewed'})
+    assert premature.status_code==409
+    scanned=client.post(f'/api/v1/projects/{pid}/work-packages/scan-stalled',headers=ADMIN,json={'stale_after_seconds':300})
+    assert scanned.status_code==200 and scanned.json()['marked_count']==1
+    assert scanned.json()['items'][0]['child_task_id']==child
+    repeated=client.post(f'/api/v1/projects/{pid}/work-packages/scan-stalled',headers=ADMIN,json={'stale_after_seconds':300})
+    assert repeated.status_code==200 and repeated.json()['marked_count']==0
+    reassigned=client.post(f'/api/v1/work-packages/{package_id}/reassign',headers=ADMIN,json={
+        'assignee_member_id':new_member['id'],'agent_name':'replacement-agent','reason':'Original Agent has been inactive'})
+    assert reassigned.status_code==200 and reassigned.json()['needs_attention'] is False
+    detail=client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()
+    assert any(x['id']==new_member['id'] for x in detail['assignees'])
+    assert not any(x['id']==old_member['id'] for x in detail['assignees'])
+    inbox=client.get('/api/v1/me/notifications',headers={'Authorization':'Bearer '+new_member['token']}).json()['items']
+    assert any(x['message_type']=='WORK_PACKAGE_REASSIGNED' and x['task_id']==child for x in inbox)
+    packages=client.get(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN).json()
+    row=next(x for x in packages if x['id']==package_id)
+    assert row['assignee_member_id']==new_member['id'] and row['needs_attention']==0 and row['stalled_at'] is None
+    events=client.get(f'/api/v1/tasks/{parent_id}/events',headers=ADMIN).json()
+    assert any(x['event_type']=='task.work_package.stalled' for x in events)
+    assert any(x['event_type']=='task.work_package.reassigned' for x in events)
