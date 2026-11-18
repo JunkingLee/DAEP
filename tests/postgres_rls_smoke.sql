@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -41,6 +41,12 @@ ON CONFLICT DO NOTHING;
 INSERT INTO assignments (task_id,member_id)
 VALUES ('rls-task-a','rls-member-a'),('rls-task-b','rls-member-b')
 ON CONFLICT DO NOTHING;
+
+INSERT INTO project_agents(id,project_id,member_id,tenant_id,agent_name,capabilities,protocols,status,metadata,last_seen,created_at,updated_at)
+VALUES
+ ('rls-agent-a','rls-probe-a','rls-member-a','tenant-a','agent-a','["python"]','["mcp"]','AVAILABLE','{}',now()::text,now()::text,now()::text),
+ ('rls-agent-b','rls-probe-b','rls-member-b','tenant-b','agent-b','["python"]','["mcp"]','AVAILABLE','{}',now()::text,now()::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
 
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
@@ -85,6 +91,9 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM assignments WHERE task_id IN ('rls-task-a','rls-task-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS assignment isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM project_agents WHERE id IN ('rls-agent-a','rls-agent-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project Agent isolation failed';
   END IF;
 
   UPDATE projects SET name = 'cross-tenant-write' WHERE id = 'rls-probe-b';
