@@ -1,21 +1,24 @@
-import os, tempfile, sqlite3
+import os
+import sys
+import tempfile
 
-os.environ["DAEP_DB_PATH"] = os.path.join(tempfile.gettempdir(), "daep-rc22-e2e.db")
-os.environ["DAEP_ADMIN_TOKEN"] = "rc22-admin-token-with-32-characters-minimum"
-os.environ["DAEP_WORKER_TOKEN"] = "rc22-worker-token-with-32-characters-minimum"
-
-try:
-    os.remove(os.environ["DAEP_DB_PATH"])
-except FileNotFoundError:
-    pass
+if "app.main" not in sys.modules:
+    os.environ["DAEP_DB_PATH"] = os.path.join(tempfile.gettempdir(), "daep-rc22-standalone.db")
+    os.environ["DAEP_ADMIN_TOKEN"] = "rc22-admin-token-with-32-characters-minimum"
+    os.environ["DAEP_WORKER_TOKEN"] = "rc22-worker-token-with-32-characters-minimum"
 
 from fastapi.testclient import TestClient
-from app.main import app, init
+import app.main as main_module
 
-init()
-client = TestClient(app)
-ADMIN = {"Authorization": "Bearer rc22-admin-token-with-32-characters-minimum"}
-WORKER = {"Authorization": "Bearer rc22-worker-token-with-32-characters-minimum"}
+if "client" in globals():
+    pass
+
+main_module.init()
+client = TestClient(main_module.app)
+ADMIN_TOKEN = os.environ["DAEP_ADMIN_TOKEN"]
+WORKER_TOKEN = os.environ["DAEP_WORKER_TOKEN"]
+ADMIN = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+WORKER = {"Authorization": f"Bearer {WORKER_TOKEN}"}
 
 
 def test_rc22_cross_member_agent_collaboration_end_to_end():
