@@ -7,6 +7,7 @@ COPY app ./app
 COPY daep_mcp ./daep_mcp
 COPY daep_worker ./daep_worker
 COPY daep_agent_bridge ./daep_agent_bridge
+COPY deploy/postgres ./deploy/postgres
 COPY web ./web
 RUN addgroup --system daep && adduser --system --ingroup daep daep && mkdir -p /data && chown -R daep:daep /data
 USER daep
