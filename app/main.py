@@ -74,6 +74,7 @@ class WorkPackageIn(BaseModel):
     assignee_member_id:str=Field(min_length=1,max_length=120)
     agent_name:str=Field(min_length=1,max_length=120)
     dependencies:list[str]=Field(default_factory=list)
+    sla_seconds:Optional[int]=Field(default=None,ge=300,le=2592000)
 class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80); uri:str=Field(min_length=1,max_length=2048); commit_sha:Optional[str]=None; metadata:dict=Field(default_factory=dict)
 class WorkResultIn(BaseModel): outcome:str=Field(pattern='^(COMPLETE|FAILED)$'); summary:str=Field(min_length=1,max_length=5000); idempotency_key:str=Field(default='',max_length=200)
 class WorkPackageScanIn(BaseModel): stale_after_seconds:int=Field(default=3600,ge=300,le=604800)
@@ -174,7 +175,7 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_project_agents_discovery ON project_agents(project_id,status,last_seen);
         CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
-        CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
+        CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
         CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,lease_owner TEXT,lease_token TEXT,last_error TEXT,created_at TEXT NOT NULL,sent_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
         CREATE INDEX IF NOT EXISTS idx_outbox_ready ON outbox(status,available_at,lease_until);
@@ -192,7 +193,7 @@ def init():
         c.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES('0006-tenant-indexes-oidc-state',?)",(now(),))
         # Additive tenant and credential lifecycle migrations.
         work_package_cols={r['name'] for r in c.execute('PRAGMA table_info(task_work_packages)').fetchall()}
-        for col,ddl in [('needs_attention','INTEGER NOT NULL DEFAULT 0'),('stalled_at','TEXT'),('stall_reason','TEXT'),('correlation_id','TEXT')]:
+        for col,ddl in [('needs_attention','INTEGER NOT NULL DEFAULT 0'),('stalled_at','TEXT'),('stall_reason','TEXT'),('correlation_id','TEXT'),('sla_due_at','TEXT'),('risk_state',"TEXT NOT NULL DEFAULT 'ON_TRACK'")]:
             if col not in work_package_cols: c.execute(f'ALTER TABLE task_work_packages ADD COLUMN {col} {ddl}')
         table_cols = {
             'members': {r['name'] for r in c.execute('PRAGMA table_info(members)').fetchall()},
@@ -756,15 +757,16 @@ def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(N
         c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(child_id,b.assignee_member_id))
         for dep in b.dependencies: c.execute('INSERT INTO dependencies(task_id,depends_on_task_id) VALUES(?,?)',(child_id,dep))
         correlation_id='corr_'+uuid.uuid4().hex
-        c.execute('INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at,correlation_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(package_id,parent_id,child_id,project_id,project['tenant_id'],b.assignee_member_id,agent_name,'ACTIVE',stamp,stamp,correlation_id))
+        sla_due_at=datetime.fromtimestamp(datetime.fromisoformat(stamp).timestamp()+b.sla_seconds,timezone.utc).isoformat() if b.sla_seconds else None
+        c.execute('INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at,correlation_id,sla_due_at,risk_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(package_id,parent_id,child_id,project_id,project['tenant_id'],b.assignee_member_id,agent_name,'ACTIVE',stamp,stamp,correlation_id,sla_due_at,'ON_TRACK'))
         mid='msg_'+uuid.uuid4().hex[:12]
         title='Work package assigned: '+b.title
-        content=json.dumps({'work_package_id':package_id,'correlation_id':correlation_id,'parent_task_id':parent_id,'task_id':child_id,'agent_name':agent_name,'title':b.title},ensure_ascii=False)
+        content=json.dumps({'work_package_id':package_id,'correlation_id':correlation_id,'parent_task_id':parent_id,'task_id':child_id,'agent_name':agent_name,'title':b.title,'sla_due_at':sla_due_at},ensure_ascii=False)
         c.execute('INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(mid,b.assignee_member_id,project['tenant_id'],child_id,'WORK_PACKAGE_ASSIGNED',title,content,'HIGH','PENDING',stamp,None))
         payload={'message_id':mid,'recipient_member_id':b.assignee_member_id,'project_id':project_id,'task_id':child_id,'message_type':'WORK_PACKAGE_ASSIGNED','title':title,'content':content,'priority':'HIGH'}
         c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,stamp,stamp,project['tenant_id']))
-        event(c,'task.work_package.created',a['id'],parent_id,{'work_package_id':package_id,'correlation_id':correlation_id,'child_task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name})
-    return {'id':package_id,'correlation_id':correlation_id,'parent_task_id':parent_id,'task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'status':'ACTIVE','message_id':mid}
+        event(c,'task.work_package.created',a['id'],parent_id,{'work_package_id':package_id,'correlation_id':correlation_id,'child_task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'sla_due_at':sla_due_at,'sla_seconds':b.sla_seconds})
+    return {'id':package_id,'correlation_id':correlation_id,'parent_task_id':parent_id,'task_id':child_id,'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'status':'ACTIVE','sla_due_at':sla_due_at,'risk_state':'ON_TRACK','message_id':mid}
 
 @app.get('/api/v1/tasks/{parent_id}/work-packages')
 def list_work_packages(parent_id:str,authorization:str=Header(None)):
@@ -817,7 +819,58 @@ def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(N
                 items.append({'occurred_at':art['created_at'],'kind':'artifact','task_id':child,'correlation_id':cid,'artifact':dict(art)})
         items.sort(key=lambda x:(x['occurred_at'],x.get('event_id') or x.get('message_id') or x.get('artifact',{}).get('id','')))
         items=items[-limit:]
-        return {'parent_task_id':parent_id,'count':len(items),'items':items,'work_packages':[{'id':w['id'],'correlation_id':w['correlation_id'] or w['id'],'child_task_id':w['child_task_id'],'title':w['title'],'status':w['task_status'],'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],'needs_attention':bool(w['needs_attention'])} for w in packages]}
+        return {'parent_task_id':parent_id,'count':len(items),'items':items,'work_packages':[{'id':w['id'],'correlation_id':w['correlation_id'] or w['id'],'child_task_id':w['child_task_id'],'title':w['title'],'status':w['task_status'],'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],'sla_due_at':w['sla_due_at'],'risk_state':w['risk_state'],'needs_attention':bool(w['needs_attention'])} for w in packages]}
+
+@app.post('/api/v1/projects/{pid}/work-packages/scan-health')
+def scan_project_work_health(pid:str,authorization:str=Header(None)):
+    a=actor(authorization); stamp=now()
+    with conn() as c:
+        require_project_access(c,pid,a,write=True)
+        rows=c.execute("""SELECT w.id,w.parent_task_id,w.child_task_id,w.correlation_id,w.sla_due_at,w.risk_state,w.needs_attention,
+        t.title,t.status AS task_status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id
+        WHERE w.project_id=? AND w.status='ACTIVE' ORDER BY w.created_at""",(pid,)).fetchall()
+        changed=[]; counts={'ON_TRACK':0,'OVERDUE':0,'BLOCKED_DEPENDENCY':0,'STALLED':0,'IN_REVIEW':0,'COMPLETED':0}
+        for row in rows:
+            blockers=c.execute("""SELECT d.depends_on_task_id,t.title,t.status FROM dependencies d
+                JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=? AND t.status!='DONE'""",(row['child_task_id'],)).fetchall()
+            if row['task_status']=='DONE': risk='COMPLETED'
+            elif row['task_status']=='REVIEW': risk='IN_REVIEW'
+            elif blockers: risk='BLOCKED_DEPENDENCY'
+            elif row['needs_attention']: risk='STALLED'
+            elif row['sla_due_at'] and row['sla_due_at']<=stamp: risk='OVERDUE'
+            else: risk='ON_TRACK'
+            if risk!=row['risk_state']:
+                c.execute('UPDATE task_work_packages SET risk_state=?,updated_at=? WHERE id=?',(risk,stamp,row['id']))
+                detail={'work_package_id':row['id'],'correlation_id':row['correlation_id'],'child_task_id':row['child_task_id'],'previous_risk_state':row['risk_state'],'risk_state':risk,'sla_due_at':row['sla_due_at'],'blocking_dependencies':[dict(x) for x in blockers]}
+                event(c,'task.work_package.risk_changed',a['id'],row['parent_task_id'],detail)
+                changed.append(detail)
+            counts[risk]=counts.get(risk,0)+1
+        return {'project_id':pid,'scanned_count':len(rows),'changed_count':len(changed),'risk_counts':counts,'changes':changed}
+
+@app.get('/api/v1/projects/{pid}/work-health')
+def project_work_health(pid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT w.id,w.parent_task_id,w.child_task_id,w.correlation_id,w.assignee_member_id,w.agent_name,
+            w.sla_due_at,w.risk_state,w.needs_attention,t.title,t.status AS task_status,t.progress,t.updated_at
+            FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id
+            WHERE w.project_id=? AND w.status='ACTIVE' ORDER BY w.created_at""",(pid,)).fetchall()
+        counts={}
+        items=[]
+        for row in rows:
+            risk=row['risk_state']; counts[risk]=counts.get(risk,0)+1
+            blockers=c.execute("""SELECT d.depends_on_task_id,t.title,t.status FROM dependencies d
+                JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=? AND t.status!='DONE'""",(row['child_task_id'],)).fetchall()
+            items.append({'work_package_id':row['id'],'parent_task_id':row['parent_task_id'],'child_task_id':row['child_task_id'],
+                'correlation_id':row['correlation_id'],'title':row['title'],'task_status':row['task_status'],'progress':row['progress'],
+                'assignee_member_id':row['assignee_member_id'],'agent_name':row['agent_name'],'sla_due_at':row['sla_due_at'],
+                'risk_state':risk,'needs_attention':bool(row['needs_attention']),'blocking_dependencies':[dict(x) for x in blockers],
+                'last_activity_at':row['updated_at']})
+        total=len(items); at_risk=sum(counts.get(k,0) for k in ('OVERDUE','BLOCKED_DEPENDENCY','STALLED'))
+        return {'project_id':pid,'work_package_count':total,'at_risk_count':at_risk,
+            'health_score':round(100*(total-at_risk)/total) if total else 100,
+            'risk_counts':counts,'items':items}
 
 @app.post('/api/v1/projects/{pid}/work-packages/scan-stalled')
 def scan_stalled_work_packages(pid:str,b:WorkPackageScanIn,authorization:str=Header(None)):
