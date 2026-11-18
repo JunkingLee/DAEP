@@ -811,7 +811,7 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not member: await ws.close(code=1008); return
     cursor=max(0,after)
     _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
-    await ws.accept(); cursor=0
+    await ws.accept()
     try:
         await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
         while True:
