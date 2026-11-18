@@ -94,3 +94,8 @@ Project owners/managers can scan a project for work packages with no task activi
 A manager must then explicitly reassign a marked package to another project member's registered, recently-online Agent, providing a reason. The reassignment updates the child-task assignment, clears the attention marker, writes a `task.work_package.reassigned` audit event, and creates a durable `WORK_PACKAGE_REASSIGNED` inbox/outbox notification. Packages remain active throughout, so the RC16 parent approval gate continues to include them.
 
 MCP tools: `scan_stalled_work_packages` and `reassign_stalled_work_package`. This is human-governed recovery, not Agent Runtime supervision or automatic wake-up.
+
+
+### Cross-member work-package observability (RC18)
+
+Every work package receives a stable correlation ID propagated through assignment/reassignment inbox messages, lifecycle events, result reports and artifact submissions. Query `GET /api/v1/tasks/{parent_task_id}/work-timeline` (MCP: `get_task_work_timeline`) for a chronological view combining lifecycle events, durable messages and submitted artifacts. Access is inherited from the parent task's project authorization. This is coordination/audit visibility; DAEP does not inspect local Agent internals or guarantee delivery/wakeup.
