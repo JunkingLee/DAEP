@@ -85,3 +85,12 @@ MCP tools: `create_task_work_package`, `list_task_work_packages`, and `get_task_
 A local Agent reports a work-package outcome with `POST /api/v1/tasks/{child_task_id}/work-result` (MCP: `report_work_package_result`). A `COMPLETE` report requires at least one previously submitted artifact and moves the child task to `REVIEW`; it does not approve the work. A `FAILED` report moves the child task to `BLOCKED` for follow-up. Optional idempotency keys make repeated identical reports safe and reject conflicting replays.
 
 A reviewer must approve each child task through the existing review workflow. The parent task cannot be approved until every active child work package is `DONE` and each has at least one artifact. The parent still requires its own explicit review. Work summaries now include artifact references (URI and commit SHA), not only counts. These gates are workflow checks; DAEP still does not execute or wake local Agents.
+
+
+### Stalled work-package governance (RC17)
+
+Project owners/managers can scan a project for work packages with no task activity for a configurable interval (300 seconds to 7 days). The scan marks eligible active packages as needing attention and records a `task.work_package.stalled` event. It is an explicit API/MCP operation; DAEP does not silently move assignments or run an unconfigured background scheduler.
+
+A manager must then explicitly reassign a marked package to another project member's registered, recently-online Agent, providing a reason. The reassignment updates the child-task assignment, clears the attention marker, writes a `task.work_package.reassigned` audit event, and creates a durable `WORK_PACKAGE_REASSIGNED` inbox/outbox notification. Packages remain active throughout, so the RC16 parent approval gate continues to include them.
+
+MCP tools: `scan_stalled_work_packages` and `reassign_stalled_work_package`. This is human-governed recovery, not Agent Runtime supervision or automatic wake-up.
