@@ -118,6 +118,18 @@ def report_work_package_result(task_id: str, outcome: str, summary: str, idempot
         'outcome':outcome,'summary':summary,'idempotency_key':idempotency_key})
 
 @mcp.tool()
+def scan_stalled_work_packages(project_id: str, stale_after_seconds: int = 3600) -> dict:
+    """Mark inactive work packages for manager attention; never auto-reassigns them."""
+    return call('POST',f'/api/v1/projects/{project_id}/work-packages/scan-stalled',{
+        'stale_after_seconds':stale_after_seconds})
+
+@mcp.tool()
+def reassign_stalled_work_package(work_package_id: str, assignee_member_id: str, agent_name: str, reason: str) -> dict:
+    """Manager-approved reassignment of a work package already marked stalled."""
+    return call('POST',f'/api/v1/work-packages/{work_package_id}/reassign',{
+        'assignee_member_id':assignee_member_id,'agent_name':agent_name,'reason':reason})
+
+@mcp.tool()
 def list_task_work_packages(parent_task_id: str) -> list:
     """List child work packages, current task states and their submitted artifacts."""
     return call('GET',f'/api/v1/tasks/{parent_task_id}/work-packages')
