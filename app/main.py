@@ -1,8 +1,8 @@
-import os, json, sqlite3, uuid, asyncio, hashlib, base64, secrets, urllib.parse, urllib.request, time, contextvars
+import os, json, sqlite3, uuid, asyncio, hashlib, base64, secrets, urllib.parse, urllib.request, time, contextvars, hmac
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Optional
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Cookie
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Cookie, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ async def lifespan(app):
     bootstrap()
     yield
 
-app=FastAPI(title='DAEP Enterprise Platform API',version='1.0.0-rc8',description='Task-centric distributed agent engineering platform',lifespan=lifespan)
+app=FastAPI(title='DAEP Enterprise Platform API',version='1.0.0-rc9',description='Task-centric distributed agent engineering platform',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:3000').split(','),allow_credentials=False,allow_methods=['*'],allow_headers=['*'])
 @app.middleware('http')
 async def tenant_context(request, call_next):
@@ -82,6 +82,8 @@ class _PGConn:
         import psycopg
         from psycopg.rows import dict_row
         self.c=psycopg.connect(url,row_factory=dict_row)
+        self.c.execute(\"SELECT set_config('app.tenant_id', %s, false), set_config('app.platform_admin', %s, false), set_config('app.internal_service', %s, false), set_config('app.auth_lookup', %s, false)\",(
+            _tenant_ctx.get() or '', 'true' if _admin_ctx.get() else 'false', 'true' if _service_ctx.get() else 'false', 'true' if _auth_lookup_ctx.get() else 'false'))
     def __enter__(self): return self
     def __exit__(self,typ,val,tb):
         if typ: self.c.rollback()
@@ -391,10 +393,27 @@ def oidc_config():
     return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
 
 @app.post('/api/v1/integrations/git/webhook')
-def git_webhook(body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID')):
-    expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-    if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-    event_type=str(body.get('event_type') or body.get('action') or 'push')[:80]
+async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
+    raw=await request.body()
+    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
+    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
+    if provider=='github':
+        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
+        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
+        supplied=x_hub_signature_256.split('=',1)[1]
+        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
+        delivery=x_github_delivery
+    elif provider=='gitlab':
+        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
+        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
+        delivery=x_gitlab_event_uuid
+    else:
+        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
+        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
+        delivery=request.headers.get('X-DAEP-Delivery','')
+    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
+    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
     task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
     service_reset=_service_ctx.set(True)
     try:
@@ -410,7 +429,7 @@ def git_webhook(body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Web
         _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
         _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
         with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'event_type':event_type,'commit_sha':commit,'payload':body},tenant_override=tenant_id)
+            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
         return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id}
     finally:
         _service_ctx.reset(service_reset)
@@ -421,7 +440,21 @@ def health():
     try:
         with conn() as c:
             pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc8','outbox_pending':pending}
+        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
+    finally:
+        _service_ctx.reset(service_reset)
+
+@app.get('/readyz')
+def readiness():
+    service_reset=_service_ctx.set(True)
+    try:
+        with conn() as c:
+            c.execute('SELECT 1').fetchone()
+            if DATABASE_URL.startswith(('postgresql://','postgres://')):
+                c.execute(\"SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'\").fetchone()
+        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
+    except Exception as exc:
+        raise HTTPException(503,f'DAEP database is not ready: {exc}')
     finally:
         _service_ctx.reset(service_reset)
 @app.get('/api/v1/me')
