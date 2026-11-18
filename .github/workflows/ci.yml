@@ -104,6 +104,19 @@ jobs:
         run: |
           psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -f tests/postgres_rls_smoke.sql
 
+  production-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production Compose rendering
+        env:
+          DAEP_POSTGRES_PASSWORD: "ci-postgres-password"
+          DAEP_RUNTIME_DB_PASSWORD: "ci-runtime-password"
+          DAEP_PRIVILEGED_DB_PASSWORD: "ci-privileged-password"
+          DAEP_ADMIN_TOKEN: "ci-admin-token-abcdefghijklmnopqrstuvwxyz-012345"
+          DAEP_WORKER_TOKEN: "ci-worker-token-abcdefghijklmnopqrstuvwxyz-678901"
+        run: docker compose -f compose.production.yaml config --quiet
+
   container-build:
     runs-on: ubuntu-latest
     steps:
