@@ -32,9 +32,9 @@ def run_once():
     for item in result.get('items',[]):
         try:
             deliver(item)
-            call('POST',f"/internal/v1/outbox/{item['id']}/complete",{'worker_id':WORKER_ID})
+            call('POST',f"/internal/v1/outbox/{item['id']}/complete",{'worker_id':WORKER_ID,'lease_token':item['lease_token']})
         except Exception as exc:
-            try: call('POST',f"/internal/v1/outbox/{item['id']}/fail",{'worker_id':WORKER_ID,'error':str(exc)[:2000]})
+            try: call('POST',f"/internal/v1/outbox/{item['id']}/fail",{'worker_id':WORKER_ID,'lease_token':item['lease_token'],'error':str(exc)[:2000]})
             except Exception: pass
     return result.get('count',0)
 
