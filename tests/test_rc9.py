@@ -1,8 +1,13 @@
+import os, json, hmac, hashlib
+from fastapi.testclient import TestClient
+from app.main import app
+
+client=TestClient(app)
+
 import hashlib, hmac, json, os
 
 def test_rc9_readiness_and_github_webhook_signature():
     assert client.get('/readyz').status_code == 200
-    import app.main as module
     secret = 'github-webhook-secret'
     os.environ['DAEP_GITHUB_WEBHOOK_SECRET'] = secret
     body = {
