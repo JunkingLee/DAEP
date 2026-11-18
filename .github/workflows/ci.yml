@@ -86,7 +86,11 @@ jobs:
                  ('daep_members_tenant','daep_projects_tenant','daep_events_tenant','daep_artifacts_tenant','daep_outbox_tenant','daep_messages_tenant'))
               AND
               (SELECT count(*) = 1 FROM pg_policies
-               WHERE schemaname='public' AND tablename='members' AND policyname='daep_members_auth_lookup');
+               WHERE schemaname='public' AND tablename='members' AND policyname='daep_members_auth_lookup')
+              AND
+              (SELECT count(*) = 5 FROM pg_policies
+               WHERE schemaname='public' AND policyname IN
+                 ('daep_requirements_tenant','daep_tasks_tenant','daep_project_members_tenant','daep_assignments_tenant','daep_dependencies_tenant'));
           ")
           test "$result" = "t"
           psql "host=127.0.0.1 port=5432 user=postgres dbname=daep_ci" -v ON_ERROR_STOP=1 -c "SELECT tablename, policyname, cmd FROM pg_policies WHERE schemaname='public' ORDER BY tablename, policyname;"
