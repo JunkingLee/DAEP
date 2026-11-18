@@ -677,7 +677,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
         key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
-        payload={'outcome':b.outcome,'summary':b.summary}
+        payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
@@ -690,7 +690,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         else:
             status='BLOCKED'; progress=0
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,now(),tid))
-        eid=event(c,'task.work_package.reported',a['id'],tid,{**payload,'outcome':b.outcome,'work_package_id':package['id'],'parent_task_id':package['parent_task_id']},key)
+        eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
 @app.post('/api/v1/tasks/{tid}/artifacts')
