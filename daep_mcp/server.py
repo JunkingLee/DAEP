@@ -118,6 +118,31 @@ def report_work_package_result(task_id: str, outcome: str, summary: str, idempot
         'outcome':outcome,'summary':summary,'idempotency_key':idempotency_key})
 
 @mcp.tool()
+def request_project_role_change(project_id: str, member_id: str, new_role: str, reason: str) -> dict:
+    """Request a governed project role change; a different project owner must approve."""
+    return call('POST',f'/api/v1/projects/{project_id}/role-change-requests',{'member_id':member_id,'new_role':new_role,'reason':reason})
+
+@mcp.tool()
+def list_project_approvals(project_id: str, status: str = "PENDING") -> dict:
+    """List project governance approvals."""
+    return call('GET',f'/api/v1/projects/{project_id}/approvals?status={status}')
+
+@mcp.tool()
+def decide_project_approval(project_id: str, approval_id: str, decision: str, reason: str) -> dict:
+    """Approve or reject a role-change request as a project owner."""
+    return call('POST',f'/api/v1/projects/{project_id}/approvals/{approval_id}/decision',{'decision':decision,'reason':reason})
+
+@mcp.tool()
+def get_project_audit(project_id: str, limit: int = 100, event_type: str = "") -> dict:
+    """Query project-scoped audit events."""
+    return call('GET',f'/api/v1/projects/{project_id}/audit?limit={max(1,min(limit,500))}&event_type={urllib.parse.quote(event_type)}')
+
+@mcp.tool()
+def export_project_audit_csv(project_id: str, limit: int = 5000) -> dict:
+    """Export project audit CSV (raw response is returned by the DAEP API client)."""
+    return call('GET',f'/api/v1/projects/{project_id}/audit.csv?limit={max(1,min(limit,10000))}')
+
+@mcp.tool()
 def scan_project_work_health(project_id: str) -> dict:
     """Recalculate work-package SLA and dependency risk states for a project."""
     return call('POST',f'/api/v1/projects/{project_id}/work-packages/scan-health',{})
