@@ -59,3 +59,8 @@ The broker worker is at-least-once and does not host or control Agent Runtime pr
 
 RC8 adds PostgreSQL transaction-local tenant context, explicit inbox tenant ownership, PostgreSQL Row-Level Security migrations (`0009_rc8_message_tenant`, `0010_rc8_postgres_rls`), and a PostgreSQL 17 Compose baseline (`docker-compose.rc8.yaml`). The API bootstraps the core schema, then applies Alembic migrations before serving traffic. Use a dedicated non-superuser PostgreSQL application role and validate RLS with multiple tenants before production. See `docs/POSTGRES_RLS_RC8.md`.
 # DAEP
+
+
+### Local Agent collaboration registry (RC13)
+
+Members can register their own workstation-operated Agents per project, advertise capabilities and MCP protocol support, refresh presence, and discover other project members' Agents. DAEP stores only capability/presence metadata; it does not launch, host, supervise, or wake local Agent runtimes. Presence expires after 120 seconds without a heartbeat. Use the member's MCP adapter tools `register_local_agent`, `discover_project_agents`, and `heartbeat_local_agent`.
