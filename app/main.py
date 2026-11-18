@@ -82,7 +82,7 @@ class _PGConn:
         import psycopg
         from psycopg.rows import dict_row
         self.c=psycopg.connect(url,row_factory=dict_row)
-        self.c.execute(\"SELECT set_config('app.tenant_id', %s, false), set_config('app.platform_admin', %s, false), set_config('app.internal_service', %s, false), set_config('app.auth_lookup', %s, false)\",(
+        self.c.execute("SELECT set_config('app.tenant_id', %s, false), set_config('app.platform_admin', %s, false), set_config('app.internal_service', %s, false), set_config('app.auth_lookup', %s, false)",(
             _tenant_ctx.get() or '', 'true' if _admin_ctx.get() else 'false', 'true' if _service_ctx.get() else 'false', 'true' if _auth_lookup_ctx.get() else 'false'))
     def __enter__(self): return self
     def __exit__(self,typ,val,tb):
