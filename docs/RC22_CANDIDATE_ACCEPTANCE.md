@@ -25,7 +25,7 @@ The collaboration test covers:
 8. child approval unlocks parent approval;
 9. the correlated work timeline exposes the assignment message, artifact, and lifecycle event;
 10. the worker credential consumes the durable outbox;
-11. the completed work package is persisted as DONE.
+11. the completed child task is DONE and the project health scan classifies the active work-package record as COMPLETED.
 
 ## Production smoke check
 
