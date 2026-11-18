@@ -1,0 +1,68 @@
+name: DAEP CI
+
+on:
+  push:
+    branches: ["main", "rc9/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile
+        run: python -m compileall -q app daep_mcp daep_worker daep_agent_bridge
+      - name: Tests
+        run: pytest -q
+      - name: Alembic heads
+        run: alembic heads
+
+  postgres-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: daep
+          POSTGRES_USER: daep
+          POSTGRES_PASSWORD: daep-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U daep -d daep"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql://daep:daep-ci-password@127.0.0.1:5432/daep
+        run: alembic upgrade head
+      - name: Verify RLS policies
+        env:
+          DATABASE_URL: postgresql://daep:daep-ci-password@127.0.0.1:5432/daep
+        run: |
+          python - <<'PY'
+          import os, psycopg
+          with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+              rows = c.execute("SELECT tablename, policyname FROM pg_policies WHERE schemaname='public' AND policyname LIKE 'daep_%_tenant' ORDER BY tablename").fetchall()
+              expected = {"members","projects","events","artifacts","outbox","messages"}
+              actual = {r[0] for r in rows}
+              assert expected <= actual, (expected, actual)
+              print("RLS policies present:", sorted(actual))
+          PY
