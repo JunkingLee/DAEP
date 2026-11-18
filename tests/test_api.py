@@ -389,3 +389,37 @@ def test_websocket_can_resume_from_client_cursor():
         assert connected['type']=='connected' and connected['cursor']==seqs[first['id']]
         event=ws.receive_json()
         assert event['type']=='notification' and event['message']['id']==second['id']
+
+
+def test_project_agent_registry_is_member_scoped_and_discoverable():
+    pid,_,member_token,_=setup_project_task()
+    headers={'Authorization':f'Bearer {member_token}'}
+    registered=client.post(f'/api/v1/projects/{pid}/agents/register',headers=headers,json={
+        'agent_name':'local-coder','capabilities':['python','code-review','python'],
+        'protocols':['mcp'],'status':'AVAILABLE','metadata':{'host':'workstation-1'}})
+    assert registered.status_code==200
+    agent=registered.json()
+    assert agent['capabilities']==['code-review','python'] and agent['protocols']==['mcp']
+    duplicate=client.post(f'/api/v1/projects/{pid}/agents/register',headers=headers,json={
+        'agent_name':'local-coder','capabilities':['python','testing'],'protocols':['mcp'],'status':'BUSY'})
+    assert duplicate.status_code==200 and duplicate.json()['id']==agent['id']
+    found=client.get(f'/api/v1/projects/{pid}/agents?capability=testing&protocol=mcp',headers=headers)
+    assert found.status_code==200 and found.json()['count']==1
+    assert found.json()['items'][0]['status']=='BUSY'
+    heartbeat=client.post(f'/api/v1/projects/{pid}/agents/heartbeat',headers=headers,json={'agent_name':'local-coder','status':'AVAILABLE'})
+    assert heartbeat.status_code==200 and heartbeat.json()['status']=='AVAILABLE'
+    filtered=client.get(f'/api/v1/projects/{pid}/agents?capability=missing',headers=headers)
+    assert filtered.status_code==200 and filtered.json()['count']==0
+
+
+def test_project_agent_registry_rejects_nonmember_and_invalid_protocol():
+    pid,_,member_token,_=setup_project_task()
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Agent outsider'}).json()
+    oh={'Authorization':f"Bearer {outsider['token']}"}
+    denied=client.post(f'/api/v1/projects/{pid}/agents/register',headers=oh,json={'agent_name':'intruder','protocols':['mcp']})
+    assert denied.status_code==403
+    mh={'Authorization':f'Bearer {member_token}'}
+    invalid=client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={'agent_name':'bad-agent','protocols':[]})
+    assert invalid.status_code==422
+    missing=client.post(f'/api/v1/projects/{pid}/agents/heartbeat',headers=mh,json={'agent_name':'not-registered'})
+    assert missing.status_code==404
