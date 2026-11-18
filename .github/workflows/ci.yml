@@ -126,8 +126,9 @@ jobs:
           bash -n deploy/postgres/01-create-app-roles.sh
           bash -n scripts/backup_postgres.sh
           bash -n scripts/restore_postgres.sh
+          bash -n scripts/production_smoke.sh
       - name: Build production container
-        run: docker build --tag daep:rc21-ci .
+        run: docker build --tag daep:rc22-ci .
       - name: Verify non-root runtime
         run: |
-          test "$(docker image inspect daep:rc21-ci --format '{{.Config.User}}')" = "daep"
+          test "$(docker image inspect daep:rc22-ci --format '{{.Config.User}}')" = "daep"
