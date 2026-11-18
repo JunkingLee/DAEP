@@ -664,6 +664,15 @@ def test_rc20_role_change_requires_independent_owner_approval_and_audit_export()
     assert approved.status_code==200 and approved.json()['status']=='APPROVED'
     members=client.get(f'/api/v1/projects/{pid}/members',headers=ADMIN).json()
     assert next(x for x in members if x['id']==member_id)['project_role']=='manager'
+    third=client.post('/api/v1/members',headers=ADMIN,json={'name':'Third project member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':third['id'],'role':'member'}).status_code==200
+    manager_h={'Authorization':'Bearer '+token}
+    forbidden_grant=client.post(f'/api/v1/projects/{pid}/members',headers=manager_h,json={'member_id':third['id'],'role':'manager'})
+    assert forbidden_grant.status_code==403
+    rejected_req=client.post(f'/api/v1/projects/{pid}/role-change-requests',headers=manager_h,json={'member_id':third['id'],'new_role':'reviewer','reason':'Request reviewer access'})
+    assert rejected_req.status_code==200
+    rejected=client.post(f'/api/v1/projects/{pid}/approvals/{rejected_req.json()['approval_id']}/decision',headers=owner_h,json={'decision':'REJECT','reason':'Not required at this time'})
+    assert rejected.status_code==200 and rejected.json()['status']=='REJECTED'
     audit=client.get(f'/api/v1/projects/{pid}/audit',headers=ADMIN)
     assert audit.status_code==200 and any(x['event_type']=='project.role_change.approved' for x in audit.json()['items'])
     csv=client.get(f'/api/v1/projects/{pid}/audit.csv',headers=ADMIN)
