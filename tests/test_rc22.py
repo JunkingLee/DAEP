@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import sqlite3
 
 if "app.main" not in sys.modules:
     os.environ["DAEP_DB_PATH"] = os.path.join(tempfile.gettempdir(), "daep-rc22-standalone.db")
