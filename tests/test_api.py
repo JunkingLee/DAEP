@@ -453,3 +453,48 @@ def test_rc14_task_delegation_accept_reject_and_audit():
     rejected=client.post(f"/api/v1/delegations/{rejected_offer.json()['id']}/respond",headers=rh,json={'decision':'REJECT'})
     assert rejected.status_code==200 and rejected.json()['status']=='REJECTED'
 
+
+def test_rc15_work_packages_progress_blockers_and_artifact_aggregation():
+    pid,owner_id,owner_token,parent_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Work Package Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'worker-python','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    oh={'Authorization':'Bearer '+owner_token}
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=oh,json={
+        'title':'Implement API layer','description':'Build and test endpoints',
+        'assignee_member_id':recipient['id'],'agent_name':'worker-python'})
+    assert created.status_code==200,created.text
+    package=created.json()
+    inbox=client.get('/api/v1/me/notifications',headers=rh).json()['items']
+    assert any(x['id']==package['message_id'] and x['message_type']=='WORK_PACKAGE_ASSIGNED' for x in inbox)
+    summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=oh).json()
+    assert summary['work_package_count']==1 and summary['progress']==0
+    child=package['task_id']
+    assert client.post(f'/api/v1/tasks/{child}/progress',headers=rh,json={'progress':40,'note':'API scaffold'}).status_code==200
+    summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=oh).json()
+    assert summary['progress']==40 and summary['status_counts']['IN_PROGRESS']==1
+    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=rh,json={
+        'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/abc123',
+        'commit_sha':'abc123','metadata':{}}).status_code==200
+    assert client.post(f'/api/v1/tasks/{child}/blocked',headers=rh,json={'reason':'Waiting for schema'}).status_code==200
+    summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=oh).json()
+    assert summary['status_counts']['BLOCKED']==1 and summary['blocked_tasks'][0]['id']==child
+    assert summary['artifact_count']==1
+    listed=client.get(f'/api/v1/tasks/{parent_id}/work-packages',headers=oh).json()
+    assert listed[0]['agent_name']=='worker-python' and len(listed[0]['artifacts'])==1
+    events=client.get(f'/api/v1/tasks/{parent_id}/events',headers=oh).json()
+    assert any(e['event_type']=='task.work_package.created' for e in events)
+
+def test_rc15_work_package_rejects_offline_agent_and_cross_project_dependency():
+    pid,_,owner_token,parent_id=setup_project_task()
+    member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Offline Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':member['id'],'role':'member'}).status_code==200
+    h={'Authorization':'Bearer '+member['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=h,json={
+        'agent_name':'offline','capabilities':[],'protocols':['mcp'],'status':'OFFLINE'}).status_code==200
+    res=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers={'Authorization':'Bearer '+owner_token},json={
+        'title':'Should fail','assignee_member_id':member['id'],'agent_name':'offline'})
+    assert res.status_code==409
+
