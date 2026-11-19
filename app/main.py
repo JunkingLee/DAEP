@@ -54,6 +54,7 @@ async def security_headers(request, call_next):
 class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=160); description:str=Field(default='',max_length=5000)
 class RequirementIn(BaseModel): project_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); acceptance_criteria:list[str]=Field(default_factory=list)
 class TaskIn(BaseModel): requirement_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); assignee_member_ids:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list)
+class TaskDependenciesIn(BaseModel): dependencies:list[str]=Field(default_factory=list,max_length=100)
 class ProgressIn(BaseModel): progress:int=Field(ge=0,le=100); note:str=Field(default='',max_length=2000)
 class MessageIn(BaseModel): recipient_member_id:str; project_id:Optional[str]=None; task_id:Optional[str]=None; message_type:str='COLLABORATION'; title:str=Field(min_length=1,max_length=200); content:str=Field(min_length=1,max_length=20000); priority:str=Field(default='NORMAL',pattern='^(LOW|NORMAL|HIGH|URGENT)$')
 class AckIn(BaseModel): status:str='ACKNOWLEDGED'
@@ -741,6 +742,30 @@ def task_detail(tid,authorization):
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
 @app.get('/api/v1/tasks/{tid}')
 def get_task(tid:str,authorization:str=Header(None)): return task_detail(tid,authorization)
+@app.put('/api/v1/tasks/{tid}/dependencies')
+def update_task_dependencies(tid:str,b:TaskDependenciesIn,authorization:str=Header(None)):
+    a=actor(authorization)
+    if len(set(b.dependencies)) != len(b.dependencies): raise HTTPException(400,'Duplicate dependencies are not allowed')
+    with conn() as c:
+        require_task_access(c,tid,a)
+        project_id=task_project(c,tid)
+        require_project_access(c,project_id,a,write=True)
+        for dep in b.dependencies:
+            if dep == tid: raise HTTPException(400,'A task cannot depend on itself')
+            if task_project(c,dep) != project_id: raise HTTPException(400,'Dependencies must belong to the same project')
+            require_task_access(c,dep,a)
+            pending=[dep]; visited=set()
+            while pending:
+                current=pending.pop()
+                if current == tid: raise HTTPException(409,'Dependency would create a cycle')
+                if current in visited: continue
+                visited.add(current)
+                pending.extend(x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(current,)).fetchall())
+        c.execute('DELETE FROM dependencies WHERE task_id=?',(tid,))
+        for dep in b.dependencies: c.execute('INSERT INTO dependencies(task_id,depends_on_task_id) VALUES(?,?)',(tid,dep))
+        event(c,'task.dependencies.updated',a['id'],tid,{'dependencies':b.dependencies})
+    return task_detail(tid,authorization)
+
 @app.get('/api/v1/me/tasks')
 def my_tasks(authorization:str=Header(None)):
     a=actor(authorization)
