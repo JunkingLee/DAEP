@@ -932,7 +932,7 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
             project_tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(req['project_id'],)).fetchone()['tenant_id']
             if member_row['tenant_id'] != project_tenant: raise HTTPException(400,'Assignee belongs to a different tenant')
             c.execute('INSERT INTO assignments VALUES(?,?)',(tid,mid))
-            c.execute('INSERT OR IGNORE INTO project_members VALUES(?,?,?,?)',(req['project_id'],mid,'member',now()))
+            c.execute("INSERT OR IGNORE INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,'other',?)",(req['project_id'],mid,'member',now()))
         for dep in b.dependencies: c.execute('INSERT INTO dependencies VALUES(?,?)',(tid,dep))
         event(c,'task.created',a['id'],tid,{'title':b.title})
     return task_detail(tid,authorization)
