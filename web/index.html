@@ -19,7 +19,7 @@
 </div><div id="error" class="error"></div>
 </main>
 <script>
-let token='',me=null,projects=[],selectedProject=null,requirements=[];
+let token='',me=null,projects=[],selectedProject=null,requirements=[],selectedProjectRole='';
 const $=id=>document.getElementById(id);const headers=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||r.statusText);return d}
 function showError(e){$('error').textContent=e.message||String(e)}
@@ -27,7 +27,7 @@ async function connect(){try{token=$('token').value.trim();me=await api('/api/v1
 async function loadProjects(){projects=await api('/api/v1/projects');$('projects').innerHTML=projects.map(p=>`<div class="item"><button class="secondary" onclick="selectProject('${p.id}')">打开</button><strong>${esc(p.name)}</strong><span class="muted">${esc(p.id)}</span></div>`).join('')||'<p class="muted">暂无项目</p>'}
 async function createProject(){try{const p=await api('/api/v1/projects',{method:'POST',body:JSON.stringify({name:$('projectName').value})});$('projectName').value='';await loadProjects();await selectProject(p.id)}catch(e){showError(e)}}
 async function selectProject(id){try{selectedProject=id;await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()]);await loadOverview();$('overviewHint').textContent='当前项目：'+((projects.find(p=>p.id===id)||{}).name||id)}catch(e){showError(e)}}
-async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);$('members').innerHTML=m.map(x=>`<div class="item">${esc(x.name)} <span class="tag">${x.project_role}</span><div class="muted">${x.id}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
+async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);selectedProjectRole=(m.find(x=>x.id===me.id)||{}).project_role||'';$('members').innerHTML=m.map(x=>`<div class="item">${esc(x.name)} <span class="tag">${x.project_role}</span><div class="muted">${x.id}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
 async function addMember(){try{await api(`/api/v1/projects/${selectedProject}/members`,{method:'POST',body:JSON.stringify({member_id:$('newMemberId').value,role:$('memberRole').value})});$('newMemberId').value='';await loadProjectMembers()}catch(e){showError(e)}}
 async function loadRequirements(){requirements=await api(`/api/v1/projects/${selectedProject}/requirements`);$('requirements').innerHTML=requirements.map(r=>`<div class="item"><strong>${esc(r.title)}</strong><span class="muted">${esc(r.id)}</span></div>`).join('')||'<p class="muted">暂无需求</p>';$('reqSelect').innerHTML=requirements.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')||'<option value="">先创建需求</option>'}
 async function createRequirement(){try{await api('/api/v1/requirements',{method:'POST',body:JSON.stringify({project_id:selectedProject,title:$('reqTitle').value,description:$('reqDesc').value})});$('reqTitle').value='';$('reqDesc').value='';await loadRequirements();await loadOverview()}catch(e){showError(e)}}
@@ -63,7 +63,12 @@ function dependencyLinks(t){
  const deps=(t.dependencies||[]).map(id=>byIdTask(id)).filter(Boolean);
  const downstream=projectTasks.filter(x=>(x.dependencies||[]).includes(t.id));
  const render=(x,label)=>'<button type="button" class="dep-link" onclick="openTask(\''+x.id+'\')">'+esc(label)+': '+esc(x.title)+'</button>';
- return '<div><b>前置任务</b><div>'+(deps.map(x=>render(x,'前置')).join('')||'<span class="muted">无</span>')+'</div><b>后续任务</b><div>'+(downstream.map(x=>render(x,'后续')).join('')||'<span class="muted">无</span>')+'</div></div>';
+ const canEdit=['owner','manager'].includes(selectedProjectRole)||me?.role==='admin';
+ const editor=canEdit?'<label>编辑前置任务（可多选）</label><select id="dependencyEditor" multiple size="5">'+projectTasks.filter(x=>x.id!==t.id).map(x=>'<option value="'+x.id+'" '+(deps.some(d=>d.id===x.id)?'selected':'')+'>'+esc(x.title)+'</option>').join('')+'</select><button type="button" onclick="saveTaskDependencies(\''+t.id+'\')">保存依赖关系</button>':'<p class="muted small">只有项目 Owner 或 Manager 可以修改依赖关系</p>';
+ return '<div><b>前置任务</b><div>'+(deps.map(x=>render(x,'前置')).join('')||'<span class="muted">无</span>')+'</div><b>后续任务</b><div>'+(downstream.map(x=>render(x,'后续')).join('')||'<span class="muted">无</span>')+'</div>'+editor+'</div>';
+}
+async function saveTaskDependencies(id){
+ try{const dependencies=[...$('dependencyEditor').selectedOptions].map(o=>o.value);await api('/api/v1/tasks/'+id+'/dependencies',{method:'PUT',body:JSON.stringify({dependencies})});await loadTasks();await openTask(id)}catch(e){showError(e)}
 }
 
 async function loadOverview(){if(!selectedProject)return;const m=await api('/api/v1/projects/'+selectedProject+'/members'),h=await api('/api/v1/projects/'+selectedProject+'/work-health');const total=projectTasks.length,done=projectTasks.filter(t=>t.status==='DONE').length,blocked=projectTasks.filter(t=>t.status==='BLOCKED').length,review=projectTasks.filter(t=>t.status==='REVIEW').length,active=projectTasks.filter(t=>t.status==='IN_PROGRESS').length,avg=total?Math.round(projectTasks.reduce((n,t)=>n+(Number(t.progress)||0),0)/total):0;const data=[['需求',requirements.length],['任务',total],['已完成',done],['进行中',active],['受阻',blocked],['成员',m.length],['平均进度',avg+'%']];$('metrics').innerHTML=data.map(x=>'<div class="metric"><span class="muted">'+x[0]+'</span><b>'+x[1]+'</b></div>').join('');$('healthSummary').innerHTML='<strong>工作包健康度：<span class="'+(h.at_risk_count?'risk':'good')+'">'+h.health_score+'%</span></strong>　工作包 '+h.work_package_count+' 个 · 风险 '+h.at_risk_count+' 个 · 待审核任务 '+review+' 个 <span class="muted">（健康度只统计已登记的活动工作包）</span>'}
