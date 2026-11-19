@@ -25,3 +25,15 @@ The workbench is presentation-layer aggregation over existing project APIs; it d
 ## Access
 
 The workbench is available from the left navigation after authentication and project selection. It follows the selected project's role/work-function context, so one user can see different workbench views when switching projects.
+
+
+## Tester execution flow
+
+Tester / reviewer workbench now exposes task-level test actions using existing governed APIs:
+- update progress to 50% for in-progress validation;
+- update progress to 100% to enter REVIEW;
+- mark a task BLOCKED with a reason when validation is blocked;
+- submit test-report / acceptance evidence through the durable artifact API;
+- open the requirement acceptance report from the workbench when a requirement reference is available.
+
+The UI does not introduce a separate defect entity. Blocking remains task governance, while artifacts provide durable verification evidence and the existing Review / Requirement Acceptance APIs remain the approval boundary.
