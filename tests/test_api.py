@@ -1648,6 +1648,38 @@ def test_rc26_workflow_runtime_custom_gate_is_project_scoped_and_idempotent():
     replay=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers={**dh,'Idempotency-Key':'scoped-review'},json={'target_stage':'REVIEW'})
     assert replay.status_code == 403, replay.text
 
+
+def test_rc26_multi_project_role_isolation_and_function_navigation_contract():
+    project_a, manager_id, manager_token, task_a = setup_project_task()
+    project_b = client.post('/api/v1/projects', headers=ADMIN, json={'name':'Role Isolation B'}).json()['id']
+    project_c = client.post('/api/v1/projects', headers=ADMIN, json={'name':'Role Isolation C'}).json()['id']
+    assert client.post(f'/api/v1/projects/{project_b}/members', headers=ADMIN, json={
+        'member_id': manager_id, 'role':'member', 'work_function':'tester'
+    }).status_code == 200
+    assert client.post(f'/api/v1/projects/{project_c}/members', headers=ADMIN, json={
+        'member_id': manager_id, 'role':'reviewer', 'work_function':'other'
+    }).status_code == 200
+    a=client.get(f'/api/v1/projects/{project_a}/members',headers=ADMIN)
+    b=client.get(f'/api/v1/projects/{project_b}/members',headers=ADMIN)
+    c=client.get(f'/api/v1/projects/{project_c}/members',headers=ADMIN)
+    assert a.status_code == b.status_code == c.status_code == 200
+    amap={x['member_id']:x for x in a.json()['members']}
+    bmap={x['member_id']:x for x in b.json()['members']}
+    cmap={x['member_id']:x for x in c.json()['members']}
+    assert amap[manager_id]['project_role'] in ('owner','manager')
+    assert bmap[manager_id]['project_role']=='member'
+    assert bmap[manager_id]['work_function']=='tester'
+    assert cmap[manager_id]['project_role']=='reviewer'
+    assert cmap[manager_id]['work_function']=='other'
+    denied=client.put(f'/api/v1/projects/{project_b}/workflow',headers={'Authorization':f'Bearer {manager_token}'},json={
+        'enabled':True,'stages':[
+            {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+            {'key':'REVIEW','name':'审核','order':2,'approval_role':'reviewer','sla_seconds':3600},
+            {'key':'DONE','name':'完成','order':3,'approval_role':'none','sla_seconds':None},
+        ]
+    })
+    assert denied.status_code == 403
+
 def test_rc26_workflow_runtime_enforces_custom_gate_and_stage_exit_approval():
     pid, developer_id, developer_token, tid = setup_project_task()
     workflow = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={
