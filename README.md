@@ -177,3 +177,15 @@ Project governance now has an explicit, auditable decision register and a projec
 - Related tasks must belong to the same project, and the accountable person must be a project member. These records document human decisions; they do not auto-assign work or control local Agent Runtime processes.
 
 See `docs/RC26_STAGE6_PROJECT_GOVERNANCE.md`.
+
+
+## RC26 Stage 7 — Requirement Acceptance and Delivery Evidence
+
+Requirements now have an explicit acceptance gate:
+
+- `GET /api/v1/requirements/{requirement_id}/acceptance-report` presents acceptance criteria, task status, artifact counts, and missing delivery evidence.
+- `POST /api/v1/requirements/{requirement_id}/acceptance` records an auditable APPROVE or REJECT decision. Approval requires every acceptance criterion to be explicitly verified, at least one task, every task in DONE state, and at least one artifact for each task.
+- Approval changes the requirement status to `ACCEPTED`; rejection returns it to `OPEN`. Only project owners, managers, reviewers, or platform administrators may decide.
+- The project workspace exposes an acceptance report and requires explicit criterion-index confirmation before approval.
+
+This closes the human acceptance loop without making DAEP execute or control local Agent Runtime processes. See `docs/RC26_STAGE7_REQUIREMENT_ACCEPTANCE.md`.
