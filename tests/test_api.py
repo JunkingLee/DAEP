@@ -1620,6 +1620,34 @@ def test_rc26_workflow_and_gate_configuration_is_project_scoped_and_system_gates
 
 
 
+
+def test_rc26_workflow_runtime_custom_gate_is_project_scoped_and_idempotent():
+    pid, developer_id, developer_token, tid = setup_project_task()
+    workflow = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={
+        'enabled': True,
+        'stages': [
+            {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+            {'key':'TEST','name':'测试','order':2,'approval_role':'none','sla_seconds':3600},
+            {'key':'REVIEW','name':'审核','order':3,'approval_role':'reviewer','sla_seconds':7200},
+            {'key':'DONE','name':'完成','order':4,'approval_role':'none','sla_seconds':None},
+        ],
+    })
+    assert workflow.status_code == 200, workflow.text
+    gate = client.put(f'/api/v1/projects/{pid}/gates/SECURITY_REVIEW', headers=ADMIN, json={
+        'enabled': True, 'required_roles':['reviewer'], 'required_evidence':False,
+        'required_all_tasks_done':False, 'applies_to':'REVIEW',
+    })
+    assert gate.status_code == 200, gate.text
+    dh={'Authorization':f'Bearer {developer_token}'}
+    artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=dh,json={
+        'artifact_type':'test-report','uri':'file://test-report.txt','metadata':{'case_count':3}
+    })
+    assert artifact.status_code == 200, artifact.text
+    blocked=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers={**dh,'Idempotency-Key':'scoped-review'},json={'target_stage':'REVIEW'})
+    assert blocked.status_code == 403, blocked.text
+    replay=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers={**dh,'Idempotency-Key':'scoped-review'},json={'target_stage':'REVIEW'})
+    assert replay.status_code == 403, replay.text
+
 def test_rc26_workflow_runtime_enforces_custom_gate_and_stage_exit_approval():
     pid, developer_id, developer_token, tid = setup_project_task()
     workflow = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={
