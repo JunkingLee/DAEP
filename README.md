@@ -211,3 +211,8 @@ This is a server-side integration test, not proof of real MCP Host interoperabil
 The reliability suite now injects an interrupted outbox worker scenario: worker A claims a durable message and loses its lease, worker B reclaims it with a rotated lease token, and the stale worker is prevented from completing the reclaimed row. The test verifies one-time completion and confirms the member inbox retains exactly one notification. This complements existing retry/backoff, dead-letter replay with audit reason, ACK idempotency, stalled-package detection, controlled reassignment, and work-result idempotency coverage.
 
 The lease-expiry scenario uses deterministic test-database fault injection; it is not a production broker/network partition drill or proof of physical multi-computer MCP Host interoperability. DAEP continues to coordinate durable work and evidence without managing member-local Agent Runtime processes. See `docs/RC26_STAGE9_DELIVERY_RELIABILITY.md`.
+
+
+## RC26 Stage 10 — Concurrent Outbox Claim Safety
+
+A barrier-synchronized API test now makes two independent workers compete for the same durable outbox queue. It verifies that no outbox row is returned to both workers and that the target notification receives exactly one active lease. The test covers the existing SQLite `BEGIN IMMEDIATE` and PostgreSQL `FOR UPDATE SKIP LOCKED` claim paths in CI. This is automated concurrency coverage, not a production load or broker-failure drill. See `docs/RC26_STAGE10_CONCURRENCY_SAFETY.md`.
