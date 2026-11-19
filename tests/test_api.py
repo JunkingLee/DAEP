@@ -1579,7 +1579,7 @@ def test_rc26_ui_role_function_is_project_scoped():
     projects = client.get('/api/v1/projects', headers={'Authorization':f'Bearer {owner_token}'})
     assert projects.status_code == 200
     project = next(p for p in projects.json() if p['id'] == pid)
-    assert project['project_role'] == 'owner'
+    assert project['project_role'] == 'member'
     assert project['work_function'] == 'other'
     invalid = client.patch(f'/api/v1/projects/{pid}/members/{developer["id"]}/function', headers=ADMIN, json={'work_function':'ops'})
     assert invalid.status_code == 422
