@@ -727,3 +727,26 @@ def test_rc25_dependency_updates_enforce_project_scope_and_prevent_cycles():
     with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
         event_row=db.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND event_type='task.dependencies.updated'",(first_id,)).fetchone()
     assert event_row[0]==1
+
+
+def test_rc26_project_delegation_history_is_scoped_and_includes_member_names():
+    pid, requester_id, requester_token, task_id = setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Topology Recipient'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':recipient['id'],'role':'member'}).status_code==200
+    recipient_headers={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=recipient_headers,json={'agent_name':'topology-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    requester_headers={'Authorization':'Bearer '+requester_token}
+    offer=client.post(f'/api/v1/tasks/{task_id}/delegations',headers=requester_headers,json={'recipient_member_id':recipient['id'],'agent_name':'topology-agent','reason':'Topology test'})
+    assert offer.status_code==200
+    response=client.post(f"/api/v1/delegations/{offer.json()['id']}/respond",headers=recipient_headers,json={'decision':'ACCEPT'})
+    assert response.status_code==200
+    history=client.get(f'/api/v1/projects/{pid}/delegations',headers=ADMIN)
+    assert history.status_code==200
+    item=history.json()['items'][0]
+    assert item['id']==offer.json()['id']
+    assert item['requester_name'] and item['recipient_name']=='Topology Recipient'
+    assert item['task_title']=='Implement API'
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Delegation Outsider'}).json()
+    assert client.get(f'/api/v1/projects/{pid}/delegations',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
+    limited=client.get(f'/api/v1/projects/{pid}/delegations?limit=0',headers=ADMIN)
+    assert limited.status_code==200 and limited.json()['count']==1
