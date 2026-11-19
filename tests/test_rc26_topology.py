@@ -19,3 +19,13 @@ def test_rc26_topology_maps_agent_identity_to_work_packages():
     assert "w.agent_name===a.agent_name&&w.assignee_member_id===a.member_id" in html
     assert "const orphan=items.filter" in html
     assert "最近心跳" in html
+
+
+def test_rc26_project_delegation_board_uses_project_scoped_history():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert 'id="delegationPanel"' in html
+    assert 'id="delegationBoard"' in html
+    assert "function renderDelegations()" in html
+    assert "'/api/v1/projects/'+selectedProject+'/delegations?limit=200'" in html
+    assert "projectDelegations=d.items||[]" in html
+    assert "PENDING" in html and "ACCEPTED" in html and "REJECTED" in html
