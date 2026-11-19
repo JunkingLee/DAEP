@@ -892,3 +892,44 @@ def test_rc26_stage6_project_decision_rejects_cross_project_task_and_nonmember_o
     invalid_owner=client.post(f'/api/v1/projects/{pid}/decisions',headers=ADMIN,json={
         'title':'Invalid owner','decision':'Do not accept','accountable_member_id':outsider['id']})
     assert invalid_owner.status_code==422
+
+
+
+def test_rc26_stage7_requirement_acceptance_requires_all_criteria_tasks_and_artifacts():
+    p=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Acceptance project'}).json()
+    pid=p['id']
+    m=client.post('/api/v1/members',headers=ADMIN,json={'name':'Acceptance developer'}).json()
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={'project_id':pid,'title':'Checkout','acceptance_criteria':['Payment is idempotent','Receipt is downloadable']}).json()
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req['id'],'title':'Implement checkout','assignee_member_ids':[m['id']]}).json()
+    report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=ADMIN).json()
+    assert report['ready_for_acceptance'] is False and report['task_count']==1
+    incomplete=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
+    assert incomplete.status_code==409
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(task['id'],))
+    db.execute("INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)",
+        ('art_acceptance',task['id'],'TEST_REPORT','https://example.invalid/report',None,'{}','2026-01-01T00:00:00+00:00','tenant-default'))
+    db.commit(); db.close()
+    report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=ADMIN).json()
+    assert report['ready_for_acceptance'] is True and report['missing_delivery_evidence_task_ids']==[]
+    partial=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0]})
+    assert partial.status_code==409
+    accepted=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1],'comment':'Evidence checked'})
+    assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    duplicate=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
+    assert duplicate.status_code==409
+    events=client.get(f'/api/v1/projects/{pid}/audit',headers=ADMIN).json()['items']
+    assert any(x['event_type']=='requirement.acceptance.approve' and x['payload']['requirement_id']==req['id'] for x in events)
+
+
+def test_rc26_stage7_requirement_acceptance_is_project_scoped_and_reviewer_only():
+    pid,member_id,member_token,_=setup_project_task()
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={'project_id':pid,'title':'Scoped requirement','acceptance_criteria':['Works']}).json()
+    headers={'Authorization':'Bearer '+member_token}
+    denied=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=headers,json={'decision':'REJECT','comment':'Needs changes'})
+    assert denied.status_code==403
+    report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=headers)
+    assert report.status_code==200
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Acceptance outsider'}).json()
+    denied_report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers={'Authorization':'Bearer '+outsider['token']})
+    assert denied_report.status_code==403
