@@ -80,6 +80,13 @@ class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80)
 class WorkResultIn(BaseModel): outcome:str=Field(pattern='^(COMPLETE|FAILED)$'); summary:str=Field(min_length=1,max_length=5000); idempotency_key:str=Field(default='',max_length=200)
 class WorkPackageScanIn(BaseModel): stale_after_seconds:int=Field(default=3600,ge=300,le=604800)
 class WorkPackageReassignIn(BaseModel): assignee_member_id:str=Field(min_length=1,max_length=120); agent_name:str=Field(min_length=1,max_length=120); reason:str=Field(min_length=1,max_length=2000)
+class ProjectDecisionIn(BaseModel):
+    title:str=Field(min_length=1,max_length=200)
+    decision:str=Field(min_length=1,max_length=4000)
+    rationale:str=Field(default='',max_length=5000)
+    accountable_member_id:str=Field(min_length=1,max_length=120)
+    related_task_ids:list[str]=Field(default_factory=list,max_length=50)
+    due_at:Optional[str]=Field(default=None,max_length=40)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
@@ -649,6 +656,78 @@ def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Hea
         c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(approval_status,a['id'],reason,stamp,approval_id,'PENDING'))
         event(c,'project.role_change.'+('approved' if decision=='APPROVE' else 'rejected'),a['id'],None,{'approval_id':approval_id,'project_id':pid,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
         return {'approval_id':approval_id,'status':approval_status,'member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
+
+@app.post('/api/v1/projects/{pid}/decisions')
+def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header(None)):
+    a=actor(authorization); decision_id='dec_'+uuid.uuid4().hex
+    with conn() as c:
+        require_project_access(c,pid,a,write=True)
+        accountable=c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,b.accountable_member_id)).fetchone()
+        if not accountable: raise HTTPException(422,'Accountable member must belong to this project')
+        task_ids=list(dict.fromkeys(b.related_task_ids))
+        if len(task_ids)!=len(b.related_task_ids): raise HTTPException(422,'related_task_ids must be unique')
+        for task_id in task_ids:
+            if task_project(c,task_id)!=pid: raise HTTPException(422,'Every related task must belong to this project')
+        payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
+            'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
+            'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
+        event(c,'project.decision.recorded',a['id'],None,payload)
+    return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
+
+@app.get('/api/v1/projects/{pid}/decisions')
+def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None)):
+    a=actor(authorization); limit=max(1,min(limit,500))
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id":"'+pid+'"%',limit)).fetchall()
+        items=[]
+        for row in rows:
+            payload=json.loads(row['payload'] or '{}')
+            if payload.get('project_id')!=pid: continue
+            accountable=c.execute('SELECT name FROM members WHERE id=?',(payload.get('accountable_member_id'),)).fetchone()
+            items.append({'id':payload.get('decision_id'),'title':payload.get('title'),'decision':payload.get('decision'),
+                'rationale':payload.get('rationale',''),'accountable_member_id':payload.get('accountable_member_id'),
+                'accountable_member_name':accountable['name'] if accountable else None,'related_task_ids':payload.get('related_task_ids',[]),
+                'due_at':payload.get('due_at'),'recorded_by':row['actor_member_id'],'recorded_by_name':row['actor_name'],
+                'created_at':row['created_at'],'audit_event_id':row['id']})
+        return {'project_id':pid,'items':items,'count':len(items)}
+
+@app.get('/api/v1/projects/{pid}/governance')
+def project_governance_snapshot(pid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT t.id,t.status,t.progress,t.updated_at,a.member_id,m.name AS member_name
+            FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+            LEFT JOIN assignments a ON a.task_id=t.id LEFT JOIN members m ON m.id=a.member_id
+            WHERE r.project_id=? ORDER BY t.id""",(pid,)).fetchall()
+        task_ids=set(); task_state={}
+        for row in rows:
+            task_ids.add(row['id'])
+            task_state[row['id']]={'status':row['status'],'progress':row['progress']}
+        total=len(task_ids)
+        status_counts={}
+        for item in task_state.values(): status_counts[item['status']]=status_counts.get(item['status'],0)+1
+        responsibility={}
+        for row in rows:
+            if not row['member_id']: continue
+            slot=responsibility.setdefault(row['member_id'],{'member_id':row['member_id'],'member_name':row['member_name'],'assigned_task_ids':[],'done':0,'active':0,'review':0,'blocked':0})
+            if row['id'] not in slot['assigned_task_ids']:
+                slot['assigned_task_ids'].append(row['id'])
+                if row['status']=='DONE': slot['done']+=1
+                elif row['status']=='REVIEW': slot['review']+=1
+                elif row['status']=='BLOCKED': slot['blocked']+=1
+                else: slot['active']+=1
+        packages=c.execute("SELECT risk_state,COUNT(*) AS n FROM task_work_packages WHERE project_id=? AND status='ACTIVE' GROUP BY risk_state",(pid,)).fetchall()
+        package_risks={x['risk_state']:x['n'] for x in packages}
+        pending_reviews=status_counts.get('REVIEW',0)
+        return {'project_id':pid,'task_total':total,'task_status_counts':status_counts,
+            'completed_tasks':status_counts.get('DONE',0),'completion_percent':round(status_counts.get('DONE',0)*100/total) if total else 100,
+            'pending_reviews':pending_reviews,'open_tasks':total-status_counts.get('DONE',0),
+            'active_work_package_risk_counts':package_risks,
+            'at_risk_work_packages':sum(package_risks.get(k,0) for k in ('OVERDUE','BLOCKED_DEPENDENCY','STALLED')),
+            'responsibility':list(responsibility.values()),
+            'completion_gate':'SATISFIED' if total and status_counts.get('DONE',0)==total else ('EMPTY' if not total else 'OPEN')}
 
 @app.get('/api/v1/projects/{pid}/audit')
 def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authorization:str=Header(None)):
