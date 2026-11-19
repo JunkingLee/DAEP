@@ -1020,7 +1020,7 @@ def test_rc26_full_role_delivery_to_project_closure_e2e():
         'required_all_tasks_done':False,'applies_to':'TEST'})
     assert gate.status_code==200,gate.text
 
-    req=client.post('/api/v1/requirements',headers=product_h,json={
+    req=client.post('/api/v1/requirements',headers=manager_h,json={
         'project_id':pid,'title':'Checkout delivery','acceptance_criteria':['API works','Regression passes']})
     assert req.status_code==200,req.text
     tid=client.post('/api/v1/tasks',headers=product_h,json={
@@ -1748,9 +1748,9 @@ def test_rc26_multi_project_role_isolation_and_function_navigation_contract():
     b=client.get(f'/api/v1/projects/{project_b}/members',headers=ADMIN)
     c=client.get(f'/api/v1/projects/{project_c}/members',headers=ADMIN)
     assert a.status_code == b.status_code == c.status_code == 200
-    amap={x['member_id']:x for x in a.json()['members']}
-    bmap={x['member_id']:x for x in b.json()['members']}
-    cmap={x['member_id']:x for x in c.json()['members']}
+    amap={x['member_id']:x for x in a.json()}
+    bmap={x['member_id']:x for x in b.json()}
+    cmap={x['member_id']:x for x in c.json()}
     assert amap[manager_id]['project_role'] in ('owner','manager')
     assert bmap[manager_id]['project_role']=='member'
     assert bmap[manager_id]['work_function']=='tester'
