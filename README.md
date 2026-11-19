@@ -160,3 +160,8 @@ Stage 4 completes the human-facing work-package loop without taking ownership of
 - Approval requires at least one artifact and moves the work package task to `DONE`.
 - Existing dependency editing, health scanning, stalled-work governance, reassignment, durable messages, and collaboration timeline remain the source of truth.
 - DAEP still does not create, host, control, or wake local Agent Runtime processes.
+
+
+## RC26 Stage 5 — Exception Coordination Workbench
+
+A project-scoped coordination center now aggregates exception work packages (overdue, dependency-blocked, stalled, or awaiting review), unclaimed tasks, pending reviews, and pending delegations. Human coordinators can refresh risk scans, mark stale packages for attention, open task timelines, and reassign a stalled package to a selected project member and that member's registered local Agent. Reassignment requires a reason and validates fresh Agent presence; it does not start or wake an Agent Runtime. See `docs/RC26_STAGE5_COORDINATION_WORKBENCH.md`.
