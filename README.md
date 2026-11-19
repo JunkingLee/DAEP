@@ -264,3 +264,8 @@ A platform-admin-only read-only reconciliation endpoint now cross-checks durable
 ## RC26 Stage 16 — Controlled Message Dispatch Recovery
 
 A platform-admin-only recovery operation can restore a `message.created` outbox record only when a durable message has no matching dispatch record. It requires an operator reason, serializes/locks the message state, rechecks for any existing dispatch (including SENT or DEAD), refuses duplicates with HTTP 409, reconstructs the original delivery context, and emits an auditable `message.outbox.restored` event. It does not alter message ACK state or automatically replay dead letters. See `docs/RC26_STAGE16_CONTROLLED_MESSAGE_RECOVERY.md`.
+
+
+## RC26 Stage 17 — Message Delivery Operations Overview
+
+A platform-admin-only read-only endpoint `GET /api/v1/admin/message-delivery` provides bounded and filterable operational visibility across message delivery. It keeps Outbox dispatch (`PENDING`, `IN_FLIGHT`, `SENT`, `DEAD`, plus missing/duplicate) separate from recipient ACK (`PENDING`, `ACKNOWLEDGED`, `REJECTED`), exposes attempts/retry/lease/error metadata, and omits message titles and bodies. `SENT` explicitly means broker dispatch completion, not recipient acknowledgement. Automated tests cover state combinations, filters, authorization, and data minimization. See `docs/RC26_STAGE17_MESSAGE_DELIVERY_OVERVIEW.md`.

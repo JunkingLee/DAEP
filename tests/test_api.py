@@ -1427,3 +1427,46 @@ def test_rc26_stage16_admin_restores_only_missing_message_outbox_once():
         audits=db.execute("SELECT event_type,payload,task_id FROM events WHERE event_type='message.outbox.restored'").fetchall()
         matches=[x for x in audits if json.loads(x[1]).get('message_id')==mid]
         assert len(matches)==1 and matches[0][2]==task_id
+
+
+
+def test_rc26_stage17_message_delivery_overview_separates_dispatch_and_ack():
+    pid,_,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage17 Delivery Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    mids=[]
+    for label in ('pending','sent','dead'):
+        response=client.post('/api/v1/messages',headers=ADMIN,json={
+            'recipient_member_id':recipient['id'],'project_id':pid,'task_id':task_id,
+            'message_type':'COLLABORATION','title':label,'content':'private body'})
+        assert response.status_code==200,response.text
+        mids.append(response.json()['id'])
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        for mid,status in zip(mids,('PENDING','SENT','DEAD')):
+            db.execute("UPDATE outbox SET status=?,attempts=CASE WHEN ?='DEAD' THEN 8 ELSE attempts END,last_error=CASE WHEN ?='DEAD' THEN 'broker unavailable' ELSE NULL END,sent_at=CASE WHEN ?='SENT' THEN '2026-11-19T00:00:00+00:00' ELSE NULL END WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",
+                       (status,status,status,status,mid))
+    ack=client.post(f'/api/v1/messages/{mids[1]}/ack',
+        headers={'Authorization':f"Bearer {recipient['token']}"},json={'status':'ACKNOWLEDGED'})
+    assert ack.status_code==200,ack.text
+    overview=client.get('/api/v1/admin/message-delivery',headers=ADMIN)
+    assert overview.status_code==200,overview.text
+    data=overview.json()
+    rows={item['message_id']:item for item in data['items'] if item['message_id'] in mids}
+    assert rows[mids[0]]['dispatch_status']=='PENDING'
+    assert rows[mids[0]]['ack_status']=='PENDING'
+    assert rows[mids[1]]['dispatch_status']=='SENT'
+    assert rows[mids[1]]['ack_status']=='ACKNOWLEDGED'
+    assert rows[mids[2]]['dispatch_status']=='DEAD'
+    assert rows[mids[2]]['ack_status']=='PENDING'
+    assert rows[mids[2]]['dispatch_records'][0]['last_error']=='broker unavailable'
+    assert 'content' not in rows[mids[0]] and 'title' not in rows[mids[0]]
+    filtered=client.get('/api/v1/admin/message-delivery?dispatch_status=DEAD',headers=ADMIN)
+    assert filtered.status_code==200
+    assert all(x['dispatch_status']=='DEAD' for x in filtered.json()['items'])
+    invalid=client.get('/api/v1/admin/message-delivery?ack_status=DELIVERED',headers=ADMIN)
+    assert invalid.status_code==422
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage17 outsider'}).json()
+    denied=client.get('/api/v1/admin/message-delivery',
+        headers={'Authorization':f"Bearer {outsider['token']}"})
+    assert denied.status_code==403

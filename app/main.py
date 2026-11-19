@@ -1661,6 +1661,62 @@ def restore_missing_message_outbox(message_id:str,body:dict,authorization:str=He
               {'message_id':message_id,'outbox_id':outbox_id,'reason':reason},tenant_override=message['tenant_id'])
     return {'message_id':message_id,'outbox_id':outbox_id,'status':'PENDING','restored':True}
 
+@app.get('/api/v1/admin/message-delivery')
+def message_delivery_overview(authorization:str=Header(None),limit:int=200,offset:int=0,
+                              dispatch_status:str=None,ack_status:str=None):
+    """Admin operational view separating broker dispatch from recipient acknowledgement."""
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    limit=max(1,min(limit,500)); offset=max(0,offset)
+    allowed_dispatch={'NO_OUTBOX','DUPLICATE','PENDING','IN_FLIGHT','SENT','DEAD'}
+    allowed_ack={'PENDING','ACKNOWLEDGED','REJECTED'}
+    if dispatch_status and dispatch_status not in allowed_dispatch:
+        raise HTTPException(422,'Invalid dispatch_status filter')
+    if ack_status and ack_status not in allowed_ack:
+        raise HTTPException(422,'Invalid ack_status filter')
+    with conn() as c:
+        messages=c.execute('SELECT id,recipient_member_id,tenant_id,task_id,message_type,priority,status,created_at,acked_at FROM messages ORDER BY seq DESC LIMIT ? OFFSET ?',(limit,offset)).fetchall()
+        outbox=c.execute("SELECT id,event_type,payload,status,attempts,available_at,lease_until,lease_owner,last_error,created_at,sent_at,tenant_id FROM outbox WHERE event_type='message.created' ORDER BY created_at").fetchall()
+    by_message={}
+    malformed_count=0
+    for item in outbox:
+        try:
+            mid=json.loads(item['payload']).get('message_id')
+            if not isinstance(mid,str) or not mid: malformed_count+=1; continue
+        except (TypeError,ValueError):
+            malformed_count+=1; continue
+        by_message.setdefault(mid,[]).append(item)
+    items=[]
+    counts={key:0 for key in ('NO_OUTBOX','DUPLICATE','PENDING','IN_FLIGHT','SENT','DEAD')}
+    ack_counts={key:0 for key in ('PENDING','ACKNOWLEDGED','REJECTED')}
+    for message in messages:
+        records=by_message.get(message['id'],[])
+        state='NO_OUTBOX' if not records else ('DUPLICATE' if len(records)>1 else records[0]['status'])
+        if state not in counts: state='UNKNOWN'
+        if state in counts: counts[state]+=1
+        ack=message['status']
+        if ack in ack_counts: ack_counts[ack]+=1
+        if dispatch_status and state!=dispatch_status: continue
+        if ack_status and ack!=ack_status: continue
+        items.append({
+            'message_id':message['id'],'recipient_member_id':message['recipient_member_id'],
+            'tenant_id':message['tenant_id'],'task_id':message['task_id'],
+            'message_type':message['message_type'],'priority':message['priority'],
+            'ack_status':ack,'created_at':message['created_at'],'acked_at':message['acked_at'],
+            'dispatch_status':state,'dispatch_records':[{
+                'outbox_id':row['id'],'status':row['status'],'attempts':row['attempts'],
+                'available_at':row['available_at'],'lease_until':row['lease_until'],
+                'lease_owner':row['lease_owner'],'last_error':row['last_error'],
+                'created_at':row['created_at'],'sent_at':row['sent_at']
+            } for row in records]
+        })
+    return {'items':items,'count':len(items),'limit':limit,'offset':offset,
+            'dispatch_counts':counts,'ack_counts':ack_counts,
+            'malformed_outbox_records_seen':malformed_count,
+            'semantics':{'SENT':'Broker dispatch completed; recipient acknowledgement is tracked separately in ack_status.',
+                         'ACKNOWLEDGED':'Recipient explicitly acknowledged the message.',
+                         'REJECTED':'Recipient explicitly rejected the message.'}}
+
 @app.get('/api/v1/admin/message-delivery-integrity')
 def message_delivery_integrity(authorization:str=Header(None),limit:int=5000):
     """Read-only reconciliation of durable messages and their outbox dispatch records."""
