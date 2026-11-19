@@ -1223,3 +1223,92 @@ def test_rc26_stage12_concurrent_work_package_reviews_emit_one_governance_event(
     assert events.status_code==200
     matching=[e for e in events.json() if e['event_type']=='task.work_package.reviewed']
     assert len(matching)==1
+
+
+def test_rc26_stage13_concurrent_delegation_decisions_emit_one_terminal_event():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    pid,member_id,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage13 Delegation Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    recipient_h={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=recipient_h,json={
+        'agent_name':'stage13-agent','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+
+    offered=client.post(f'/api/v1/tasks/{task_id}/delegations',headers=ADMIN,json={
+        'recipient_member_id':recipient['id'],'agent_name':'stage13-agent',
+        'reason':'Stage13 concurrent decision invariant','expires_in_seconds':3600})
+    assert offered.status_code==200,offered.text
+    delegation_id=offered.json()['id']
+
+    gate=Barrier(2)
+    def decide(decision):
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/delegations/{delegation_id}/respond',
+                           headers=recipient_h,json={'decision':decision})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [
+            pool.submit(decide,'ACCEPT'),pool.submit(decide,'REJECT')]]
+
+    statuses=sorted(r.status_code for r in responses)
+    assert statuses==[200,409],[r.text for r in responses]
+    successful=[r.json() for r in responses if r.status_code==200]
+    assert successful[0]['status'] in ('ACCEPTED','REJECTED')
+
+    events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN)
+    assert events.status_code==200
+    matching=[e for e in events.json()
+              if e['event_type'] in ('task.delegation.accepted','task.delegation.rejected')
+              and e['payload'].get('delegation_id')==delegation_id]
+    assert len(matching)==1
+
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        row=db.execute('SELECT status FROM task_delegations WHERE id=?',(delegation_id,)).fetchone()
+        assert row[0] == successful[0]['status']
+
+
+def test_rc26_stage13_concurrent_delegation_expiry_does_not_duplicate_audit():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from datetime import datetime, timezone, timedelta
+
+    pid,recipient_id,_,task_id=setup_project_task()
+    offered=client.post(f'/api/v1/tasks/{task_id}/delegations',headers=ADMIN,json={
+        'recipient_member_id':recipient_id,
+        'agent_name':'unused-stage13-agent',
+        'reason':'Expiry consistency test','expires_in_seconds':3600})
+    assert offered.status_code==404 or offered.status_code==409
+    # Create an actual offer with a registered Agent.
+
+    member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage13 Expiry Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':member['id'],'role':'member'}).status_code==200
+    mh={'Authorization':f'Bearer {member["token"]}'}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={
+        'agent_name':'stage13-expiry-agent','capabilities':['testing'],
+        'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    offered=client.post(f'/api/v1/tasks/{task_id}/delegations',headers=ADMIN,json={
+        'recipient_member_id':member['id'],'agent_name':'stage13-expiry-agent',
+        'reason':'Expiry consistency test','expires_in_seconds':3600})
+    assert offered.status_code==200
+    delegation_id=offered.json()['id']
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE task_delegations SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",(delegation_id,))
+    db.commit();db.close()
+
+    gate=Barrier(2)
+    def list_delegations():
+        gate.wait(timeout=10)
+        return client.get(f'/api/v1/tasks/{task_id}/delegations',headers=ADMIN)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [pool.submit(list_delegations),pool.submit(list_delegations)]]
+    assert all(r.status_code==200 for r in responses)
+
+    events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN).json()
+    matching=[e for e in events if e['event_type']=='task.delegation.expired'
+              and e['payload'].get('delegation_id')==delegation_id]
+    assert len(matching)==1
