@@ -25,3 +25,15 @@ def test_rc26_tester_workbench_exposes_test_execution_controls():
     assert "function testerAddArtifact" in html
     assert "测试操作" in html
     assert "添加验收证据" in html
+
+
+def test_rc26_manager_workbench_governance_controls():
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    assert 'id="managerWorkbenchPanel"' in html
+    assert 'id="managerGovernanceMetrics"' in html
+    assert 'function loadManagerGovernance()' in html
+    assert 'function recordManagerDecision()' in html
+    assert "完成门禁" in html
+    assert "项目收口状态" in html
+    assert "/governance" in html
+    assert "/decisions?limit=100" in html
