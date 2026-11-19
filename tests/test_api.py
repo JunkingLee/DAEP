@@ -1515,3 +1515,41 @@ def test_rc26_stage18_project_message_delivery_sla_and_incident_review():
     with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
         events=db.execute("SELECT event_type,payload FROM events WHERE event_type='message.delivery.incident.reviewed'").fetchall()
     assert any(json.loads(payload).get('message_id')==mids[0] for _,payload in events)
+
+
+
+def test_rc26_stage19_project_governance_includes_message_reliability_and_review_closure():
+    pid,_,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage19 Governance Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    created=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':recipient['id'],'project_id':pid,'task_id':task_id,
+        'message_type':'COLLABORATION','title':'governance integration','content':'private'} )
+    assert created.status_code==200,created.text
+    mid=created.json()['id']
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        db.execute("UPDATE outbox SET status='DEAD',attempts=5,last_error='integration test' WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(mid,))
+    before=client.get(f'/api/v1/projects/{pid}/governance',headers=ADMIN)
+    assert before.status_code==200,before.text
+    metrics=before.json()['message_delivery']
+    assert metrics['incident_count']==1
+    assert metrics['open_incidents']==1
+    assert metrics['incidents'][0]['message_id']==mid
+    assert metrics['incidents'][0]['review_disposition']=='UNREVIEWED'
+    reviewed=client.post(f'/api/v1/projects/{pid}/message-delivery-incidents/{mid}/review',
+        headers=ADMIN,json={'disposition':'RESOLVED','comment':'Dispatch record restored and verified'})
+    assert reviewed.status_code==200,reviewed.text
+    after=client.get(f'/api/v1/projects/{pid}/governance',headers=ADMIN)
+    assert after.status_code==200,after.text
+    metrics=after.json()['message_delivery']
+    assert metrics['resolved_incidents']==1
+    assert metrics['open_incidents']==0
+    assert metrics['incidents'][0]['review_disposition']=='RESOLVED'
+    assert 'private' not in str(metrics)
+    member_header={'Authorization':f"Bearer {recipient['token']}"}
+    member_view=client.get(f'/api/v1/projects/{pid}/governance',headers=member_header)
+    assert member_view.status_code==200
+    other=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Stage19 isolation'}).json()
+    denied=client.get(f"/api/v1/projects/{other['id']}/governance",headers=member_header)
+    assert denied.status_code==403

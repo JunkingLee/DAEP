@@ -274,3 +274,8 @@ A platform-admin-only read-only endpoint `GET /api/v1/admin/message-delivery` pr
 ## RC26 Stage 18 — Message Delivery SLA and Incident Governance
 
 Project members can inspect a project-scoped delivery health report that identifies missing/duplicate dispatch records, dead letters, dispatch SLA breaches, and broker-SENT messages whose recipient ACK exceeds a separate ACK SLA (measured from `sent_at`). Project managers/owners can append an incident review disposition and comment to the governance audit trail. The feature is read-only for delivery state and does not retry messages or control Agent Runtime. See `docs/RC26_STAGE18_MESSAGE_DELIVERY_SLA.md`.
+
+
+## RC26 Stage 19 — Project Governance Message Reliability Integration
+
+The project governance snapshot now includes message dispatch/ACK health, current SLA incidents, latest review disposition, open/resolved/accepted-risk counts, and daily message/terminal-ACK volume. It reuses project-scoped access and does not alter delivery or Agent Runtime state. Historical review decisions remain in the audit stream; the daily trend reports message volume rather than inventing historical incident counts. See `docs/RC26_STAGE19_GOVERNANCE_MESSAGE_RELIABILITY.md`.

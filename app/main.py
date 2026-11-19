@@ -781,13 +781,59 @@ def project_governance_snapshot(pid:str,authorization:str=Header(None)):
         packages=c.execute("SELECT risk_state,COUNT(*) AS n FROM task_work_packages WHERE project_id=? AND status='ACTIVE' GROUP BY risk_state",(pid,)).fetchall()
         package_risks={x['risk_state']:x['n'] for x in packages}
         pending_reviews=status_counts.get('REVIEW',0)
+        delivery_health=project_message_delivery_health(pid,authorization,120,300,500)
+        review_rows=c.execute("""SELECT e.payload,e.created_at FROM events e
+            WHERE e.event_type='message.delivery.incident.reviewed' AND e.payload LIKE ?
+            ORDER BY e.created_at DESC LIMIT 1000""",('%"project_id":"'+pid+'"%',)).fetchall()
+        latest_reviews={}
+        for review_row in review_rows:
+            try:
+                payload=json.loads(review_row['payload'] or '{}')
+                mid=payload.get('message_id')
+                if mid and mid not in latest_reviews:
+                    latest_reviews[mid]={'disposition':payload.get('disposition'),'comment':payload.get('comment'),
+                                         'reviewed_at':review_row['created_at']}
+            except (TypeError,ValueError):
+                continue
+        reviewed_incidents=[]
+        open_incidents=0; resolved_incidents=0; accepted_risk_incidents=0; investigating_incidents=0
+        for incident in delivery_health.get('incidents',[]):
+            review=latest_reviews.get(incident['message_id'])
+            disposition=review.get('disposition') if review else 'UNREVIEWED'
+            item=dict(incident)
+            item['review_disposition']=disposition
+            item['reviewed_at']=review.get('reviewed_at') if review else None
+            reviewed_incidents.append(item)
+            if disposition=='RESOLVED': resolved_incidents+=1
+            elif disposition=='ACCEPTED_RISK': accepted_risk_incidents+=1
+            else:
+                open_incidents+=1
+                if disposition=='INVESTIGATING': investigating_incidents+=1
+        daily=c.execute("""SELECT substr(created_at,1,10) AS day,COUNT(*) AS created,
+            SUM(CASE WHEN status IN ('ACKNOWLEDGED','REJECTED') THEN 1 ELSE 0 END) AS terminal_ack
+            FROM messages m JOIN tasks t ON t.id=m.task_id JOIN requirements r ON r.id=t.requirement_id
+            WHERE r.project_id=? AND created_at>=? GROUP BY substr(created_at,1,10) ORDER BY day""",
+            (pid,(stamp_now if False else datetime.now(timezone.utc)).replace(hour=0,minute=0,second=0,microsecond=0).isoformat())).fetchall()
+        delivery_trend=[{'date':x['day'],'messages_created':x['created'],'terminal_ack':x['terminal_ack'] or 0} for x in daily]
+        message_delivery_governance={
+            'checked_messages':delivery_health.get('checked_messages',0),
+            'dispatch_counts':delivery_health.get('dispatch_counts',{}),
+            'ack_counts':delivery_health.get('ack_counts',{}),
+            'incident_count':delivery_health.get('incident_count',0),
+            'open_incidents':open_incidents,'investigating_incidents':investigating_incidents,
+            'resolved_incidents':resolved_incidents,'accepted_risk_incidents':accepted_risk_incidents,
+            'incidents':reviewed_incidents,'trend_since_utc_midnight':delivery_trend,
+            'sla_policy':delivery_health.get('policy'),
+            'truncated':delivery_health.get('truncated',False)
+        }
         return {'project_id':pid,'task_total':total,'task_status_counts':status_counts,
             'completed_tasks':status_counts.get('DONE',0),'completion_percent':round(status_counts.get('DONE',0)*100/total) if total else 100,
             'pending_reviews':pending_reviews,'open_tasks':total-status_counts.get('DONE',0),
             'active_work_package_risk_counts':package_risks,
             'at_risk_work_packages':sum(package_risks.get(k,0) for k in ('OVERDUE','BLOCKED_DEPENDENCY','STALLED')),
             'responsibility':list(responsibility.values()),
-            'completion_gate':'SATISFIED' if total and status_counts.get('DONE',0)==total else ('EMPTY' if not total else 'OPEN')}
+            'completion_gate':'SATISFIED' if total and status_counts.get('DONE',0)==total else ('EMPTY' if not total else 'OPEN'),
+            'message_delivery':message_delivery_governance}
 
 @app.get('/api/v1/projects/{pid}/audit')
 def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authorization:str=Header(None)):
