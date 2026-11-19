@@ -288,6 +288,8 @@ async function openTask(id){
   const [t,p,tl]=await Promise.all([api('/api/v1/tasks/'+id),api('/api/v1/tasks/'+id+'/work-packages'),api('/api/v1/tasks/'+id+'/work-timeline')]);
   $('detailTitle').textContent=t.title;
   let html='<div class="detailgrid"><div><b>状态</b><p>'+esc(t.status)+' · '+(t.progress||0)+'%</p></div><div><b>负责人</b><p>'+(t.assignees||[]).map(a=>esc(a.name)).join('、')+'</p></div><div><b>任务 ID</b><p class="small">'+esc(t.id)+'</p></div><div><b>依赖任务</b><p class="small">'+dependencyLinks(t)+'</p></div></div>';
+  const testerAction=(currentWorkFunction()==='tester'||selectedProjectRole==='reviewer')?'<div class="item"><strong>测试操作</strong><p class="muted small">测试结果通过进度记录；发现阻塞可直接标记阻塞；交付验证证据后进入 Review。</p><button type="button" onclick="testerSetProgress(\''+id+'\',100)">测试通过 · 提交 Review</button><button type="button" class="secondary" onclick="testerSetProgress(\''+id+'\',50)">测试中 · 50%</button><button type="button" class="secondary" onclick="testerBlockTask(\''+id+'\')">发现阻塞</button><button type="button" class="secondary" onclick="testerAddArtifact(\''+id+'\')">添加验收证据</button></div>':'';
+  html+=testerAction;
   html+='<h3>跨成员委派 · '+(tl.delegations||[]).length+'</h3>';
   html+=(tl.delegations||[]).map(d=>'<div class="item"><strong>'+esc(d.requester_name)+' → '+esc(d.recipient_name)+' · '+esc(d.agent_name)+'</strong><div class="muted small">'+esc(d.status)+' · '+esc(d.reason||'无说明')+'</div><div class="muted small">发起：'+esc(d.created_at)+' · 响应：'+esc(d.responded_at||'尚未响应')+'</div></div>').join('')||'<p class="muted">暂无委派记录</p>';
   html+='<h3>跨成员工作包 · '+p.length+'</h3>';
@@ -310,6 +312,10 @@ async function openTask(id){
   $('detailContent').innerHTML=html;$('taskDetail').classList.remove('hidden');$('taskDetail').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){showError(e)}
 }
+
+async function testerSetProgress(id,progress){try{const key='tester-progress-'+id+'-'+progress+'-'+Date.now();await api('/api/v1/tasks/'+id+'/progress',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({progress})});await loadTasks();await openTask(id);showMessage(progress===100?'测试完成，任务已进入 Review':'测试进度已更新')}catch(e){showError(e)}}
+async function testerBlockTask(id){const reason=prompt('请输入阻塞原因：','发现缺陷或环境阻塞');if(reason===null)return;try{await api('/api/v1/tasks/'+id+'/blocked',{method:'POST',body:JSON.stringify({reason})});await loadTasks();await openTask(id);showMessage('任务已标记为阻塞')}catch(e){showError(e)}}
+async function testerAddArtifact(id){const type=prompt('证据类型：','test-report');if(type===null)return;const uri=prompt('证据 URI / 报告地址：','');if(uri===null)return;const commit=prompt('Commit SHA（可留空）：','')||'';try{await api('/api/v1/tasks/'+id+'/artifacts',{method:'POST',body:JSON.stringify({artifact_type:type,uri,commit_sha:commit,metadata:{source:'tester-workbench'}})});await openTask(id);showMessage('测试证据已提交')}catch(e){showError(e)}}
 function closeTaskDetail(){$('taskDetail').classList.add('hidden')}
 async function createTask(){try{const assignees=[...$('assignees').selectedOptions].map(o=>o.value);await api('/api/v1/tasks',{method:'POST',body:JSON.stringify({requirement_id:$('reqSelect').value,title:$('taskTitle').value,description:$('taskDesc').value,assignee_member_ids:assignees})});$('taskTitle').value='';$('taskDesc').value='';await loadTasks();await loadOverview()}catch(e){showError(e)}}
 async function loadInbox(){try{const d=await api('/api/v1/me/notifications');$('inbox').innerHTML=d.items.map(m=>`<div class="item"><strong>${esc(m.title)} <span class="tag">${esc(m.priority)}</span></strong><p>${esc(m.content)}</p><span class="muted">${esc(m.created_at)}</span><button onclick="ack('${m.id}')">确认收到</button></div>`).join('')||'<p class="muted">没有待处理消息</p>'}catch(e){showError(e)}}
