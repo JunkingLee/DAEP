@@ -58,3 +58,13 @@ def test_dependency_update_endpoint_has_scope_and_cycle_guards():
     assert "Dependencies must belong to the same project" in endpoint
     assert "Dependency would create a cycle" in endpoint
     assert "task.dependencies.updated" in endpoint
+
+
+def test_rc25_project_work_package_board_uses_project_health_data():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert 'id="workPackageBoard"' in html
+    assert 'id="workPackageRiskFilter"' in html
+    assert "function renderWorkPackages()" in html
+    assert "projectHealthItems=h.items||[]" in html
+    assert "function scanProjectHealth()" in html
+    assert "/work-packages/scan-health" in html
