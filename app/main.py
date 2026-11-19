@@ -102,6 +102,7 @@ class GateConfigIn(BaseModel):
     required_roles:list[str]=Field(default_factory=list,max_length=10)
     required_evidence:bool=False
     required_all_tasks_done:bool=False
+    applies_to:str=Field(default='DONE',min_length=1,max_length=80)
 class RequirementAcceptanceIn(BaseModel):
     decision:str=Field(pattern='^(APPROVE|REJECT)$')
     verified_criteria:list[int]=Field(default_factory=list,max_length=100)
@@ -912,10 +913,63 @@ def set_project_gate(pid:str,gate_key:str,b:GateConfigIn,authorization:str=Heade
     with conn() as c:
         require_project_access(c,pid,a,write=True)
         if not (a['role']=='admin' or project_role(c,pid,a) in ('owner','manager')): raise HTTPException(403,'Project manager or platform administrator required')
-        cfg=b.model_dump(); stamp=now(); tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
+        cfg=b.model_dump(); cfg['applies_to']=cfg.get('applies_to') or 'DONE'; stamp=now(); tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
         c.execute('INSERT INTO project_gates(project_id,gate_key,tenant_id,config,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,gate_key) DO UPDATE SET config=excluded.config,updated_by=excluded.updated_by,updated_at=excluded.updated_at',(pid,gate_key,tenant,json.dumps(cfg),a['id'],stamp))
         event(c,'project.gate.updated',a['id'],None,{'project_id':pid,'gate_key':gate_key,'config':cfg},tenant_override=tenant)
         return {'project_id':pid,'gate_key':gate_key,'config':cfg,'updated_at':stamp}
+
+
+DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
+SYSTEM_GOVERNANCE_GATES={
+    'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
+    'DELIVERY_EVIDENCE':{'enabled':True,'required_roles':['owner','manager','reviewer'],'required_evidence':True,'required_all_tasks_done':True,'applies_to':'DONE'}
+}
+def project_workflow_config(c,pid):
+    row=c.execute('SELECT config FROM project_workflows WHERE project_id=?',(pid,)).fetchone()
+    return json.loads(row['config']) if row else DEFAULT_PROJECT_WORKFLOW
+def project_gate_config(c,pid,gate_key):
+    if gate_key in SYSTEM_GOVERNANCE_GATES: return SYSTEM_GOVERNANCE_GATES[gate_key]
+    row=c.execute('SELECT config FROM project_gates WHERE project_id=? AND gate_key=?',(pid,gate_key)).fetchone()
+    return json.loads(row['config']) if row else None
+def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stage='DONE'):
+    cfg=project_gate_config(c,pid,gate_key)
+    if not cfg or not cfg.get('enabled',True) or cfg.get('applies_to','DONE')!=target_stage: return
+    if cfg.get('required_roles'):
+        if not is_admin({'id':actor_member_id,'role':'admin'}):
+            role=project_role(c,pid,{'id':actor_member_id})
+            if role not in cfg['required_roles']: raise HTTPException(403,f'Gate {gate_key} requires one of: {", ".join(cfg["required_roles"])}')
+    if task_id and cfg.get('required_evidence'):
+        if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(task_id,)).fetchone() is None:
+            raise HTTPException(409,detail={'message':f'Gate {gate_key} requires delivery evidence','gate_key':gate_key,'task_id':task_id})
+    if task_id and cfg.get('required_all_tasks_done'):
+        row=c.execute('SELECT requirement_id FROM tasks WHERE id=?',(task_id,)).fetchone()
+        if row:
+            pending=c.execute("SELECT id FROM tasks WHERE requirement_id=? AND status!='DONE'",(row['requirement_id'],)).fetchall()
+            if pending: raise HTTPException(409,detail={'message':f'Gate {gate_key} requires all requirement tasks to be DONE','gate_key':gate_key,'pending_task_ids':[x['id'] for x in pending]})
+def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
+    cfg=project_workflow_config(c,pid)
+    stage=next((x for x in cfg.get('stages',[]) if x.get('key')==stage_key),None)
+    if not stage: raise HTTPException(409,detail={'message':'Target workflow stage is not configured','stage_key':stage_key})
+    approval_role=stage.get('approval_role','none')
+    if approval_role!='none':
+        role=project_role(c,pid,{'id':actor_member_id})
+        if role!=approval_role and not is_admin({'id':actor_member_id,'role':'admin'}):
+            raise HTTPException(403,f'Workflow stage {stage_key} requires {approval_role} role')
+    if stage_key=='DONE':
+        enforce_project_gate(c,pid,'REVIEW_REQUIRED',actor_member_id,task_id,'DONE')
+        enforce_project_gate(c,pid,'DELIVERY_EVIDENCE',actor_member_id,task_id,'DONE')
+    for gate_key in [x['gate_key'] for x in c.execute('SELECT gate_key FROM project_gates WHERE project_id=?',(pid,)).fetchall()]:
+        enforce_project_gate(c,pid,gate_key,actor_member_id,task_id,stage_key)
+def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
+    pid=task_project(c,tid)
+    if not pid: raise HTTPException(404,'Task not found')
+    task=c.execute('SELECT status,progress FROM tasks WHERE id=?',(tid,)).fetchone()
+    if not task: raise HTTPException(404,'Task not found')
+    enforce_workflow_stage(c,pid,target_stage,actor_member_id,tid)
+    progress=100 if target_stage=='DONE' else (100 if target_stage=='REVIEW' else task['progress'])
+    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,now(),tid))
+    eid=event(c,'task.workflow.transitioned',actor_member_id,tid,{'from_status':task['status'],'to_status':target_stage,'comment':comment})
+    return eid
 
 @app.get('/api/v1/projects/{pid}/audit')
 def project_audit(pid:str,limit:int=100,before:str='',event_type:str='',authorization:str=Header(None)):
