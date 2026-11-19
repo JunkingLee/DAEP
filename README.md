@@ -122,3 +122,7 @@ Project audit records are available through `GET /api/v1/projects/{id}/audit` wi
 ## RC21 production operations
 
 For new production deployments, use `compose.production.yaml` and follow [the RC21 production operations and recovery runbook](docs/RC21_PRODUCTION_OPERATIONS.md). The production topology separates bootstrap, runtime and privileged PostgreSQL identities; keeps PostgreSQL off published host ports; uses a non-root, read-only API container; and provides guarded PostgreSQL backup/restore scripts. The legacy `docker-compose.rc8.yaml` remains for compatibility and local development. Passing CI does not replace a production restore drill, security review or release-owner acceptance.
+
+## RC23 release safety gate
+
+RC23 hardens PostgreSQL restore safety (source-database refusal, empty-target guard, atomic restore) and adds rendered production Compose security assertions to CI. See `docs/RC23_RELEASE_SAFETY.md` and `scripts/verify_production_compose.py`. RC23 remains a release candidate; live deployment, external integrations, encrypted off-host backup/restore, and product-owner approval remain required before GA.
