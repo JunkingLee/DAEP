@@ -857,7 +857,7 @@ def test_rc26_stage2_agent_matching_enforces_project_scope_and_input_bounds():
 def test_rc26_stage6_project_decisions_and_governance_snapshot_are_auditable_and_scoped():
     pid,member_id,member_token,task_id=setup_project_task()
     headers={'Authorization':'Bearer '+member_token}
-    created=client.post(f'/api/v1/projects/{pid}/decisions',headers=headers,json={
+    created=client.post(f'/api/v1/projects/{pid}/decisions',headers=ADMIN,json={
         'title':'Adopt MCP collaboration','decision':'Use MCP-compatible local Agents',
         'rationale':'Keep runtime ownership with each member','accountable_member_id':member_id,
         'related_task_ids':[task_id]})
@@ -885,10 +885,10 @@ def test_rc26_stage6_project_decision_rejects_cross_project_task_and_nonmember_o
     pid,member_id,member_token,task_id=setup_project_task()
     headers={'Authorization':'Bearer '+member_token}
     other_pid,_,_,other_task=setup_project_task()
-    cross=client.post(f'/api/v1/projects/{pid}/decisions',headers=headers,json={
+    cross=client.post(f'/api/v1/projects/{pid}/decisions',headers=ADMIN,json={
         'title':'Invalid scope','decision':'Do not accept','accountable_member_id':member_id,'related_task_ids':[other_task]})
     assert cross.status_code==422
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Not a project member'}).json()
-    invalid_owner=client.post(f'/api/v1/projects/{pid}/decisions',headers=headers,json={
+    invalid_owner=client.post(f'/api/v1/projects/{pid}/decisions',headers=ADMIN,json={
         'title':'Invalid owner','decision':'Do not accept','accountable_member_id':outsider['id']})
     assert invalid_owner.status_code==422
