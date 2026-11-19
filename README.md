@@ -216,3 +216,15 @@ The lease-expiry scenario uses deterministic test-database fault injection; it i
 ## RC26 Stage 10 — Concurrent Outbox Claim Safety
 
 A barrier-synchronized API test now makes two independent workers compete for the same durable outbox queue. It verifies that no outbox row is returned to both workers and that the target notification receives exactly one active lease. The test covers the existing SQLite `BEGIN IMMEDIATE` and PostgreSQL `FOR UPDATE SKIP LOCKED` claim paths in CI. This is automated concurrency coverage, not a production load or broker-failure drill. See `docs/RC26_STAGE10_CONCURRENCY_SAFETY.md`.
+
+
+## RC26 Stage 11 — Idempotency and State Transition Race Governance
+
+Stage 11 hardens concurrent state transitions at the API/database boundary:
+
+- Work-result submissions with the same idempotency key are serialized and converge on one canonical event; reuse with a different payload returns HTTP 409.
+- SQLite uses `BEGIN IMMEDIATE` for the affected write paths, while PostgreSQL uses row-level `FOR UPDATE` locking.
+- Task review uses a conditional `status='REVIEW'` transition, so concurrent approvals can produce at most one `task.reviewed` governance event.
+- Barrier-synchronized tests verify duplicate work-result convergence, conflicting idempotency-key reuse, and duplicate task-approval rejection.
+
+This is deterministic transaction/concurrency coverage, not a production-scale load test, broker partition drill, or proof of arbitrary MCP Host wake-up. DAEP continues to govern work and evidence without creating, hosting, controlling, or waking member-local Agent Runtime processes. See `docs/RC26_STAGE11_IDEMPOTENCY_STATE_TRANSITIONS.md`.
