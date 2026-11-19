@@ -923,10 +923,9 @@ def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(N
         for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
             LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.task_id=? ORDER BY e.created_at""",(parent_id,)).fetchall():
             p=json.loads(e['payload'] or '{}')
-            if p.get('work_package_id') or e['event_type'].startswith('task.work_package.'):
-                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
-                    'task_id':parent_id,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
-                    'actor_name':e['actor_name'],'payload':p})
+            items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
+                'task_id':parent_id,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
+                'actor_name':e['actor_name'],'payload':p})
         for w in packages:
             cid=w['correlation_id'] or w['id']; child=w['child_task_id']
             for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
