@@ -936,6 +936,109 @@ def test_rc26_stage7_requirement_acceptance_is_project_scoped_and_reviewer_only(
 
 
 
+
+def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC26 Stage 8 E2E'}).json()
+    pid=project['id']
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'E2E Coordinator'}).json()
+    first=client.post('/api/v1/members',headers=ADMIN,json={'name':'Local Agent Member A'}).json()
+    second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Local Agent Member B'}).json()
+    for member in (owner,first,second):
+        assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+            'member_id':member['id'],'role':'owner' if member is owner else 'member'}).status_code==200
+    owner_h={'Authorization':'Bearer '+owner['token']}
+    first_h={'Authorization':'Bearer '+first['token']}
+    second_h={'Authorization':'Bearer '+second['token']}
+    requirement=client.post('/api/v1/requirements',headers=owner_h,json={
+        'project_id':pid,'title':'Distributed checkout delivery',
+        'acceptance_criteria':['API implementation is delivered','Integration tests are delivered']})
+    assert requirement.status_code==200,requirement.text
+    parent=client.post('/api/v1/tasks',headers=owner_h,json={
+        'requirement_id':requirement.json()['id'],'title':'Deliver distributed checkout',
+        'assignee_member_ids':[owner['id']]})
+    assert parent.status_code==200,parent.text
+    parent_id=parent.json()['id']
+
+    for member,agent,capability,headers in (
+        (first,'checkout-api-agent','python',first_h),
+        (second,'checkout-test-agent','testing',second_h)):
+        registered=client.post(f'/api/v1/projects/{pid}/agents/register',headers=headers,json={
+            'agent_name':agent,'capabilities':[capability],'protocols':['mcp'],'status':'AVAILABLE'})
+        assert registered.status_code==200,registered.text
+
+    api_package=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=owner_h,json={
+        'title':'Implement checkout API','description':'Implement idempotent checkout API',
+        'assignee_member_id':first['id'],'agent_name':'checkout-api-agent'})
+    test_package=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=owner_h,json={
+        'title':'Build integration tests','description':'Verify checkout and idempotency',
+        'assignee_member_id':second['id'],'agent_name':'checkout-test-agent'})
+    assert api_package.status_code==200 and test_package.status_code==200
+    api_child=api_package.json()['task_id']
+    test_child=test_package.json()['task_id']
+
+    # A message sent between independently authenticated local-Agent members is
+    # durably visible to the recipient and can be acknowledged idempotently.
+    coordination=client.post('/api/v1/messages',headers=first_h,json={
+        'recipient_member_id':second['id'],'task_id':parent_id,
+        'title':'API contract ready','content':'Use POST /checkout with Idempotency-Key.'})
+    assert coordination.status_code==200,coordination.text
+    inbox=client.get('/api/v1/me/notifications',headers=second_h).json()['items']
+    assert any(item['id']==coordination.json()['id'] for item in inbox)
+    ack=client.post(f"/api/v1/messages/{coordination.json()['id']}/ack",
+        headers=second_h,json={'status':'ACKNOWLEDGED'})
+    assert ack.status_code==200 and ack.json()['status']=='ACKNOWLEDGED'
+
+    for child,headers,sha,kind in (
+        (api_child,first_h,'api-e2e-commit','git_commit'),
+        (test_child,second_h,'tests-e2e-commit','test_report')):
+        artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=headers,json={
+            'artifact_type':kind,'uri':f'https://example.invalid/{sha}',
+            'commit_sha':sha,'metadata':{'stage':'rc26-stage8'}})
+        assert artifact.status_code==200,artifact.text
+        result=client.post(f'/api/v1/tasks/{child}/work-result',headers=headers,json={
+            'outcome':'COMPLETE','summary':f'Delivered {kind}','idempotency_key':f'{sha}-result'})
+        assert result.status_code==200 and result.json()['status']=='REVIEW'
+
+    # The parent cannot close while either member's package is awaiting review.
+    assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_h,json={
+        'progress':100,'note':'Both local Agents submitted their results'}).status_code==200
+    blocked=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={'decision':'APPROVE'})
+    assert blocked.status_code==409
+    for child in (api_child,test_child):
+        reviewed=client.post(f'/api/v1/tasks/{child}/review',headers=owner_h,json={
+            'decision':'APPROVE','comment':'Artifact evidence reviewed'})
+        assert reviewed.status_code==200 and reviewed.json()['status']=='DONE'
+
+    summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=owner_h).json()
+    assert summary['all_done'] is True and summary['work_package_count']==2
+    assert summary['artifact_count']==2
+    timeline=client.get(f'/api/v1/tasks/{parent_id}/work-timeline',headers=owner_h)
+    assert timeline.status_code==200
+    trace=timeline.json()
+    assert len(trace['work_packages'])==2
+    assert any(item.get('message_id')==coordination.json()['id'] and
+               item.get('delivery_status')=='ACKNOWLEDGED' for item in trace['messages'])
+    assert {item['commit_sha'] for item in trace['artifacts']} >= {'api-e2e-commit','tests-e2e-commit'}
+
+    parent_artifact=client.post(f'/api/v1/tasks/{parent_id}/artifacts',headers=owner_h,json={
+        'artifact_type':'delivery_bundle','uri':'https://example.invalid/checkout-delivery',
+        'commit_sha':'delivery-e2e-commit','metadata':{'child_artifacts':2}})
+    assert parent_artifact.status_code==200,parent_artifact.text
+    closed=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={
+        'decision':'APPROVE','comment':'Both member deliveries accepted'})
+    assert closed.status_code==200 and closed.json()['status']=='DONE'
+
+    report=client.get(f"/api/v1/requirements/{requirement.json()['id']}/acceptance-report",
+        headers=owner_h)
+    assert report.status_code==200 and report.json()['ready_for_acceptance'] is True
+    accepted=client.post(f"/api/v1/requirements/{requirement.json()['id']}/acceptance",
+        headers=owner_h,json={'decision':'APPROVE','verified_criteria':[0,1],
+                              'comment':'Verified both member deliverables and parent bundle'})
+    assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    audit=client.get(f'/api/v1/projects/{pid}/audit',headers=owner_h).json()['items']
+    assert any(x['event_type']=='requirement.acceptance.approve' and
+               x['payload']['requirement_id']==requirement.json()['id'] for x in audit)
+
 def test_rc26_stage7_acceptance_frontend_exposes_report_and_explicit_criteria_confirmation():
     frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
     assert 'showRequirementAcceptance' in frontend
