@@ -1186,3 +1186,40 @@ def test_rc26_stage11_concurrent_task_approval_emits_one_governance_event():
     assert events.status_code==200
     matching=[e for e in events.json() if e['event_type']=='task.reviewed']
     assert len(matching)==1
+
+
+def test_rc26_stage12_concurrent_work_package_reviews_emit_one_governance_event():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    pid,_,_,parent_id=setup_project_task()
+    member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage12 Review Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':member['id'],'role':'member'}).status_code==200
+    mh={'Authorization':'Bearer '+member['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={
+        'agent_name':'stage12-agent','capabilities':['testing'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
+        'title':'Concurrent package review','assignee_member_id':member['id'],'agent_name':'stage12-agent'})
+    assert created.status_code==200,created.text
+    child=created.json()['task_id']
+    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={
+        'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/stage12',
+        'commit_sha':'stage12','metadata':{}}).status_code==200
+    result=client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={
+        'outcome':'COMPLETE','summary':'Ready for concurrent review','idempotency_key':'stage12-review-result'})
+    assert result.status_code==200,result.text
+
+    gate=Barrier(2)
+    def approve():
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/work-packages/{created.json()["id"]}/review',headers=ADMIN,json={
+            'decision':'APPROVE','comment':'Stage12 concurrent review'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [pool.submit(approve),pool.submit(approve)]]
+    statuses=sorted(r.status_code for r in responses)
+    assert statuses==[200,409],[r.text for r in responses]
+    events=client.get(f'/api/v1/tasks/{child}/events',headers=ADMIN)
+    assert events.status_code==200
+    matching=[e for e in events.json() if e['event_type']=='task.work_package.reviewed']
+    assert len(matching)==1
