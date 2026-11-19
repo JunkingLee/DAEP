@@ -1102,6 +1102,46 @@ def discover_project_agents(pid:str,authorization:str=Header(None),capability:st
             items.append({'id':row['id'],'member_id':row['member_id'],'member_name':row['member_name'],'agent_name':row['agent_name'],'capabilities':caps,'protocols':protocols,'status':row['status'] if live else 'OFFLINE','last_seen':row['last_seen'],'metadata':json.loads(row['metadata'] or '{}')})
         return {'items':items,'count':len(items),'presence_ttl_seconds':120}
 
+@app.get('/api/v1/projects/{pid}/agent-matches')
+def recommend_project_agents(pid:str,required_capabilities:str='',protocol:str='mcp',authorization:str=Header(None)):
+    """Rank project-local Agent registrations without assigning work or invoking a Runtime."""
+    a=actor(authorization)
+    requested=[x.strip().casefold() for x in required_capabilities.split(',') if x.strip()]
+    if len(requested)>50 or any(len(x)>120 for x in requested):
+        raise HTTPException(422,'At most 50 required capabilities are allowed; each must be at most 120 characters')
+    requested=list(dict.fromkeys(requested))
+    requested_protocol=protocol.strip().casefold()
+    if not requested_protocol or len(requested_protocol)>40:
+        raise HTTPException(422,'protocol must contain 1 to 40 characters')
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT pa.*,m.name AS member_name FROM project_agents pa
+            JOIN members m ON m.id=pa.member_id WHERE pa.project_id=?""",(pid,)).fetchall()
+        cutoff=datetime.fromtimestamp(time.time()-120,timezone.utc).isoformat()
+        items=[]
+        for raw in rows:
+            row=dict(raw)
+            caps=sorted({str(x).strip().casefold() for x in json.loads(row['capabilities'] or '[]') if str(x).strip()})
+            protocols=sorted({str(x).strip().casefold() for x in json.loads(row['protocols'] or '[]') if str(x).strip()})
+            matched=[x for x in requested if x in caps]
+            missing=[x for x in requested if x not in caps]
+            live=row['status']!='OFFLINE' and row['last_seen']>=cutoff
+            protocol_match=requested_protocol in protocols
+            available=live and row['status']=='AVAILABLE'
+            items.append({'id':row['id'],'member_id':row['member_id'],'member_name':row['member_name'],
+                'agent_name':row['agent_name'],'capabilities':caps,'protocols':protocols,
+                'presence_status':row['status'] if live else 'OFFLINE','last_seen':row['last_seen'],
+                'matched_capabilities':matched,'missing_capabilities':missing,
+                'match_count':len(matched),'required_count':len(requested),
+                'protocol_match':protocol_match,'eligible':not missing and protocol_match and available,
+                'availability_reason':('AVAILABLE' if available else ('BUSY' if live and row['status']=='BUSY' else 'OFFLINE_OR_STALE')),
+                'match_score':round(100*len(matched)/len(requested)) if requested else (100 if protocol_match else 0)})
+        items.sort(key=lambda x:(not x['eligible'],bool(x['missing_capabilities']),not x['protocol_match'],
+            -x['match_count'],x['availability_reason']!='AVAILABLE',x['member_name'].casefold(),x['agent_name'].casefold()))
+        return {'project_id':pid,'required_capabilities':requested,'protocol':requested_protocol,
+            'items':items,'count':len(items),'eligible_count':sum(1 for x in items if x['eligible']),
+            'recommendation_only':True,'runtime_controlled':False}
+
 @app.post('/api/v1/tasks/{tid}/delegations')
 def create_task_delegation(tid:str,b:DelegationIn,authorization:str=Header(None)):
     a=actor(authorization)
