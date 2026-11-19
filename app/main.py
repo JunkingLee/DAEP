@@ -946,15 +946,18 @@ def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stag
         if row:
             pending=c.execute("SELECT id FROM tasks WHERE requirement_id=? AND status!='DONE'",(row['requirement_id'],)).fetchall()
             if pending: raise HTTPException(409,detail={'message':f'Gate {gate_key} requires all requirement tasks to be DONE','gate_key':gate_key,'pending_task_ids':[x['id'] for x in pending]})
+def enforce_workflow_exit(c,pid,current_stage,actor_member_id):
+    cfg=project_workflow_config(c,pid)
+    stage=next((x for x in cfg.get('stages',[]) if x.get('key')==current_stage),None)
+    if not stage: raise HTTPException(409,detail={'message':'Current task status is not part of the configured workflow','current_stage':current_stage})
+    approval_role=stage.get('approval_role','none')
+    if approval_role!='none' and not is_admin({'id':actor_member_id,'role':'admin'}):
+        role=project_role(c,pid,{'id':actor_member_id})
+        if role!=approval_role: raise HTTPException(403,f'Leaving workflow stage {current_stage} requires {approval_role} role')
 def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
     cfg=project_workflow_config(c,pid)
     stage=next((x for x in cfg.get('stages',[]) if x.get('key')==stage_key),None)
     if not stage: raise HTTPException(409,detail={'message':'Target workflow stage is not configured','stage_key':stage_key})
-    approval_role=stage.get('approval_role','none')
-    if approval_role!='none':
-        role=project_role(c,pid,{'id':actor_member_id})
-        if role!=approval_role and not is_admin({'id':actor_member_id,'role':'admin'}):
-            raise HTTPException(403,f'Workflow stage {stage_key} requires {approval_role} role')
     if stage_key=='DONE':
         enforce_project_gate(c,pid,'REVIEW_REQUIRED',actor_member_id,task_id,'DONE')
         enforce_project_gate(c,pid,'DELIVERY_EVIDENCE',actor_member_id,task_id,'DONE')
@@ -1151,12 +1154,10 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
         cfg=project_workflow_config(c,pid)
         stage=next((x for x in cfg.get('stages',[]) if x.get('key')==target),None)
         if not stage: raise HTTPException(409,'Target workflow stage is not configured')
-        if target in ('REVIEW','DONE') or stage.get('approval_role')!='none':
-            if is_admin(a): pass
-            else:
-                role=project_role(c,pid,a)
-                if role!=stage.get('approval_role') and not (target not in ('REVIEW','DONE') and role in ('owner','manager')):
-                    require_task_access(c,tid,a,assigned_only=True)
+        current=c.execute('SELECT status FROM tasks WHERE id=?',(tid,)).fetchone()['status']
+        if is_admin(a): pass
+        elif current in ('REVIEW','DONE') or target in ('DONE',):
+            require_project_access(c,pid,a,write=True)
         else:
             require_task_access(c,tid,a,assigned_only=True)
         scoped_key=f'workflow:{a["id"]}:{tid}:{idempotency_key}' if idempotency_key else None
@@ -1196,6 +1197,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         task=c.execute(task_sql,(tid,)).fetchone()
         if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
         if decision=='APPROVE':
+            enforce_workflow_exit(c,pid,task['status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
             packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
             pending=[x['child_task_id'] for x in packages if x['status']!='DONE']
@@ -1229,6 +1231,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
         if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
         stamp=now()
         if decision=='APPROVE':
+            enforce_workflow_exit(c,pid,package['task_status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
                 raise HTTPException(409,'Work package must have at least one artifact before approval')
