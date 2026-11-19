@@ -1140,6 +1140,38 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
+
+@app.post('/api/v1/tasks/{tid}/workflow-transition')
+def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(None),idempotency_key:str=Header(None)):
+    a=actor(authorization); target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
+    if not target: raise HTTPException(422,'target_stage is required')
+    with conn() as c:
+        pid=task_project(c,tid)
+        if not pid: raise HTTPException(404,'Task not found')
+        cfg=project_workflow_config(c,pid)
+        stage=next((x for x in cfg.get('stages',[]) if x.get('key')==target),None)
+        if not stage: raise HTTPException(409,'Target workflow stage is not configured')
+        if target in ('REVIEW','DONE') or stage.get('approval_role')!='none':
+            if is_admin(a): pass
+            else:
+                role=project_role(c,pid,a)
+                if role!=stage.get('approval_role') and not (target not in ('REVIEW','DONE') and role in ('owner','manager')):
+                    require_task_access(c,tid,a,assigned_only=True)
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
+        scoped_key=f'workflow:{a["id"]}:{tid}:{idempotency_key}' if idempotency_key else None
+        if scoped_key:
+            prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
+            if prior:
+                if prior['payload']!=json.dumps({'target_stage':target,'comment':comment}): raise HTTPException(409,'Idempotency-Key was already used with a different workflow transition')
+                return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
+        enforce_workflow_stage(c,pid,target,a['id'],tid)
+        eid=transition_task_workflow(c,tid,target,a['id'],comment)
+        if scoped_key:
+            # The transition event itself is the idempotent record; attach a unique companion event only when needed.
+            c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
+        return {'task_id':tid,'status':target,'event_id':eid}
+
 @app.post('/api/v1/tasks/{tid}/artifacts')
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
@@ -1164,6 +1196,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         task=c.execute(task_sql,(tid,)).fetchone()
         if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
         if decision=='APPROVE':
+            enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
             packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
             pending=[x['child_task_id'] for x in packages if x['status']!='DONE']
             missing=[x['child_task_id'] for x in packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
@@ -1196,6 +1229,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
         if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
         stamp=now()
         if decision=='APPROVE':
+            enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
                 raise HTTPException(409,'Work package must have at least one artifact before approval')
             status='DONE'; progress=100
