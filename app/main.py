@@ -813,7 +813,7 @@ def project_governance_snapshot(pid:str,authorization:str=Header(None)):
             SUM(CASE WHEN status IN ('ACKNOWLEDGED','REJECTED') THEN 1 ELSE 0 END) AS terminal_ack
             FROM messages m JOIN tasks t ON t.id=m.task_id JOIN requirements r ON r.id=t.requirement_id
             WHERE r.project_id=? AND created_at>=? GROUP BY substr(created_at,1,10) ORDER BY day""",
-            (pid,(stamp_now if False else datetime.now(timezone.utc)).replace(hour=0,minute=0,second=0,microsecond=0).isoformat())).fetchall()
+            (pid,datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).isoformat())).fetchall()
         delivery_trend=[{'date':x['day'],'messages_created':x['created'],'terminal_ack':x['terminal_ack'] or 0} for x in daily]
         message_delivery_governance={
             'checked_messages':delivery_health.get('checked_messages',0),
