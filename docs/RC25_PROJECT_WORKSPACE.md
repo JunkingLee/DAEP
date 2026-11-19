@@ -14,7 +14,7 @@ All data is loaded through existing authenticated APIs. Project authorization re
 
 ## Scope and limits
 
-This is a project/coordination workspace, not an Agent Runtime console. It does not start, stop, execute, inspect, or wake local Agents. The project task API now includes each task's prerequisite IDs. The workspace renders an interactive dependency graph with arrows from prerequisite tasks to downstream tasks; graph nodes and prerequisite/downstream links open task details. The graph is read-only: it does not create or edit dependencies. Task/work-package state is displayed without adding task mutation controls.
+This is a project/coordination workspace, not an Agent Runtime console. It does not start, stop, execute, inspect, or wake local Agents. The project task API now includes each task's prerequisite IDs. The workspace renders an interactive dependency graph with arrows from prerequisite tasks to downstream tasks; graph nodes and prerequisite/downstream links open task details. Project Owners and Managers can edit prerequisite relationships from task details. The API enforces project write permission, rejects cross-project and self dependencies, detects cycles before replacing relationships, and records a `task.dependencies.updated` audit event. Other project members can inspect and navigate the graph but cannot modify it. Task/work-package state is displayed without adding task mutation controls.
 
 ## Verification
 
