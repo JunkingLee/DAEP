@@ -1457,9 +1457,8 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-); comment:str=Field(default='',max_length=4000)
-def now(): return datetime.now(timezone.utc).isoformat()
-DATABASE_URL=os.getenv('DATABASE_URL','')
+
+
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
 _admin_ctx=contextvars.ContextVar('daep_platform_admin',default=False)
@@ -2833,9 +2832,8 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-); comment:str=Field(default='',max_length=4000)
-def now(): return datetime.now(timezone.utc).isoformat()
-DATABASE_URL=os.getenv('DATABASE_URL','')
+
+
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
 _admin_ctx=contextvars.ContextVar('daep_platform_admin',default=False)
@@ -4209,9 +4207,8 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-); comment:str=Field(default='',max_length=4000)
-def now(): return datetime.now(timezone.utc).isoformat()
-DATABASE_URL=os.getenv('DATABASE_URL','')
+
+
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
 _admin_ctx=contextvars.ContextVar('daep_platform_admin',default=False)
