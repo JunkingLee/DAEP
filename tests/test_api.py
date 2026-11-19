@@ -146,6 +146,48 @@ def test_outbox_failure_schedules_retry():
     assert inbox.status_code==200 and len(inbox.json()['items'])==1
 
 
+
+def test_rc26_stage9_expired_outbox_lease_reclaims_and_rejects_stale_worker():
+    import sqlite3
+    _,member_id,member_token,task_id=setup_project_task()
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':member_id,'task_id':task_id,
+        'title':'Lease recovery','content':'Recover after worker interruption'})
+    assert sent.status_code==200
+    first_claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={
+        'worker_id':'worker-interrupted','lease_seconds':30,'limit':100})
+    assert first_claim.status_code==200
+    item=next(x for x in first_claim.json()['items']
+              if x['payload'].get('message_id')==sent.json()['id'])
+    old_token=item['lease_token']
+
+    # Simulate process death after claim: the lease expires without completion.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE outbox SET lease_until='2000-01-01T00:00:00+00:00' WHERE id=?",(item['id'],))
+    db.commit();db.close()
+
+    second_claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={
+        'worker_id':'worker-recovery','lease_seconds':30,'limit':100})
+    assert second_claim.status_code==200
+    recovered=next(x for x in second_claim.json()['items'] if x['id']==item['id'])
+    assert recovered['attempts']==item['attempts']+1
+    assert recovered['lease_token']!=old_token
+
+    stale=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={
+        'worker_id':'worker-interrupted','lease_token':old_token})
+    assert stale.status_code==409
+    completed=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={
+        'worker_id':'worker-recovery','lease_token':recovered['lease_token']})
+    assert completed.status_code==200 and completed.json()['status']=='SENT'
+    duplicate=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={
+        'worker_id':'worker-recovery','lease_token':recovered['lease_token']})
+    assert duplicate.status_code==409
+
+    inbox=client.get('/api/v1/me/notifications',headers={'Authorization':'Bearer '+member_token})
+    assert inbox.status_code==200
+    assert sum(1 for x in inbox.json()['items'] if x['id']==sent.json()['id'])==1
+
+
 def test_websocket_auth_uses_hashed_member_token():
     _,_,member_token,_=setup_project_task()
     with client.websocket_connect(f'/ws/v1?token={member_token}') as ws:
