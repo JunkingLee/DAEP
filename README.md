@@ -259,3 +259,8 @@ Stage 14 hardens task-scoped member message acknowledgements: concurrent ACKs ha
 ## RC26 Stage 15 — Message/Outbox Integrity Reconciliation
 
 A platform-admin-only read-only reconciliation endpoint now cross-checks durable messages and `message.created` outbox records. It reports missing/duplicate/orphaned/malformed records and tenant, recipient, or task-context mismatches, with bounded scans and an explicit truncation indicator. The endpoint does not repair data or expose message bodies. `SENT` denotes broker dispatch completion, not recipient ACK. Automated tests inject duplicate and orphan rows, verify detection and read-only behavior, and enforce admin-only access. See `docs/RC26_STAGE15_MESSAGE_OUTBOX_RECONCILIATION.md`.
+
+
+## RC26 Stage 16 — Controlled Message Dispatch Recovery
+
+A platform-admin-only recovery operation can restore a `message.created` outbox record only when a durable message has no matching dispatch record. It requires an operator reason, serializes/locks the message state, rechecks for any existing dispatch (including SENT or DEAD), refuses duplicates with HTTP 409, reconstructs the original delivery context, and emits an auditable `message.outbox.restored` event. It does not alter message ACK state or automatically replay dead letters. See `docs/RC26_STAGE16_CONTROLLED_MESSAGE_RECOVERY.md`.

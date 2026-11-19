@@ -1387,3 +1387,43 @@ def test_rc26_stage15_message_outbox_integrity_reconciliation_is_read_only():
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Integrity outsider'}).json()
     denied=client.get('/api/v1/admin/message-delivery-integrity',headers={'Authorization':f"Bearer {outsider['token']}"})
     assert denied.status_code==403
+
+
+
+def test_rc26_stage16_admin_restores_only_missing_message_outbox_once():
+    pid,member_id,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage16 Recovery Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':recipient['id'],'project_id':pid,'task_id':task_id,
+        'message_type':'COLLABORATION','title':'Stage16 recovery','content':'recover payload'})
+    assert sent.status_code==200,sent.text
+    mid=sent.json()['id']
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        db.execute("DELETE FROM outbox WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(mid,))
+    denied_member=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage16 Non Admin'}).json()
+    denied=client.post(f'/api/v1/admin/messages/{mid}/restore-outbox',
+        headers={'Authorization':f"Bearer {denied_member['token']}"},json={'reason':'unauthorized'})
+    assert denied.status_code==403
+    missing_reason=client.post(f'/api/v1/admin/messages/{mid}/restore-outbox',headers=ADMIN,json={})
+    assert missing_reason.status_code==422
+    restored=client.post(f'/api/v1/admin/messages/{mid}/restore-outbox',headers=ADMIN,
+                         json={'reason':'Operator confirmed missing dispatch record'})
+    assert restored.status_code==200,restored.text
+    body=restored.json()
+    assert body['restored'] is True and body['status']=='PENDING'
+    repeated=client.post(f'/api/v1/admin/messages/{mid}/restore-outbox',headers=ADMIN,
+                         json={'reason':'Retry should be refused'})
+    assert repeated.status_code==409
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        rows=db.execute("SELECT id,status,payload,tenant_id FROM outbox WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(mid,)).fetchall()
+        assert len(rows)==1
+        assert rows[0][0]==body['outbox_id'] and rows[0][1]=='PENDING'
+        payload=json.loads(rows[0][2])
+        assert payload['recipient_member_id']==recipient['id']
+        assert payload['project_id']==pid and payload['task_id']==task_id
+        assert rows[0][3]
+        audits=db.execute("SELECT event_type,payload,task_id FROM events WHERE event_type='message.outbox.restored'").fetchall()
+        matches=[x for x in audits if json.loads(x[1]).get('message_id')==mid]
+        assert len(matches)==1 and matches[0][2]==task_id

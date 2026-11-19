@@ -1625,6 +1625,42 @@ def list_dead_outbox(limit:int=50,authorization:str=Header(None)):
         rows=c.execute("SELECT id,event_type,status,attempts,available_at,last_error,created_at,tenant_id FROM outbox WHERE status='DEAD' ORDER BY created_at LIMIT ?",(limit,)).fetchall()
         return {'items':[dict(x) for x in rows],'count':len(rows)}
 
+@app.post('/api/v1/admin/messages/{message_id}/restore-outbox')
+def restore_missing_message_outbox(message_id:str,body:dict,authorization:str=Header(None)):
+    """Explicitly restore one missing message dispatch record; never duplicates an existing dispatch."""
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    reason=str(body.get('reason','')).strip()
+    if not reason or len(reason)>1000: raise HTTPException(422,'A recovery reason (1-1000 characters) is required')
+    with conn() as c:
+        begin_serialized_write(c)
+        query='SELECT * FROM messages WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): query += ' FOR UPDATE'
+        message=c.execute(query,(message_id,)).fetchone()
+        if not message: raise HTTPException(404,'Message not found')
+        existing_rows=c.execute("SELECT id,payload FROM outbox WHERE event_type='message.created'").fetchall()
+        matching=[]
+        for item in existing_rows:
+            try:
+                if json.loads(item['payload']).get('message_id')==message_id: matching.append(item['id'])
+            except (TypeError,ValueError):
+                continue
+        if matching:
+            raise HTTPException(409,'A message.created outbox record already exists; refusing duplicate recovery')
+        project_id=None
+        if message['task_id']:
+            project=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(message['task_id'],)).fetchone()
+            if project: project_id=project['project_id']
+        payload={'message_id':message_id,'recipient_member_id':message['recipient_member_id'],
+                 'project_id':project_id,'task_id':message['task_id'],'message_type':message['message_type'],
+                 'title':message['title'],'content':message['content'],'priority':message['priority']}
+        stamp=now(); outbox_id='obx_'+uuid.uuid4().hex
+        c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',
+                  (outbox_id,'message.created',json.dumps(payload),'PENDING',0,stamp,stamp,message['tenant_id']))
+        event(c,'message.outbox.restored',a['id'],message['task_id'],
+              {'message_id':message_id,'outbox_id':outbox_id,'reason':reason},tenant_override=message['tenant_id'])
+    return {'message_id':message_id,'outbox_id':outbox_id,'status':'PENDING','restored':True}
+
 @app.get('/api/v1/admin/message-delivery-integrity')
 def message_delivery_integrity(authorization:str=Header(None),limit:int=5000):
     """Read-only reconciliation of durable messages and their outbox dispatch records."""
