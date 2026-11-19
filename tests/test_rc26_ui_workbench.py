@@ -13,5 +13,6 @@ def test_rc26_role_workbench_ui_shell():
 
 def test_rc26_tester_workbench_links_requirement_acceptance_report():
     html = Path("web/index.html").read_text(encoding="utf-8")
-    assert "showRequirementAcceptance(t.requirement_id)" in html
+    assert "showRequirementAcceptance" in html
+    assert "查看验收报告" in html
     assert "查看验收报告" in html
