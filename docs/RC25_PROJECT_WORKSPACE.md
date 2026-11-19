@@ -14,8 +14,8 @@ All data is loaded through existing authenticated APIs. Project authorization re
 
 ## Scope and limits
 
-This is a project/coordination workspace, not an Agent Runtime console. It does not start, stop, execute, inspect, or wake local Agents. The UI visualizes dependency identifiers rather than rendering a graph editor, and displays task/work-package state without adding task mutation controls. Those can be considered in later product increments.
+This is a project/coordination workspace, not an Agent Runtime console. It does not start, stop, execute, inspect, or wake local Agents. The project task API now includes each task's prerequisite IDs. The workspace renders an interactive dependency graph with arrows from prerequisite tasks to downstream tasks; graph nodes and prerequisite/downstream links open task details. The graph is read-only: it does not create or edit dependencies. Task/work-package state is displayed without adding task mutation controls.
 
 ## Verification
 
-CI runs static dashboard assertions as part of pytest. These assertions verify dashboard sections and API wiring; they do not replace browser-based visual, accessibility, or end-to-end acceptance testing in the target deployment.
+CI runs static dashboard assertions as part of pytest and extracts the inline dashboard script for `node --check`. These checks verify dashboard sections, dependency API wiring, and JavaScript syntax; they do not replace browser-based visual, accessibility, or end-to-end acceptance testing in the target deployment.
