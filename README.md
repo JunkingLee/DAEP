@@ -138,3 +138,8 @@ The existing lightweight dashboard now provides project metrics, a five-lane tas
 ## RC26 Stage 1 — Local Agent collaboration topology
 
 The dashboard now combines the project-scoped Agent registry and active work-package health data to show each registered local Agent, its member identity, reported presence, last heartbeat, declared MCP/protocol capabilities, and associated work packages. Unmatched work packages are surfaced separately. A project-wide delegation board tracks pending, accepted, rejected and expired cross-member task offers and links them to task timelines. Presence is informational and uses the existing freshness window; DAEP does not host, start, stop, inspect or wake local Agent Runtime processes. See `docs/RC26_AGENT_TOPOLOGY.md`.
+
+
+## RC26 Stage 2 — Explainable local Agent matching
+
+The project-scoped `GET /api/v1/projects/{project_id}/agent-matches` endpoint ranks registered local Agents against a comma-separated required-capability list and protocol (MCP by default). Each result reports matched and missing capabilities, presence freshness, availability, protocol compatibility, score and an explicit eligibility decision. Results are recommendations only: the endpoint does not assign tasks, create delegations, send messages, invoke an MCP tool or control a local Agent Runtime. Only recently-heartbeating `AVAILABLE` Agents with every requested capability and the requested protocol are marked eligible. See `docs/RC26_STAGE2_AGENT_MATCHING.md`.
