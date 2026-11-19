@@ -933,3 +933,13 @@ def test_rc26_stage7_requirement_acceptance_is_project_scoped_and_reviewer_only(
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Acceptance outsider'}).json()
     denied_report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers={'Authorization':'Bearer '+outsider['token']})
     assert denied_report.status_code==403
+
+
+
+def test_rc26_stage7_acceptance_frontend_exposes_report_and_explicit_criteria_confirmation():
+    frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
+    assert 'showRequirementAcceptance' in frontend
+    assert '/acceptance-report' in frontend
+    assert 'decideRequirementAcceptance' in frontend
+    assert 'verified_criteria' in frontend
+    assert '请输入已逐项核验的标准编号' in frontend
