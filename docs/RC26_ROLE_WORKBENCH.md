@@ -50,3 +50,12 @@ The UI does not introduce a separate defect entity. Blocking remains task govern
 - 多项目切换后治理台随项目角色上下文刷新。
 
 UI 仍然只是操作入口，后端项目角色权限与治理规则继续作为唯一安全边界。
+
+
+## Workflow Designer / Gate Designer
+
+项目管理员现在可以在项目设置中配置项目级 Workflow：阶段名称、阶段 Key、顺序、审批角色和 SLA。系统要求保留 REVIEW 阶段，避免绕过治理。
+
+项目级附加 Gate 支持独立配置启用状态、所需角色、交付证据和全部任务完成条件。REVIEW_REQUIRED 与 DELIVERY_EVIDENCE 属于系统强制门禁，API 与 UI 均不允许关闭或削弱。
+
+所有流程与门禁配置变更都会写入项目审计事件，后端权限校验是安全边界，UI 只负责配置入口。
