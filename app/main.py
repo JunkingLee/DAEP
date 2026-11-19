@@ -1640,9 +1640,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
 )
     verified_criteria:list[int]=Field(default_factory=list,max_length=100)
     comment:str=Field(default='',max_length=4000)
-)
-    verified_criteria:list[int]=Field(default_factory=list,max_length=100)
-    comment:str=Field(default='',max_length=4000)
 def now(): return datetime.now(timezone.utc).isoformat()
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
@@ -2212,61 +2209,6 @@ def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Hea
         c.execute('UPDATE project_approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status=?',(approval_status,a['id'],reason,stamp,approval_id,'PENDING'))
         event(c,'project.role_change.'+('approved' if decision=='APPROVE' else 'rejected'),a['id'],None,{'approval_id':approval_id,'project_id':pid,**payload,'decision_reason':reason},tenant_override=row['tenant_id'])
         return {'approval_id':approval_id,'status':approval_status,'member_id':payload['member_id'],'role':payload['new_role'] if decision=='APPROVE' else payload['previous_role']}
-
-@app.get('/api/v1/requirements/{rid}/acceptance-report')
-def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
-        if not req: raise HTTPException(404,'Requirement not found')
-        require_project_access(c,req['project_id'],a)
-        criteria=json.loads(req['acceptance_criteria'] or '[]')
-        tasks=c.execute("""SELECT t.id,t.title,t.status,t.progress,t.updated_at,
-            (SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count
-            FROM tasks t WHERE t.requirement_id=? ORDER BY t.created_at,t.id""",(rid,)).fetchall()
-        task_items=[dict(x) for x in tasks]
-        missing=[x['id'] for x in task_items if x['status']!='DONE' or x['artifact_count']<1]
-        return {'requirement_id':rid,'project_id':req['project_id'],'title':req['title'],'status':req['status'],
-            'acceptance_criteria':[{'index':i,'text':value} for i,value in enumerate(criteria)],
-            'task_count':len(task_items),'tasks':task_items,'all_tasks_done':bool(task_items) and all(x['status']=='DONE' for x in task_items),
-            'missing_delivery_evidence_task_ids':missing,
-            'ready_for_acceptance':bool(task_items) and not missing and bool(criteria)}
-
-@app.post('/api/v1/requirements/{rid}/acceptance')
-def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
-        if not req: raise HTTPException(404,'Requirement not found')
-        pid=req['project_id']; require_project_access(c,pid,a)
-        if not is_admin(a):
-            role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not role or role['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        if req['status']=='ACCEPTED': raise HTTPException(409,'Requirement is already accepted')
-        criteria=json.loads(req['acceptance_criteria'] or '[]')
-        verified=list(dict.fromkeys(b.verified_criteria))
-        if len(verified)!=len(b.verified_criteria): raise HTTPException(422,'verified_criteria must be unique')
-        if any(i<0 or i>=len(criteria) for i in verified): raise HTTPException(422,'verified_criteria contains an unknown criterion index')
-        tasks=c.execute("""SELECT t.id,t.status,(SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count
-            FROM tasks t WHERE t.requirement_id=? ORDER BY t.id""",(rid,)).fetchall()
-        if b.decision=='APPROVE':
-            expected=list(range(len(criteria)))
-            if not criteria or verified!=expected: raise HTTPException(409,'Every acceptance criterion must be explicitly verified')
-            pending=[x['id'] for x in tasks if x['status']!='DONE']
-            missing=[x['id'] for x in tasks if x['artifact_count']<1]
-            if not tasks or pending or missing:
-                raise HTTPException(409,detail={'message':'Requirement cannot be accepted until every task is DONE and has delivery evidence','pending_task_ids':pending,'missing_artifact_task_ids':missing})
-            status='ACCEPTED'
-        else:
-            status='OPEN'
-        stamp=now()
-        c.execute('UPDATE requirements SET status=? WHERE id=?',(status,rid))
-        tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
-        payload={'project_id':pid,'requirement_id':rid,'decision':b.decision,'status':status,
-            'verified_criteria':verified,'acceptance_criteria':criteria,'comment':b.comment,
-            'task_ids':[x['id'] for x in tasks]}
-        eid=event(c,'requirement.acceptance.'+b.decision.lower(),a['id'],None,payload,tenant_override=tenant)
-        return {'requirement_id':rid,'status':status,'decision':b.decision,'event_id':eid,'decided_at':stamp,'verified_criteria':verified}
 
 @app.post('/api/v1/projects/{pid}/decisions')
 def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header(None)):
@@ -3191,6 +3133,3 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
 
-)
-    verified_criteria:list[int]=Field(default_factory=list,max_length=100)
-    comment:str=Field(default='',max_length=4000)
