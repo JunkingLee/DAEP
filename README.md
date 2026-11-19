@@ -251,3 +251,7 @@ Stage 13 hardens concurrent task-delegation decisions at the collaboration bound
 - Barrier-synchronized tests cover concurrent `ACCEPT`/`REJECT` decisions and concurrent expiration observation.
 
 This is deterministic concurrency coverage, not a production-scale load test or broker partition drill. See `docs/RC26_STAGE13_DELEGATION_CONSISTENCY.md`.
+
+## RC26 Stage 14 — Message Acknowledgement Consistency
+
+Stage 14 hardens task-scoped member message acknowledgements: concurrent ACKs have a single winning state transition and a single `message.acknowledged` event, while the audit event preserves the originating task and tenant context. See `docs/RC26_STAGE14_MESSAGE_ACK_CONSISTENCY.md`.
