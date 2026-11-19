@@ -1625,6 +1625,54 @@ def list_dead_outbox(limit:int=50,authorization:str=Header(None)):
         rows=c.execute("SELECT id,event_type,status,attempts,available_at,last_error,created_at,tenant_id FROM outbox WHERE status='DEAD' ORDER BY created_at LIMIT ?",(limit,)).fetchall()
         return {'items':[dict(x) for x in rows],'count':len(rows)}
 
+@app.get('/api/v1/admin/message-delivery-integrity')
+def message_delivery_integrity(authorization:str=Header(None),limit:int=5000):
+    """Read-only reconciliation of durable messages and their outbox dispatch records."""
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    limit=max(1,min(limit,10000))
+    with conn() as c:
+        messages=c.execute('SELECT id,recipient_member_id,tenant_id,task_id FROM messages ORDER BY seq LIMIT ?',(limit+1,)).fetchall()
+        outbox=c.execute("SELECT id,event_type,payload,tenant_id,status FROM outbox WHERE event_type='message.created' ORDER BY created_at LIMIT ?",(limit+1,)).fetchall()
+    truncated=len(messages)>limit or len(outbox)>limit
+    messages=messages[:limit]; outbox=outbox[:limit]
+    by_message={}
+    malformed=[]; orphaned=[]; tenant_mismatch=[]; recipient_mismatch=[]; task_mismatch=[]
+    known={row['id']:row for row in messages}
+    for item in outbox:
+        try:
+            payload=json.loads(item['payload'])
+            message_id=payload.get('message_id')
+            if not isinstance(message_id,str) or not message_id:
+                malformed.append(item['id']); continue
+        except (TypeError,ValueError):
+            malformed.append(item['id']); continue
+        by_message.setdefault(message_id,[]).append(item)
+        message=known.get(message_id)
+        if not message:
+            orphaned.append(item['id']); continue
+        if item['tenant_id'] != message['tenant_id']:
+            tenant_mismatch.append(item['id'])
+        if payload.get('recipient_member_id') != message['recipient_member_id']:
+            recipient_mismatch.append(item['id'])
+        if payload.get('task_id') != message['task_id']:
+            task_mismatch.append(item['id'])
+    missing=[mid for mid in known if mid not in by_message]
+    duplicates={mid:[x['id'] for x in rows] for mid,rows in by_message.items() if len(rows)>1}
+    issues={
+        'messages_without_outbox':missing,
+        'duplicate_outbox_by_message':duplicates,
+        'orphaned_outbox':orphaned,
+        'malformed_outbox':malformed,
+        'tenant_mismatch_outbox':tenant_mismatch,
+        'recipient_mismatch_outbox':recipient_mismatch,
+        'task_mismatch_outbox':task_mismatch,
+    }
+    counts={key:(len(value) if isinstance(value,list) else len(value)) for key,value in issues.items()}
+    return {'checked_messages':len(messages),'checked_message_outbox':len(outbox),'truncated':truncated,
+            'healthy':not any(counts.values()) and not truncated,'issue_counts':counts,'issues':issues,
+            'semantics':'Read-only structural reconciliation; SENT means broker dispatch completed, not recipient ACK.'}
+
 @app.post('/api/v1/admin/outbox/{outbox_id}/replay')
 def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
     a=actor(authorization)

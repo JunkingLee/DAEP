@@ -1355,3 +1355,35 @@ def test_rc26_stage14_concurrent_message_ack_is_single_event_and_keeps_task_cont
     with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
         row=db.execute('SELECT status,task_id FROM messages WHERE id=?',(mid,)).fetchone()
         assert row==('ACKNOWLEDGED',task_id)
+
+
+
+def test_rc26_stage15_message_outbox_integrity_reconciliation_is_read_only():
+    _, member_id, _, task_id = setup_project_task()
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':member_id,'task_id':task_id,'title':'Integrity','content':'payload'})
+    assert sent.status_code==200
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    original=db.execute("SELECT tenant_id FROM messages WHERE id=?",(sent.json()['id'],)).fetchone()[0]
+    # Inject duplicate and orphan dispatch records to exercise reconciliation findings.
+    duplicate_id='obx_stage15_duplicate'
+    db.execute("INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)",
+        (duplicate_id,'message.created',json.dumps({'message_id':sent.json()['id'],'recipient_member_id':member_id,'task_id':task_id}), 'PENDING',0,'2026-01-01','2026-01-01',original))
+    db.execute("INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)",
+        ('obx_stage15_orphan','message.created',json.dumps({'message_id':'msg_missing','recipient_member_id':member_id,'task_id':task_id}), 'PENDING',0,'2026-01-01','2026-01-01',original))
+    db.commit(); db.close()
+    report=client.get('/api/v1/admin/message-delivery-integrity',headers=ADMIN)
+    assert report.status_code==200
+    body=report.json()
+    assert body['healthy'] is False
+    assert body['issue_counts']['duplicate_outbox_by_message']==1
+    assert body['issue_counts']['orphaned_outbox']==1
+    assert duplicate_id in body['issues']['duplicate_outbox_by_message'][sent.json()['id']]
+    assert 'obx_stage15_orphan' in body['issues']['orphaned_outbox']
+    # The diagnostic endpoint must not mutate either source table.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    assert db.execute("SELECT COUNT(*) FROM outbox WHERE id IN (?,?)",(duplicate_id,'obx_stage15_orphan')).fetchone()[0]==2
+    db.close()
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Integrity outsider'}).json()
+    denied=client.get('/api/v1/admin/message-delivery-integrity',headers={'Authorization':f"Bearer {outsider['token']}"})
+    assert denied.status_code==403

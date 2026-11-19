@@ -255,3 +255,7 @@ This is deterministic concurrency coverage, not a production-scale load test or 
 ## RC26 Stage 14 — Message Acknowledgement Consistency
 
 Stage 14 hardens task-scoped member message acknowledgements: concurrent ACKs have a single winning state transition and a single `message.acknowledged` event, while the audit event preserves the originating task and tenant context. See `docs/RC26_STAGE14_MESSAGE_ACK_CONSISTENCY.md`.
+
+## RC26 Stage 15 — Message/Outbox Integrity Reconciliation
+
+A platform-admin-only read-only reconciliation endpoint now cross-checks durable messages and `message.created` outbox records. It reports missing/duplicate/orphaned/malformed records and tenant, recipient, or task-context mismatches, with bounded scans and an explicit truncation indicator. The endpoint does not repair data or expose message bodies. `SENT` denotes broker dispatch completion, not recipient ACK. Automated tests inject duplicate and orphan rows, verify detection and read-only behavior, and enforce admin-only access. See `docs/RC26_STAGE15_MESSAGE_OUTBOX_RECONCILIATION.md`.
