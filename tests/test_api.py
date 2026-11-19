@@ -940,13 +940,14 @@ def test_rc26_stage7_requirement_acceptance_is_project_scoped_and_reviewer_only(
 def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC26 Stage 8 E2E'}).json()
     pid=project['id']
-    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'E2E Coordinator'}).json()
     first=client.post('/api/v1/members',headers=ADMIN,json={'name':'Local Agent Member A'}).json()
     second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Local Agent Member B'}).json()
-    for member in (owner,first,second):
-        assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
-            'member_id':member['id'],'role':'owner' if member is owner else 'member'}).status_code==200
-    owner_h={'Authorization':'Bearer '+owner['token']}
+    for member in (first,second):
+        added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+            'member_id':member['id'],'role':'member'})
+        assert added.status_code==200,added.text
+    # Platform administrator acts as the human coordinator for this integration scenario.
+    owner_h=ADMIN
     first_h={'Authorization':'Bearer '+first['token']}
     second_h={'Authorization':'Bearer '+second['token']}
     requirement=client.post('/api/v1/requirements',headers=owner_h,json={
