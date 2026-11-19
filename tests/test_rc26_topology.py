@@ -39,3 +39,13 @@ def test_rc26_stage2_agent_matching_panel_is_explainable_and_manual():
     assert "/agent-matches?" in html
     assert "匹配" in html and "缺失：" in html
     assert "不会分配任务或唤醒 Agent" in html
+
+
+def test_rc26_stage3_task_detail_surfaces_delegation_dependency_and_delivery_trace():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "跨成员委派" in html
+    assert "跨成员工作包" in html
+    assert "依赖边" in html
+    assert "协作事件时间线" in html
+    assert "e.actor_name" in html
+    assert "e.acked_at" in html
