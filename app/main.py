@@ -847,6 +847,30 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
 
+@app.post('/api/v1/work-packages/{package_id}/review')
+def review_work_package(package_id:str,b:WorkPackageReviewIn,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        package=c.execute('SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?',(package_id,)).fetchone()
+        if not package: raise HTTPException(404,'Work package not found')
+        pid=package['project_id']
+        if is_admin(a): pass
+        else:
+            row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+            if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
+        if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
+        if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
+        stamp=now()
+        if b.decision=='APPROVE':
+            if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
+                raise HTTPException(409,'Work package must have at least one artifact before approval')
+            status='DONE'; progress=100
+        else:
+            status='IN_PROGRESS'; progress=90
+        c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,stamp,package['child_task_id']))
+        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':b.decision,'comment':b.comment})
+        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':b.decision}
+
 @app.post('/api/v1/tasks/{parent_id}/work-packages')
 def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(None)):
     a=actor(authorization); child_id='tsk_'+uuid.uuid4().hex[:12]; package_id='wpk_'+uuid.uuid4().hex
