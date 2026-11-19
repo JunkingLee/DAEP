@@ -811,7 +811,7 @@ def project_governance_snapshot(pid:str,authorization:str=Header(None)):
                 open_incidents+=1
                 if disposition=='INVESTIGATING': investigating_incidents+=1
         daily=c.execute("""SELECT substr(m.created_at,1,10) AS day,COUNT(*) AS created,
-            SUM(CASE WHEN status IN ('ACKNOWLEDGED','REJECTED') THEN 1 ELSE 0 END) AS terminal_ack
+            SUM(CASE WHEN m.status IN ('ACKNOWLEDGED','REJECTED') THEN 1 ELSE 0 END) AS terminal_ack
             FROM messages m JOIN tasks t ON t.id=m.task_id JOIN requirements r ON r.id=t.requirement_id
             WHERE r.project_id=? AND m.created_at>=? GROUP BY substr(m.created_at,1,10) ORDER BY day""",
             (pid,datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).isoformat())).fetchall()
