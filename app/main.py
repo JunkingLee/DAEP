@@ -1061,6 +1061,48 @@ def project_work_health(pid:str,authorization:str=Header(None)):
             'health_score':round(100*(total-at_risk)/total) if total else 100,
             'risk_counts':counts,'items':items}
 
+@app.get('/api/v1/projects/{pid}/coordination')
+def project_coordination_center(pid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        packages=c.execute("""SELECT w.id AS work_package_id,w.parent_task_id,w.child_task_id,w.assignee_member_id,w.agent_name,
+            w.sla_due_at,w.risk_state,w.needs_attention,w.stall_reason,w.stalled_at,t.title,t.status AS task_status,
+            t.progress,t.updated_at,m.name AS assignee_name
+            FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id
+            LEFT JOIN members m ON m.id=w.assignee_member_id
+            WHERE w.project_id=? AND w.status='ACTIVE'
+            AND (w.needs_attention=1 OR w.risk_state IN ('OVERDUE','BLOCKED_DEPENDENCY','STALLED','IN_REVIEW'))
+            ORDER BY CASE w.risk_state WHEN 'OVERDUE' THEN 0 WHEN 'STALLED' THEN 1 WHEN 'BLOCKED_DEPENDENCY' THEN 2 WHEN 'IN_REVIEW' THEN 3 ELSE 4 END,w.updated_at""",(pid,)).fetchall()
+        package_items=[]
+        for row in packages:
+            blockers=c.execute("""SELECT d.depends_on_task_id,t.title,t.status FROM dependencies d
+                JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=? AND t.status!='DONE'""",(row['child_task_id'],)).fetchall()
+            agent=c.execute('SELECT status,last_seen FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(pid,row['assignee_member_id'],row['agent_name'])).fetchone()
+            package_items.append({**dict(row),'blocking_dependencies':[dict(x) for x in blockers],
+                'agent_status':agent['status'] if agent else 'NOT_REGISTERED','agent_last_seen':agent['last_seen'] if agent else None})
+        unclaimed=c.execute("""SELECT t.id AS task_id,t.title,t.status,t.progress,t.updated_at
+            FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+            LEFT JOIN assignments a ON a.task_id=t.id
+            WHERE r.project_id=? AND t.status!='DONE' AND a.task_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM task_work_packages w WHERE w.child_task_id=t.id AND w.status='ACTIVE')
+            ORDER BY t.updated_at""",(pid,)).fetchall()
+        reviews=c.execute("""SELECT t.id AS task_id,t.title,t.progress,t.updated_at,
+            (SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count
+            FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+            WHERE r.project_id=? AND t.status='REVIEW' ORDER BY t.updated_at""",(pid,)).fetchall()
+        delegations=c.execute("""SELECT d.id,d.task_id,d.status,d.requester_member_id,d.recipient_member_id,
+            d.agent_name,d.reason,d.created_at,d.expires_at,t.title AS task_title,
+            rq.name AS requester_name,rc.name AS recipient_name
+            FROM task_delegations d JOIN tasks t ON t.id=d.task_id
+            JOIN members rq ON rq.id=d.requester_member_id JOIN members rc ON rc.id=d.recipient_member_id
+            WHERE d.project_id=? AND d.status='PENDING' ORDER BY d.created_at""",(pid,)).fetchall()
+        return {'project_id':pid,'exception_work_packages':[dict(x) for x in package_items],
+            'unclaimed_tasks':[dict(x) for x in unclaimed],'pending_reviews':[dict(x) for x in reviews],
+            'pending_delegations':[dict(x) for x in delegations],
+            'counts':{'exception_work_packages':len(package_items),'unclaimed_tasks':len(unclaimed),
+                'pending_reviews':len(reviews),'pending_delegations':len(delegations)}}
+
 @app.post('/api/v1/projects/{pid}/work-packages/scan-stalled')
 def scan_stalled_work_packages(pid:str,b:WorkPackageScanIn,authorization:str=Header(None)):
     a=actor(authorization)
