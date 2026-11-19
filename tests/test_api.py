@@ -644,6 +644,29 @@ def test_rc18_work_timeline_correlates_assignment_result_and_artifact():
     assert reported['payload']['correlation_id']==cid
 
 
+
+def test_rc26_stage4_work_package_review_reject_and_approve_gate():
+    pid,member_id,token,parent_id=setup_project_task()
+    mh={'Authorization':'Bearer '+token}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={'agent_name':'stage4-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={'title':'Reviewable package','description':'stage4','assignee_member_id':member_id,'agent_name':'stage4-agent'})
+    assert created.status_code==200
+    package=created.json()
+    child=package['task_id']
+    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4','commit_sha':'stage4','metadata':{}}).status_code==200
+    assert client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={'outcome':'COMPLETE','summary':'ready','idempotency_key':'stage4-result'}).status_code==200
+    rejected=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={'decision':'REJECT','comment':'Please address review feedback'})
+    assert rejected.status_code==200 and rejected.json()['status']=='IN_PROGRESS'
+    assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='IN_PROGRESS'
+    assert client.post(f'/api/v1/tasks/{child}/progress',headers=mh,json={'progress':100,'note':'resubmitted'}).status_code==200
+    approved=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={'decision':'APPROVE','comment':'Accepted'})
+    assert approved.status_code==200 and approved.json()['status']=='DONE'
+    assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='DONE'
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage4 outsider'}).json()
+    forbidden=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers={'Authorization':'Bearer '+outsider['token']},json={'decision':'APPROVE'})
+    assert forbidden.status_code==403
+
+
 def test_rc19_project_health_detects_sla_overdue_and_dependency_blockers():
     pid,member_id,token,parent_id=setup_project_task()
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
