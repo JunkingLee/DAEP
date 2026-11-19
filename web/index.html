@@ -2,11 +2,83 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DAEP · Engineering Control Plane</title>
 <style>
 :root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#182230;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}header{background:#172b4d;color:white;padding:20px 28px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:20px;margin:0}main{max-width:1200px;margin:24px auto;padding:0 18px}.panel{background:white;border:1px solid #e2e7ed;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #172b4d0a}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}h2{font-size:16px;margin:0 0 14px}label{display:block;font-size:12px;color:#5b6675;margin:9px 0 5px}input,textarea,select{width:100%;border:1px solid #ccd4df;border-radius:7px;padding:10px;font:inherit;background:white}textarea{min-height:65px}button{background:#2457a7;color:white;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;margin:6px 4px 0 0}button.secondary{background:#e9eef5;color:#23364d}.muted{color:#657286;font-size:13px}.item{border-top:1px solid #edf0f4;padding:10px 0}.item strong{display:block}.tag{font-size:11px;border-radius:20px;background:#edf2f8;padding:3px 8px;color:#42536a}.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}.status{color:#13724a}.error{color:#b42318;white-space:pre-wrap}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}.metric{background:#f5f7fa;border:1px solid #e8edf3;border-radius:9px;padding:13px}.metric b{display:block;font-size:24px;margin-top:5px}.board{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.lane{background:#f7f9fb;border:1px solid #e5eaf0;border-radius:9px;padding:10px;min-height:100px}.lane h3{font-size:13px;margin:0 0 8px}.taskcard{background:white;border:1px solid #e2e7ed;border-radius:8px;padding:10px;margin:7px 0;cursor:pointer}.bar{height:7px;background:#e5eaf0;border-radius:8px;overflow:hidden;margin-top:7px}.bar span{display:block;height:100%;background:#3974bd}.detailgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.small{font-size:12px}.filters{display:flex;gap:10px;max-width:540px;margin:10px 0}.risk{color:#b54708}.good{color:#13724a}.graphwrap{overflow:auto;border:1px solid #e8edf3;border-radius:9px;background:#fbfcfe;padding:8px}.depgraph{display:block;min-width:100%;height:auto}.graphnode{cursor:pointer}.graphnode rect{fill:#fff;stroke:#cbd5e1;stroke-width:1.3}.graphnode:hover rect{stroke:#3974bd;stroke-width:2.2}.graphnode text{font-family:inherit;fill:#263548}.graphedge{fill:none;stroke:#94a3b8;stroke-width:1.7}.dep-link{display:inline-block;margin:3px 5px 3px 0;padding:5px 8px;border:1px solid #dce4ee;border-radius:6px;background:#f7f9fc;color:#2457a7;cursor:pointer}.hidden{display:none}@media(max-width:600px){header{padding:16px}main{margin:14px auto}}
+
+/* RC26 UI Architecture: role-aware application shell */
+:root{--daep-navy:#172b4d;--daep-blue:#2563eb;--daep-blue-soft:#eff6ff;--daep-border:#e5eaf0;--daep-bg:#f5f7fb;--daep-text:#182230;--daep-muted:#667085;--daep-good:#13724a;--daep-warn:#b54708;--daep-danger:#b42318}
+body{background:var(--daep-bg);color:var(--daep-text)}
+header{position:sticky;top:0;z-index:20;height:64px;padding:0 24px;background:#fff;color:var(--daep-text);border-bottom:1px solid var(--daep-border);box-shadow:0 1px 5px rgba(23,43,77,.06)}
+header .brand{display:flex;align-items:center;gap:12px;font-weight:750;letter-spacing:.1px}
+header .brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;display:grid;place-items:center;font-weight:800}
+header .header-context{font-size:13px;color:var(--daep-muted);padding-left:10px;border-left:1px solid var(--daep-border)}
+header .header-actions{display:flex;align-items:center;gap:10px}
+header .identity-pill{padding:7px 10px;border:1px solid var(--daep-border);border-radius:999px;background:#f8fafc;color:#475467}
+main{max-width:none;margin:0;padding:0}
+#app.app-shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:calc(100vh - 64px)}
+.daep-sidebar{position:sticky;top:64px;height:calc(100vh - 64px);overflow:auto;background:var(--daep-navy);color:#d7e2f2;padding:18px 12px}
+.daep-logo-sub{font-size:10px;opacity:.68;margin:2px 0 20px 42px}
+.daep-nav-group{margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8ea3c1;padding:0 10px}
+.daep-nav{display:flex;flex-direction:column;gap:4px}
+.daep-nav button{width:100%;text-align:left;margin:0;border:0;background:transparent;color:#d7e2f2;padding:10px 11px;border-radius:8px;font-size:13px}
+.daep-nav button:hover,.daep-nav button.active{background:#244f8f;color:#fff}
+.daep-role-card{margin-top:20px;padding:12px;border:1px solid #2b466d;border-radius:10px;background:#132541}
+.daep-role-card strong{display:block;color:#fff;font-size:13px}
+.daep-role-card span{display:block;color:#9fb2ce;font-size:11px;margin-top:4px}
+.daep-content{min-width:0;padding:24px}
+#portfolioPanel{border:0;background:transparent;box-shadow:none;padding:0}
+.portfolio-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}
+.portfolio-head h2{font-size:24px;margin:0 0 5px}
+.portfolio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:12px}
+.project-card{background:#fff;border:1px solid var(--daep-border);border-radius:14px;padding:16px;cursor:pointer;box-shadow:0 2px 8px rgba(23,43,77,.05);transition:.15s}
+.project-card:hover{transform:translateY(-1px);border-color:#9bbcf5;box-shadow:0 6px 18px rgba(23,43,77,.08)}
+.project-card.selected{border:2px solid var(--daep-blue);padding:15px;background:var(--daep-blue-soft)}
+.project-card .project-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.project-card .project-name{font-weight:700;font-size:15px}
+.project-card .project-id{font-size:10px;color:#98a2b3;margin-top:5px}
+.project-card .project-meta{display:flex;gap:12px;margin-top:13px;color:#667085;font-size:12px}
+.project-card .project-open{margin-top:13px;color:var(--daep-blue);font-size:12px;font-weight:650}
+.role-badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px}
+.project-status{font-size:11px;font-weight:650}
+.project-status.good{color:var(--daep-good)}.project-status.warn{color:var(--daep-warn)}
+.panel{border-radius:14px;box-shadow:0 2px 10px rgba(23,43,77,.05);border-color:var(--daep-border)}
+#overview{background:linear-gradient(135deg,#fff,#f8fbff)}
+.section-anchor{scroll-margin-top:84px}
+@media(max-width:900px){#app.app-shell{grid-template-columns:1fr}.daep-sidebar{position:sticky;top:64px;height:auto;padding:8px;z-index:10}.daep-nav{flex-direction:row;overflow:auto}.daep-nav-group,.daep-role-card{display:none}.daep-nav button{white-space:nowrap;width:auto}.daep-content{padding:16px}}
+@media(max-width:600px){header{padding:0 14px}.header-context{display:none!important}.daep-content{padding:12px}.portfolio-head{display:block}.portfolio-head button{margin-top:8px}}
 </style></head><body>
-<header><h1>DAEP <span style="font-weight:400;opacity:.7">/ Distributed Agentic Engineering Platform</span></h1><span id="identity" class="muted" style="color:#d7e2f2">Not connected</span></header>
+<header>
+  <div class="brand"><span class="brand-mark">A</span><div><div>DAEP</div><div style="font-size:10px;color:#98a2b3;font-weight:500">Distributed Agentic Engineering Platform</div></div></div>
+  <div class="header-context" id="projectContext">未选择项目</div>
+  <div class="header-actions"><span class="muted">项目协作控制台</span><span id="identity" class="identity-pill">Not connected</span></div>
+</header>
 <main>
 <section class="panel" id="auth"><h2>连接平台</h2><p class="muted">输入个人成员 Token。Token 仅保存在当前页面内存，不写入浏览器持久存储。</p><div class="row"><input id="token" type="password" placeholder="Bearer token（不含 Bearer 前缀）"><button onclick="connect()">连接</button></div><div id="authmsg" class="muted"></div></section>
-<div id="app" class="hidden"><section class="panel" id="overview"><h2>项目工作台</h2><p class="muted" id="overviewHint">选择项目查看整体进度与协作健康状况</p><div class="metrics" id="metrics"></div><div id="healthSummary" class="muted"></div></section><section class="panel" id="taskBoard"><div class="row"><h2>任务看板</h2><button class="secondary" onclick="loadTasks()">刷新看板</button></div><div class="filters"><input id="taskFilter" placeholder="搜索任务标题或 ID" oninput="renderTaskBoard()"><select id="statusFilter" onchange="renderTaskBoard()"><option value="">所有状态</option><option>READY</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>REVIEW</option><option>DONE</option></select></div><div class="board" id="board"></div></section><section class="panel" id="delegationPanel"><div class="row"><h2>跨成员任务委派</h2><span id="delegationSummary" class="muted"></span></div><div class="filters"><select id="delegationStatusFilter" onchange="renderDelegations()"><option value="">所有委派状态</option><option>PENDING</option><option>ACCEPTED</option><option>REJECTED</option><option>EXPIRED</option></select></div><div id="delegationBoard" class="board"></div></section><section class="panel" id="agentTopologyPanel"><div class="row"><h2>Agent 协作拓扑</h2><button class="secondary" onclick="loadOverview()">刷新 Agent 状态</button></div><p class="muted">仅展示成员自行注册的本地 Agent、最近心跳和 DAEP 中的任务关联；DAEP 不托管或唤醒 Agent Runtime。</p><div id="agentTopologySummary" class="muted"></div><div id="agentTopology" class="board"></div><div class="item"><strong>协作 Agent 能力匹配（推荐，不自动分配）</strong><div class="filters"><input id="agentRequiredCapabilities" placeholder="所需能力，逗号分隔，例如 python,testing"><input id="agentRequiredProtocol" value="mcp" placeholder="协议"><button type="button" onclick="recommendProjectAgents()">查找候选 Agent</button></div><div id="agentMatchSummary" class="muted"></div><div id="agentMatchResults" class="board"></div></div></section><section class="panel" id="workPackagePanel"><div class="row"><h2>项目多 Agent 工作包</h2><button class="secondary" id="scanHealthButton" onclick="scanProjectHealth()">刷新风险扫描</button></div><div class="filters"><select id="workPackageRiskFilter" onchange="renderWorkPackages()"><option value="">所有风险状态</option><option>ON_TRACK</option><option>OVERDUE</option><option>BLOCKED_DEPENDENCY</option><option>STALLED</option><option>IN_REVIEW</option><option>COMPLETED</option></select></div><div id="workPackageSummary" class="muted"></div><div id="workPackageBoard" class="board"></div></section><section class="panel" id="coordinationPanel"><div class="row"><h2>异常协作与人工协调中心</h2><div><button type="button" class="secondary" onclick="loadOverview()">刷新</button> <button type="button" class="secondary" onclick="scanStalledWorkPackages()">扫描停滞</button></div></div><p class="muted">集中处理逾期、依赖阻塞、停滞、待审核、未认领任务和待响应委派。重新委派需要人工选择在线成员与其本地 Agent。</p><div id="coordinationSummary" class="muted"></div><div id="coordinationBoard" class="board"></div></section><section class="panel" id="dependencyPanel"><div class="row"><h2>任务依赖关系图</h2><span id="dependencySummary" class="muted"></span></div><p class="muted">箭头从前置任务指向后续任务；点击节点可打开任务详情。无依赖的任务也会显示。</p><div class="graphwrap" id="dependencyGraph"><p class="muted">选择项目后显示任务关系</p></div></section><section class="panel hidden" id="taskDetail"><div class="row"><h2 id="detailTitle">任务详情</h2><button class="secondary" onclick="closeTaskDetail()">关闭</button></div><div id="detailContent"></div></section>
+<div id="app" class="hidden app-shell">
+<aside class="daep-sidebar">
+  <div class="daep-logo-sub">ROLE-AWARE WORKSPACE</div>
+  <div class="daep-nav-group">工作空间</div>
+  <nav class="daep-nav" id="primaryNav">
+    <button data-target="portfolioPanel" onclick="navigateTo('portfolioPanel')">⌂ 我的项目</button>
+    <button data-target="overview" onclick="navigateTo('overview')">◈ 项目总览</button>
+    <button data-target="taskBoard" onclick="navigateTo('taskBoard')">▣ 工作</button>
+    <button data-target="agentTopologyPanel" onclick="navigateTo('agentTopologyPanel')">◉ 协作</button>
+    <button data-target="taskDetail" onclick="navigateTo('taskDetail')">✓ 治理</button>
+  </nav>
+  <div class="daep-nav-group">项目设置</div>
+  <nav class="daep-nav">
+    <button data-target="dependencyPanel" onclick="navigateTo('dependencyPanel')">依赖关系</button>
+    <button data-target="coordinationPanel" onclick="navigateTo('coordinationPanel')">异常协调</button>
+    <button data-target="workPackagePanel" onclick="navigateTo('workPackagePanel')">Work Package</button>
+    <button data-target="inboxPanel" onclick="navigateTo('inboxPanel')">消息收件箱</button>
+  </nav>
+  <div class="daep-role-card" id="roleCard"><strong>未连接</strong><span>连接后显示当前平台 / 项目角色</span></div>
+</aside>
+<div class="daep-content"><section class="section-anchor" id="portfolioPanel">
+  <div class="portfolio-head">
+    <div><h2>我的项目组合</h2><p class="muted" id="portfolioHint">按项目角色查看你有权访问的项目；切换项目后工作台上下文会同步切换。</p></div>
+    <button type="button" onclick="focusProjectCreate()">＋ 新建项目</button>
+  </div>
+  <div class="portfolio-grid" id="portfolioGrid"></div>
+</section><section class="panel section-anchor" id="overview"><h2>项目工作台</h2><p class="muted" id="overviewHint">选择项目查看整体进度与协作健康状况</p><div class="metrics" id="metrics"></div><div id="healthSummary" class="muted"></div></section><section class="panel" id="taskBoard"><div class="row"><h2>任务看板</h2><button class="secondary" onclick="loadTasks()">刷新看板</button></div><div class="filters"><input id="taskFilter" placeholder="搜索任务标题或 ID" oninput="renderTaskBoard()"><select id="statusFilter" onchange="renderTaskBoard()"><option value="">所有状态</option><option>READY</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>REVIEW</option><option>DONE</option></select></div><div class="board" id="board"></div></section><section class="panel" id="delegationPanel"><div class="row"><h2>跨成员任务委派</h2><span id="delegationSummary" class="muted"></span></div><div class="filters"><select id="delegationStatusFilter" onchange="renderDelegations()"><option value="">所有委派状态</option><option>PENDING</option><option>ACCEPTED</option><option>REJECTED</option><option>EXPIRED</option></select></div><div id="delegationBoard" class="board"></div></section><section class="panel" id="agentTopologyPanel"><div class="row"><h2>Agent 协作拓扑</h2><button class="secondary" onclick="loadOverview()">刷新 Agent 状态</button></div><p class="muted">仅展示成员自行注册的本地 Agent、最近心跳和 DAEP 中的任务关联；DAEP 不托管或唤醒 Agent Runtime。</p><div id="agentTopologySummary" class="muted"></div><div id="agentTopology" class="board"></div><div class="item"><strong>协作 Agent 能力匹配（推荐，不自动分配）</strong><div class="filters"><input id="agentRequiredCapabilities" placeholder="所需能力，逗号分隔，例如 python,testing"><input id="agentRequiredProtocol" value="mcp" placeholder="协议"><button type="button" onclick="recommendProjectAgents()">查找候选 Agent</button></div><div id="agentMatchSummary" class="muted"></div><div id="agentMatchResults" class="board"></div></div></section><section class="panel" id="workPackagePanel"><div class="row"><h2>项目多 Agent 工作包</h2><button class="secondary" id="scanHealthButton" onclick="scanProjectHealth()">刷新风险扫描</button></div><div class="filters"><select id="workPackageRiskFilter" onchange="renderWorkPackages()"><option value="">所有风险状态</option><option>ON_TRACK</option><option>OVERDUE</option><option>BLOCKED_DEPENDENCY</option><option>STALLED</option><option>IN_REVIEW</option><option>COMPLETED</option></select></div><div id="workPackageSummary" class="muted"></div><div id="workPackageBoard" class="board"></div></section><section class="panel" id="coordinationPanel"><div class="row"><h2>异常协作与人工协调中心</h2><div><button type="button" class="secondary" onclick="loadOverview()">刷新</button> <button type="button" class="secondary" onclick="scanStalledWorkPackages()">扫描停滞</button></div></div><p class="muted">集中处理逾期、依赖阻塞、停滞、待审核、未认领任务和待响应委派。重新委派需要人工选择在线成员与其本地 Agent。</p><div id="coordinationSummary" class="muted"></div><div id="coordinationBoard" class="board"></div></section><section class="panel" id="dependencyPanel"><div class="row"><h2>任务依赖关系图</h2><span id="dependencySummary" class="muted"></span></div><p class="muted">箭头从前置任务指向后续任务；点击节点可打开任务详情。无依赖的任务也会显示。</p><div class="graphwrap" id="dependencyGraph"><p class="muted">选择项目后显示任务关系</p></div></section><section class="panel hidden" id="taskDetail"><div class="row"><h2 id="detailTitle">任务详情</h2><button class="secondary" onclick="closeTaskDetail()">关闭</button></div><div id="detailContent"></div></section>
 <div class="grid">
 <section class="panel"><h2>项目</h2><div class="row"><input id="projectName" placeholder="新项目名称"><button onclick="createProject()">创建项目</button></div><div id="projects"></div></section>
 <section class="panel"><h2>项目成员</h2><div id="members" class="muted">选择项目以查看成员</div><div class="row"><input id="newMemberId" placeholder="成员 ID"><select id="memberRole"><option>member</option><option>manager</option><option>reviewer</option></select></div><button onclick="addMember()">添加/更新成员</button></section>
@@ -15,19 +87,19 @@
 <section class="panel"><h2>需求</h2><input id="reqTitle" placeholder="需求标题"><label>描述</label><textarea id="reqDesc"></textarea><button onclick="createRequirement()">创建需求</button><div id="requirements"></div></section>
 <section class="panel"><h2>工程任务</h2><select id="reqSelect"><option value="">先创建或选择需求</option></select><input id="taskTitle" placeholder="任务标题"><label>描述</label><textarea id="taskDesc"></textarea><label>分配成员（可多选）</label><select id="assignees" multiple size="4"></select><button onclick="createTask()">创建任务</button><div id="tasks"></div></section>
 </div>
-<section class="panel"><h2>我的消息收件箱</h2><button class="secondary" onclick="loadInbox()">刷新消息</button><div id="inbox"></div></section>
-</div><div id="error" class="error"></div>
+<section class="panel section-anchor" id="inboxPanel"><h2>我的消息收件箱</h2><button class="secondary" onclick="loadInbox()">刷新消息</button><div id="inbox"></div></section>
+</div></div><div id="error" class="error"></div>
 </main>
 <script>
 let token='',me=null,projects=[],selectedProject=null,requirements=[],selectedProjectRole='',projectHealthItems=[],projectAgents=[],projectDelegations=[],projectAgentMatches=[],selectedAgentCandidate=null,projectMembers=[],projectCoordination=null;
 const $=id=>document.getElementById(id);const headers=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||r.statusText);return d}
 function showError(e){$('error').textContent=e.message||String(e)}
-async function connect(){try{token=$('token').value.trim();me=await api('/api/v1/me');$('identity').textContent=me.name+' · '+me.role;$('authmsg').textContent='连接成功';$('app').classList.remove('hidden');await loadProjects();await loadInbox()}catch(e){showError(e)}}
-async function loadProjects(){projects=await api('/api/v1/projects');$('projects').innerHTML=projects.map(p=>`<div class="item"><button class="secondary" onclick="selectProject('${p.id}')">打开</button><strong>${esc(p.name)}</strong><span class="muted">${esc(p.id)}</span></div>`).join('')||'<p class="muted">暂无项目</p>'}
+async function connect(){try{token=$('token').value.trim();me=await api('/api/v1/me');$('identity').textContent=me.name+' · '+me.role;$('authmsg').textContent='连接成功';$('app').classList.remove('hidden');renderRoleShell();await loadProjects();await loadInbox()}catch(e){showError(e)}}
+async function loadProjects(){projects=await api('/api/v1/projects');renderPortfolio();$('projects').innerHTML=projects.map(p=>`<div class="item"><button class="secondary" onclick="selectProject('${p.id}')">打开</button><strong>${esc(p.name)}</strong><span class="muted">${esc(p.id)}</span></div>`).join('')||'<p class="muted">暂无项目</p>'}
 async function createProject(){try{const p=await api('/api/v1/projects',{method:'POST',body:JSON.stringify({name:$('projectName').value})});$('projectName').value='';await loadProjects();await selectProject(p.id)}catch(e){showError(e)}}
-async function selectProject(id){try{selectedProject=id;await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()]);await loadOverview();$('overviewHint').textContent='当前项目：'+((projects.find(p=>p.id===id)||{}).name||id)}catch(e){showError(e)}}
-async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);selectedProjectRole=(m.find(x=>x.id===me.id)||{}).project_role||'';$('members').innerHTML=m.map(x=>`<div class="item">${esc(x.name)} <span class="tag">${x.project_role}</span><div class="muted">${x.id}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
+async function selectProject(id){try{selectedProject=id;await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()]);await loadOverview();renderRoleShell();renderPortfolio();$('overviewHint').textContent='当前项目：'+((projects.find(p=>p.id===id)||{}).name||id)}catch(e){showError(e)}}
+async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);selectedProjectRole=(m.find(x=>x.id===me.id)||{}).project_role||'';renderRoleShell();renderPortfolio();$('members').innerHTML=m.map(x=>`<div class="item">${esc(x.name)} <span class="tag">${x.project_role}</span><div class="muted">${x.id}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
 async function addMember(){try{await api(`/api/v1/projects/${selectedProject}/members`,{method:'POST',body:JSON.stringify({member_id:$('newMemberId').value,role:$('memberRole').value})});$('newMemberId').value='';await loadProjectMembers()}catch(e){showError(e)}}
 async function loadRequirements(){requirements=await api(`/api/v1/projects/${selectedProject}/requirements`);$('requirements').innerHTML=requirements.map(r=>`<div class="item"><strong>${esc(r.title)} <span class="tag">${esc(r.status)}</span></strong><span class="muted small">${esc(r.id)}</span><button type="button" class="secondary" onclick="showRequirementAcceptance('${r.id}')">验收报告</button></div>`).join('')||'<p class="muted">暂无需求</p>';$('reqSelect').innerHTML=requirements.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')||'<option value="">先创建需求</option>'}
 async function showRequirementAcceptance(id){try{const d=await api('/api/v1/requirements/'+id+'/acceptance-report');let html='<h3>需求验收 · '+esc(d.title)+'</h3><p>状态：'+esc(d.status)+' · 任务：'+d.task_count+' · 可验收：'+(d.ready_for_acceptance?'是':'否')+'</p><h4>验收标准</h4>'+(d.acceptance_criteria||[]).map(c=>'<div class="item">'+c.index+'. '+esc(c.text)+'</div>').join('')+'<h4>交付任务</h4>'+(d.tasks||[]).map(t=>'<div class="item">'+esc(t.title)+' · '+esc(t.status)+' · '+t.artifact_count+' 项交付证据</div>').join('')+'<p class="muted small">审批时必须逐项确认验收标准；所有任务必须 DONE 且每项任务至少有一个交付产物。</p>'+(d.status!=='ACCEPTED'?'<button type="button" onclick="decideRequirementAcceptance(\''+id+'\',\'APPROVE\','+d.acceptance_criteria.length+')">通过验收</button><button type="button" class="secondary" onclick="decideRequirementAcceptance(\''+id+'\',\'REJECT\','+d.acceptance_criteria.length+')">退回需求</button>':'');$('requirements').insertAdjacentHTML('beforeend','<div class="item" id="acceptance-'+id+'">'+html+'</div>')}catch(e){showError(e)}}
@@ -218,4 +290,44 @@ async function createTask(){try{const assignees=[...$('assignees').selectedOptio
 async function loadInbox(){try{const d=await api('/api/v1/me/notifications');$('inbox').innerHTML=d.items.map(m=>`<div class="item"><strong>${esc(m.title)} <span class="tag">${esc(m.priority)}</span></strong><p>${esc(m.content)}</p><span class="muted">${esc(m.created_at)}</span><button onclick="ack('${m.id}')">确认收到</button></div>`).join('')||'<p class="muted">没有待处理消息</p>'}catch(e){showError(e)}}
 async function ack(id){try{await api(`/api/v1/messages/${id}/ack`,{method:'POST',body:JSON.stringify({status:'ACKNOWLEDGED'})});await loadInbox()}catch(e){showError(e)}}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+/* RC26 UI Architecture: role-aware navigation and project portfolio */
+function currentRoleLabel(){
+  if(me?.role==='admin') return '系统管理员';
+  if(['owner','manager'].includes(selectedProjectRole)) return '项目管理员';
+  if(selectedProjectRole==='reviewer') return '项目审核人员';
+  if(selectedProjectRole==='member') return '项目成员';
+  return '平台成员';
+}
+function navigateTo(id){
+  const el=$(id); if(!el) return;
+  el.classList.remove('hidden');
+  el.scrollIntoView({behavior:'smooth',block:'start'});
+  document.querySelectorAll('#primaryNav button').forEach(b=>b.classList.toggle('active',b.dataset.target===id));
+}
+function focusProjectCreate(){
+  const el=$('projectName'); if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});}
+}
+function renderRoleShell(){
+  const label=currentRoleLabel();
+  $('roleCard').innerHTML='<strong>'+esc(label)+'</strong><span>'+esc(me?.name||'')+(selectedProjectRole?' · 项目角色 '+esc(selectedProjectRole):'')+'</span>';
+  const context=selectedProject ? ((projects.find(p=>p.id===selectedProject)||{}).name||selectedProject) : '未选择项目';
+  $('projectContext').textContent=context;
+  $('portfolioHint').textContent=selectedProject ? '当前项目：'+context+' · 角色：'+label+'；选择其他项目即可切换上下文。' : '按项目角色查看你有权访问的项目；选择项目后进入对应工作台。';
+  document.querySelectorAll('#primaryNav button').forEach(b=>{
+    b.classList.toggle('active',b.dataset.target==='overview' && !!selectedProject);
+  });
+}
+function renderPortfolio(){
+  const grid=$('portfolioGrid'); if(!grid)return;
+  if(!projects.length){grid.innerHTML='<div class="project-card"><strong>暂无可访问项目</strong><p class="muted">创建项目或等待项目负责人将你加入项目。</p></div>';return;}
+  grid.innerHTML=projects.map(p=>{
+    const selected=p.id===selectedProject;
+    return '<article class="project-card '+(selected?'selected':'')+'" onclick="selectProject(\''+esc(p.id)+'\')">'+
+      '<div class="project-top"><span class="project-name">'+esc(p.name)+'</span><span class="role-badge">'+(selected?esc(currentRoleLabel()):'项目成员')+'</span></div>'+
+      '<div class="project-id">'+esc(p.id)+'</div>'+
+      '<div class="project-meta"><span>进入项目工作台</span><span>独立权限上下文</span></div>'+
+      '<div class="project-open">'+(selected?'当前项目 ✓':'打开项目 →')+'</div></article>';
+  }).join('');
+}
 </script></body></html>
