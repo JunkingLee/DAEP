@@ -133,4 +133,8 @@ After restoring a backup into a separately provisioned empty database, run `DAEP
 
 ## RC25 project and task visual workspace
 
-The existing lightweight dashboard now provides project metrics, a five-lane task board with search/status filters, and task detail panels showing assignees, dependencies, multi-Agent work packages, SLA/risk metadata, artifacts and collaboration timeline. The project health score is explicitly scoped to registered active work packages. See `docs/RC25_PROJECT_WORKSPACE.md`. The dashboard uses existing authenticated APIs and does not operate local Agent runtimes.
+The existing lightweight dashboard now provides project metrics, a five-lane task board with search/status filters, and task detail panels showing assignees, dependencies, multi-Agent work packages, SLA/risk metadata, artifacts and collaboration timeline. The project health score is explicitly scoped to registered active work packages. The workspace includes an interactive dependency graph and a manager-only dependency editor with same-project and cycle guards, plus a project-wide work-package risk board and manager-triggered risk scan. See `docs/RC25_PROJECT_WORKSPACE.md`. The dashboard uses existing authenticated APIs and does not operate local Agent runtimes.
+
+## RC26 Stage 1 — Local Agent collaboration topology
+
+The dashboard now combines the project-scoped Agent registry and active work-package health data to show each registered local Agent, its member identity, reported presence, last heartbeat, declared MCP/protocol capabilities, and associated work packages. Unmatched work packages are surfaced separately. Presence is informational and uses the existing freshness window; DAEP does not host, start, stop, inspect or wake local Agent Runtime processes. See `docs/RC26_AGENT_TOPOLOGY.md`.
