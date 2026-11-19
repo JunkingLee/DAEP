@@ -667,6 +667,31 @@ def test_rc26_stage4_work_package_review_reject_and_approve_gate():
     assert forbidden.status_code==403
 
 
+
+def test_rc26_stage5_coordination_center_collects_unclaimed_reviews_and_exceptions():
+    pid,member_id,token,parent_id=setup_project_task()
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    req_id=db.execute('SELECT requirement_id FROM tasks WHERE id=?',(parent_id,)).fetchone()[0]
+    db.close()
+    unclaimed=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req_id,'title':'Unclaimed follow-up','assignee_member_ids':[]})
+    assert unclaimed.status_code==200
+    mh={'Authorization':'Bearer '+token}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=mh,json={'agent_name':'coord-agent','protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    package=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={'title':'Stalled coordination package','assignee_member_id':member_id,'agent_name':'coord-agent'})
+    assert package.status_code==200
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE task_work_packages SET needs_attention=1,risk_state='STALLED',stall_reason='coordination test' WHERE id=?",(package.json()['id'],))
+    db.commit();db.close()
+    report=client.get(f'/api/v1/projects/{pid}/coordination',headers=ADMIN)
+    assert report.status_code==200
+    body=report.json()
+    assert any(x['task_id']==unclaimed.json()['id'] for x in body['unclaimed_tasks'])
+    assert any(x['work_package_id']==package.json()['id'] and x['stall_reason']=='coordination test' for x in body['exception_work_packages'])
+    assert body['counts']['unclaimed_tasks']==1
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Coordination outsider'}).json()
+    assert client.get(f'/api/v1/projects/{pid}/coordination',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
+
+
 def test_rc19_project_health_detects_sla_overdue_and_dependency_blockers():
     pid,member_id,token,parent_id=setup_project_task()
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
