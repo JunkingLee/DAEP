@@ -754,7 +754,7 @@ def test_rc26_project_delegation_history_is_scoped_and_includes_member_names():
 
 
 def test_rc26_stage2_agent_matching_ranks_capabilities_and_presence_without_assignment():
-    pid,_,member_token,task_id=setup_project_task()
+    pid,member_id,member_token,task_id=setup_project_task()
     headers={'Authorization':'Bearer '+member_token}
     second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Matching Member'}).json()
     assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':second['id'],'role':'member'}).status_code==200
@@ -773,7 +773,9 @@ def test_rc26_stage2_agent_matching_ranks_capabilities_and_presence_without_assi
     assert partial_item['matched_capabilities']==['python']
     assert partial_item['missing_capabilities']==['testing'] and partial_item['eligible'] is False
     before=client.get(f'/api/v1/tasks/{task_id}',headers=headers).json()
-    assert before['assignees']==[]
+    assert [x['id'] for x in before['assignees']]==[member_id]
+    after=client.get(f'/api/v1/tasks/{task_id}',headers=headers).json()
+    assert [x['id'] for x in after['assignees']]==[member_id]
 
 
 def test_rc26_stage2_agent_matching_enforces_project_scope_and_input_bounds():
