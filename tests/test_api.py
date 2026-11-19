@@ -1341,9 +1341,13 @@ def test_rc26_stage14_concurrent_message_ack_is_single_event_and_keeps_task_cont
             pool.submit(acknowledge),pool.submit(acknowledge)]]
 
     statuses=sorted(r.status_code for r in responses)
-    assert statuses==[200,409],[r.text for r in responses]
-    winner=[r.json() for r in responses if r.status_code==200][0]
-    assert winner['status']=='ACKNOWLEDGED'
+    # A concurrent loser may observe the committed terminal state and receive
+    # the documented idempotent 200, or lose the conditional update and get 409.
+    assert statuses in ([200,409],[200,200]),[r.text for r in responses]
+    successful=[r.json() for r in responses if r.status_code==200]
+    assert all(item['status']=='ACKNOWLEDGED' for item in successful)
+    if len(successful)==2:
+        assert sorted(item.get('idempotent') for item in successful)==[False,True]
 
     events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN)
     assert events.status_code==200
