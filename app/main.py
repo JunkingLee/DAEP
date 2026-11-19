@@ -784,11 +784,12 @@ def project_governance_snapshot(pid:str,authorization:str=Header(None)):
         delivery_health=project_message_delivery_health(pid,authorization,120,300,500)
         review_rows=c.execute("""SELECT e.payload,e.created_at FROM events e
             WHERE e.event_type='message.delivery.incident.reviewed' AND e.payload LIKE ?
-            ORDER BY e.created_at DESC LIMIT 1000""",('%"project_id":"'+pid+'"%',)).fetchall()
+            ORDER BY e.created_at DESC LIMIT 1000""",('%'+pid+'%',)).fetchall()
         latest_reviews={}
         for review_row in review_rows:
             try:
                 payload=json.loads(review_row['payload'] or '{}')
+                if payload.get('project_id')!=pid: continue
                 mid=payload.get('message_id')
                 if mid and mid not in latest_reviews:
                     latest_reviews[mid]={'disposition':payload.get('disposition'),'comment':payload.get('comment'),
