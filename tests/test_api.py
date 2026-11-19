@@ -980,6 +980,91 @@ def test_rc26_stage7_requirement_acceptance_is_project_scoped_and_reviewer_only(
 
 
 
+
+def test_rc26_full_role_delivery_to_project_closure_e2e():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC26 Full Delivery Closure'}).json()
+    pid=project['id']
+    members=[]
+    for name,role,function in (
+        ('Product Owner','member','product'),
+        ('Developer','member','developer'),
+        ('Tester','member','tester'),
+        ('Reviewer','reviewer','other'),
+        ('Project Manager','manager','other'),
+    ):
+        created=client.post('/api/v1/members',headers=ADMIN,json={'name':name})
+        assert created.status_code==200,created.text
+        mid,token=created.json()['id'],created.json()['token']
+        added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+            'member_id':mid,'role':role,'work_function':function})
+        assert added.status_code==200,added.text
+        members.append((name,mid,token))
+    identities={x[0]:(x[1],{'Authorization':'Bearer '+x[2]}) for x in members}
+    product_id,product_h=identities['Product Owner']
+    dev_id,dev_h=identities['Developer']
+    tester_id,tester_h=identities['Tester']
+    reviewer_id,reviewer_h=identities['Reviewer']
+    manager_id,manager_h=identities['Project Manager']
+
+    configured=client.put(f'/api/v1/projects/{pid}/workflow',headers=manager_h,json={
+        'enabled':True,'stages':[
+            {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+            {'key':'IMPLEMENT','name':'开发','order':2,'approval_role':'none','sla_seconds':7200},
+            {'key':'TEST','name':'测试','order':3,'approval_role':'none','sla_seconds':7200},
+            {'key':'REVIEW','name':'审核','order':4,'approval_role':'reviewer','sla_seconds':7200},
+            {'key':'DONE','name':'完成','order':5,'approval_role':'none','sla_seconds':None},
+        ]})
+    assert configured.status_code==200,configured.text
+    gate=client.put(f'/api/v1/projects/{pid}/gates/TEST_EVIDENCE',headers=manager_h,json={
+        'enabled':True,'required_roles':['tester'],'required_evidence':True,
+        'required_all_tasks_done':False,'applies_to':'TEST'})
+    assert gate.status_code==200,gate.text
+
+    req=client.post('/api/v1/requirements',headers=product_h,json={
+        'project_id':pid,'title':'Checkout delivery','acceptance_criteria':['API works','Regression passes']})
+    assert req.status_code==200,req.text
+    tid=client.post('/api/v1/tasks',headers=product_h,json={
+        'requirement_id':req.json()['id'],'title':'Implement and validate checkout',
+        'assignee_member_ids':[dev_id]}).json()['id']
+
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=dev_h,
+        json={'target_stage':'IMPLEMENT'}).status_code==200
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=dev_h,
+        json={'target_stage':'TEST'}).status_code==200
+    blocked=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=dev_h,
+        json={'target_stage':'REVIEW'})
+    assert blocked.status_code in (403,409),blocked.text
+
+    evidence=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=tester_h,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/full-e2e-report',
+        'commit_sha':'full-e2e-test','metadata':{'passed':12}})
+    assert evidence.status_code==200,evidence.text
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=tester_h,
+        json={'target_stage':'REVIEW'}).status_code==200
+    approved=client.post(f'/api/v1/tasks/{tid}/review',headers=reviewer_h,json={
+        'decision':'APPROVE','comment':'Test evidence verified'})
+    assert approved.status_code==200,approved.text
+    assert approved.json()['status']=='DONE'
+
+    decision=client.post(f'/api/v1/projects/{pid}/decisions',headers=manager_h,json={
+        'title':'Checkout delivery approved','decision':'Release accepted',
+        'rationale':'Development and regression evidence verified',
+        'accountable_member_id':manager_id,'related_task_ids':[tid]})
+    assert decision.status_code==200,decision.text
+    report=client.get(f"/api/v1/requirements/{req.json()['id']}/acceptance-report",headers=reviewer_h)
+    assert report.status_code==200 and report.json()['ready_for_acceptance'] is True
+    accepted=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",headers=reviewer_h,json={
+        'decision':'APPROVE','verified_criteria':[0,1],'comment':'All acceptance evidence verified'})
+    assert accepted.status_code==200,accepted.text
+    governance=client.get(f'/api/v1/projects/{pid}/governance',headers=manager_h)
+    assert governance.status_code==200 and governance.json()['completion']['completed']==1
+    audit=client.get(f'/api/v1/projects/{pid}/audit',headers=manager_h)
+    assert audit.status_code==200
+    types={x['event_type'] for x in audit.json()['items']}
+    assert 'project.workflow.updated' in types
+    assert 'project.gate.updated' in types
+    assert 'requirement.acceptance.approve' in types
+
 def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC26 Stage 8 E2E'}).json()
     pid=project['id']
