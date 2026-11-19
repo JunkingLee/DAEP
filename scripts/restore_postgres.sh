@@ -10,7 +10,7 @@ set -eu
 
 compose=${DAEP_COMPOSE_FILE:-compose.production.yaml}
 target=${DAEP_RESTORE_DATABASE:-daep_restore}
-source_db=${DAEP_SOURCE_DATABASE:-daep}
+source_db=${DAEP_SOURCE_DATABASE:-$(docker compose -f "$compose" exec -T postgres printenv POSTGRES_DB | tr -d "\r")}
 [ "$target" != "$source_db" ] || {
   echo "Refusing to restore into the configured source database" >&2
   exit 2
