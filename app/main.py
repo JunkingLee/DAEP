@@ -1443,12 +1443,18 @@ def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
     if decision not in ('ACCEPT','REJECT'): raise HTTPException(422,'decision must be ACCEPT or REJECT')
     with conn() as c:
-        row=c.execute('SELECT * FROM task_delegations WHERE id=?',(did,)).fetchone()
+        begin_serialized_write(c)
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            row=c.execute('SELECT * FROM task_delegations WHERE id=? FOR UPDATE',(did,)).fetchone()
+        else:
+            row=c.execute('SELECT * FROM task_delegations WHERE id=?',(did,)).fetchone()
         if not row or row['recipient_member_id'] != a['id']: raise HTTPException(404,'Delegation not found')
         if row['status'] != 'PENDING': raise HTTPException(409,'Delegation is no longer pending')
         if row['expires_at'] <= now():
-            c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=?",(now(),did))
-            event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':did})
+            stamp=now()
+            cur=c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(stamp,did))
+            if cur.rowcount:
+                event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':did})
             return JSONResponse(status_code=410,content={'detail':'Delegation offer has expired','status':'EXPIRED'})
         if decision=='ACCEPT':
             c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(row['task_id'],a['id']))
@@ -1456,7 +1462,9 @@ def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
             status='ACCEPTED'
         else: status='REJECTED'
         stamp=now()
-        c.execute('UPDATE task_delegations SET status=?,responded_at=?,updated_at=? WHERE id=? AND status=\'PENDING\'',(status,stamp,stamp,did))
+        cur=c.execute('UPDATE task_delegations SET status=?,responded_at=?,updated_at=? WHERE id=? AND status=\'PENDING\'',(status,stamp,stamp,did))
+        if cur.rowcount != 1:
+            raise HTTPException(409,'Delegation response raced with another decision')
         event(c,'task.delegation.'+status.lower(),a['id'],row['task_id'],{'delegation_id':did,'agent_name':row['agent_name']})
         return {'id':did,'task_id':row['task_id'],'status':status,'responded_at':stamp}
 
@@ -1470,8 +1478,10 @@ def list_task_delegations(tid:str,authorization:str=Header(None)):
         for raw in rows:
             row=dict(raw)
             if row['status']=='PENDING' and row['expires_at'] <= now():
-                c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(now(),row['id']))
-                event(c,'task.delegation.expired',a['id'],tid,{'delegation_id':row['id']})
+                stamp=now()
+                cur=c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(stamp,row['id']))
+                if cur.rowcount:
+                    event(c,'task.delegation.expired',a['id'],tid,{'delegation_id':row['id']})
                 row['status']='EXPIRED'
             result.append(row)
         return result
@@ -1491,8 +1501,10 @@ def project_delegations(pid:str,limit:int=100,authorization:str=Header(None)):
         for raw in rows:
             row=dict(raw)
             if row['status']=='PENDING' and row['expires_at'] <= now():
-                c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(now(),row['id']))
-                event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':row['id']})
+                stamp=now()
+                cur=c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(stamp,row['id']))
+                if cur.rowcount:
+                    event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':row['id']})
                 row['status']='EXPIRED'
             items.append(row)
         return {'project_id':pid,'count':len(items),'items':items}
