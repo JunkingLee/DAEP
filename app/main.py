@@ -1169,6 +1169,27 @@ def list_task_delegations(tid:str,authorization:str=Header(None)):
             result.append(row)
         return result
 
+@app.get('/api/v1/projects/{pid}/delegations')
+def project_delegations(pid:str,limit:int=100,authorization:str=Header(None)):
+    a=actor(authorization); limit=max(1,min(limit,500))
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT d.*,rq.name AS requester_name,rc.name AS recipient_name,t.title AS task_title
+            FROM task_delegations d
+            JOIN members rq ON rq.id=d.requester_member_id
+            JOIN members rc ON rc.id=d.recipient_member_id
+            JOIN tasks t ON t.id=d.task_id
+            WHERE d.project_id=? ORDER BY d.created_at DESC LIMIT ?""",(pid,limit)).fetchall()
+        items=[]
+        for raw in rows:
+            row=dict(raw)
+            if row['status']=='PENDING' and row['expires_at'] <= now():
+                c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(now(),row['id']))
+                event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':row['id']})
+                row['status']='EXPIRED'
+            items.append(row)
+        return {'project_id':pid,'count':len(items),'items':items}
+
 @app.post('/api/v1/messages')
 def send_message(b:MessageIn,authorization:str=Header(None)):
     a=actor(authorization); mid='msg_'+uuid.uuid4().hex[:12]
