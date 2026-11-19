@@ -1151,6 +1151,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
 def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(None),idempotency_key:str=Header(None)):
     a=actor(authorization); target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
     if not target: raise HTTPException(422,'target_stage is required')
+    if target=='BLOCKED': raise HTTPException(409,'BLOCKED is controlled by the task blocked endpoint')
     with conn() as c:
         pid=task_project(c,tid)
         if not pid: raise HTTPException(404,'Task not found')
