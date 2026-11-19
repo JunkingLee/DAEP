@@ -997,8 +997,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
         'acceptance_criteria':['API implementation is delivered','Integration tests are delivered']})
     assert requirement.status_code==200,requirement.text
     parent=client.post('/api/v1/tasks',headers=owner_h,json={
-        'requirement_id':requirement.json()['id'],'title':'Deliver distributed checkout',
-        'assignee_member_ids':[owner['id']]})
+        'requirement_id':requirement.json()['id'],'title':'Deliver distributed checkout'})
     assert parent.status_code==200,parent.text
     parent_id=parent.json()['id']
 
