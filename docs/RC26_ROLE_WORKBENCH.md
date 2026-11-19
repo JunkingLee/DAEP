@@ -37,3 +37,16 @@ Tester / reviewer workbench now exposes task-level test actions using existing g
 - open the requirement acceptance report from the workbench when a requirement reference is available.
 
 The UI does not introduce a separate defect entity. Blocking remains task governance, while artifacts provide durable verification evidence and the existing Review / Requirement Acceptance APIs remain the approval boundary.
+
+
+## Manager / Owner Governance Workbench
+
+项目管理员与系统管理员现在拥有独立的“项目治理台”，直接消费已有治理 API，不新增重复业务模型：
+
+- 项目治理快照：任务总数、完成率、待审核、Work Package 风险、责任分布、完成门禁、消息交付事件。
+- 项目决策登记：标题、决策内容、依据、责任人、截止时间、关联任务；沿用既有 `POST /api/v1/projects/{project_id}/decisions`。
+- 项目收口判断：仅展示治理条件，不自动关闭项目；要求完成门禁满足、无活动风险工作包、无待审核任务。
+- 异常协调、健康扫描、停滞扫描均复用现有治理接口。
+- 多项目切换后治理台随项目角色上下文刷新。
+
+UI 仍然只是操作入口，后端项目角色权限与治理规则继续作为唯一安全边界。
