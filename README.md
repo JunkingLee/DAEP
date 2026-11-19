@@ -189,3 +189,18 @@ Requirements now have an explicit acceptance gate:
 - The project workspace exposes an acceptance report and requires explicit criterion-index confirmation before approval.
 
 This closes the human acceptance loop without making DAEP execute or control local Agent Runtime processes. See `docs/RC26_STAGE7_REQUIREMENT_ACCEPTANCE.md`.
+
+
+## RC26 Stage 8 — Two-member Agent Delivery Acceptance E2E
+
+A complete API-level integration scenario now exercises two independently authenticated project members and their separately registered local MCP-compatible Agents from work assignment through final requirement acceptance:
+
+- Two member-local Agents receive distinct work packages under one parent task.
+- One member sends a durable coordination message to the other; the recipient retrieves and acknowledges it.
+- Both members submit artifact-backed work results, which enter review.
+- Parent approval is rejected until both child deliveries are reviewed and approved.
+- The work summary and collaboration timeline are checked for both packages, artifacts, and the acknowledged cross-member message.
+- The coordinator attaches the parent delivery bundle, approves the parent task, verifies the requirement acceptance report, and explicitly approves every acceptance criterion.
+- The final requirement decision is checked in the project audit trail.
+
+This is a server-side integration test, not proof of real MCP Host interoperability, sleeping-Agent wake-up, multi-computer networking, browser rendering, or production operations. DAEP continues to govern work and evidence while each member retains ownership of their local Agent Runtime. See `docs/RC26_STAGE8_TWO_MEMBER_E2E.md`.
