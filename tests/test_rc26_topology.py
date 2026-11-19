@@ -49,3 +49,15 @@ def test_rc26_stage3_task_detail_surfaces_delegation_dependency_and_delivery_tra
     assert "协作事件时间线" in html
     assert "e.actor_name" in html
     assert "e.acked_at" in html
+
+
+def test_rc26_stage4_task_detail_has_manual_work_package_creation_review_and_candidate_selection():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "创建工作包" in html
+    assert "createWorkPackageFromDetail" in html
+    assert "/api/v1/tasks/'+parentId+'/work-packages" in html
+    assert "chooseAgentCandidate" in html
+    assert "用于当前工作包" in html
+    assert "reviewWorkPackage" in html
+    assert "/api/v1/work-packages/'+packageId+'/review" in html
+    assert "退回修改" in html
