@@ -204,3 +204,10 @@ A complete API-level integration scenario now exercises two independently authen
 - The final requirement decision is checked in the project audit trail.
 
 This is a server-side integration test, not proof of real MCP Host interoperability, sleeping-Agent wake-up, multi-computer networking, browser rendering, or production operations. DAEP continues to govern work and evidence while each member retains ownership of their local Agent Runtime. See `docs/RC26_STAGE8_TWO_MEMBER_E2E.md`.
+
+
+## RC26 Stage 9 — Delivery Reliability and Recovery
+
+The reliability suite now injects an interrupted outbox worker scenario: worker A claims a durable message and loses its lease, worker B reclaims it with a rotated lease token, and the stale worker is prevented from completing the reclaimed row. The test verifies one-time completion and confirms the member inbox retains exactly one notification. This complements existing retry/backoff, dead-letter replay with audit reason, ACK idempotency, stalled-package detection, controlled reassignment, and work-result idempotency coverage.
+
+The lease-expiry scenario uses deterministic test-database fault injection; it is not a production broker/network partition drill or proof of physical multi-computer MCP Host interoperability. DAEP continues to coordinate durable work and evidence without managing member-local Agent Runtime processes. See `docs/RC26_STAGE9_DELIVERY_RELIABILITY.md`.
