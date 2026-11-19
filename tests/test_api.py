@@ -1312,3 +1312,46 @@ def test_rc26_stage13_concurrent_delegation_expiry_does_not_duplicate_audit():
     matching=[e for e in events if e['event_type']=='task.delegation.expired'
               and json.loads(e['payload']).get('delegation_id')==delegation_id]
     assert len(matching)==1
+
+
+def test_rc26_stage14_concurrent_message_ack_is_single_event_and_keeps_task_context():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    pid,recipient_id,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage14 Ack Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':recipient['id'],'project_id':pid,'task_id':task_id,
+        'message_type':'COLLABORATION','title':'Stage14 ack race',
+        'content':'Concurrent acknowledgement consistency test'})
+    assert sent.status_code==200,sent.text
+    mid=sent.json()['id']
+
+    gate=Barrier(2)
+    def acknowledge():
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/messages/{mid}/ack',headers=rh,
+                           json={'status':'ACKNOWLEDGED'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [
+            pool.submit(acknowledge),pool.submit(acknowledge)]]
+
+    statuses=sorted(r.status_code for r in responses)
+    assert statuses==[200,409],[r.text for r in responses]
+    winner=[r.json() for r in responses if r.status_code==200][0]
+    assert winner['status']=='ACKNOWLEDGED'
+
+    events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN)
+    assert events.status_code==200
+    matching=[e for e in events.json()
+              if e['event_type']=='message.acknowledged'
+              and json.loads(e['payload']).get('message_id')==mid]
+    assert len(matching)==1
+    assert matching[0]['task_id']==task_id
+
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        row=db.execute('SELECT status,task_id FROM messages WHERE id=?',(mid,)).fetchone()
+        assert row==('ACKNOWLEDGED',task_id)
