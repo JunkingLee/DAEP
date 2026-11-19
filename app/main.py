@@ -956,7 +956,7 @@ def enforce_workflow_exit(c,pid,current_stage,actor_member_id):
         platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
         if not platform or platform['role']!='admin':
             role=project_role(c,pid,{'id':actor_member_id})
-            if role!=approval_role: raise HTTPException(403,f'Leaving workflow stage {current_stage} requires {approval_role} role
+            if role!=approval_role: raise HTTPException(403,f'Leaving workflow stage {current_stage} requires {approval_role} role')
 def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
     cfg=project_workflow_config(c,pid)
     stage=next((x for x in cfg.get('stages',[]) if x.get('key')==stage_key),None)
