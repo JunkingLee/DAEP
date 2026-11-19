@@ -52,6 +52,7 @@ async def security_headers(request, call_next):
     return response
 
 class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=160); description:str=Field(default='',max_length=5000)
+class ProjectMemberFunctionIn(BaseModel): work_function:str=Field(pattern='^(developer|tester|product|architect|other)$')
 class RequirementIn(BaseModel): project_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); acceptance_criteria:list[str]=Field(default_factory=list)
 class TaskIn(BaseModel): requirement_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); assignee_member_ids:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list)
 class TaskDependenciesIn(BaseModel): dependencies:list[str]=Field(default_factory=list,max_length=100)
@@ -180,7 +181,7 @@ def init():
         CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS oidc_states(state_hash TEXT PRIMARY KEY,nonce TEXT NOT NULL,code_verifier TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
-        CREATE TABLE IF NOT EXISTS project_members(project_id TEXT NOT NULL,member_id TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'member',joined_at TEXT NOT NULL,PRIMARY KEY(project_id,member_id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(member_id) REFERENCES members(id));
+        CREATE TABLE IF NOT EXISTS project_members(project_id TEXT NOT NULL,member_id TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'member',work_function TEXT NOT NULL DEFAULT 'other',joined_at TEXT NOT NULL,PRIMARY KEY(project_id,member_id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(member_id) REFERENCES members(id));
         CREATE TABLE IF NOT EXISTS requirements(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT,acceptance_criteria TEXT,status TEXT NOT NULL DEFAULT 'OPEN',created_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,requirement_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT,status TEXT NOT NULL DEFAULT 'READY',progress INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(requirement_id) REFERENCES requirements(id));
         CREATE TABLE IF NOT EXISTS assignments(task_id TEXT NOT NULL,member_id TEXT NOT NULL,PRIMARY KEY(task_id,member_id),FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(member_id) REFERENCES members(id));
@@ -214,6 +215,9 @@ def init():
         work_package_cols={r['name'] for r in c.execute('PRAGMA table_info(task_work_packages)').fetchall()}
         for col,ddl in [('needs_attention','INTEGER NOT NULL DEFAULT 0'),('stalled_at','TEXT'),('stall_reason','TEXT'),('correlation_id','TEXT'),('sla_due_at','TEXT'),('risk_state',"TEXT NOT NULL DEFAULT 'ON_TRACK'")]:
             if col not in work_package_cols: c.execute(f'ALTER TABLE task_work_packages ADD COLUMN {col} {ddl}')
+        project_member_cols={r['name'] for r in c.execute('PRAGMA table_info(project_members)').fetchall()}
+        if 'work_function' not in project_member_cols: c.execute("ALTER TABLE project_members ADD COLUMN work_function TEXT NOT NULL DEFAULT 'other'")
+        c.execute("UPDATE project_members SET work_function='other' WHERE work_function IS NULL OR work_function=''")
         table_cols = {
             'members': {r['name'] for r in c.execute('PRAGMA table_info(members)').fetchall()},
             'projects': {r['name'] for r in c.execute('PRAGMA table_info(projects)').fetchall()},
@@ -592,19 +596,20 @@ def projects(authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.* FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
+        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
         return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
+        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
 @app.post('/api/v1/projects/{pid}/members')
 def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
-    mid=b.get('member_id'); role=b.get('role','member')
+    mid=b.get('member_id'); role=b.get('role','member'); work_function=b.get('work_function','other')
     if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
+    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
         if role=='manager' and not is_admin(a):
@@ -614,9 +619,21 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role',(pid,mid,role,now()))
+        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role}
+        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
+@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
+def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a,write=True)
+        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
+        if not target: raise HTTPException(404,'Target is not a project member')
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
+        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
+        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
+
 @app.post('/api/v1/projects/{pid}/role-change-requests')
 def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()

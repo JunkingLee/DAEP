@@ -292,12 +292,42 @@ async function ack(id){try{await api(`/api/v1/messages/${id}/ack`,{method:'POST'
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 /* RC26 UI Architecture: role-aware navigation and project portfolio */
+function currentWorkFunction(){
+  if(!selectedProject) return '';
+  const p=projects.find(x=>x.id===selectedProject);
+  return p?.work_function||'';
+}
 function currentRoleLabel(){
   if(me?.role==='admin') return '系统管理员';
   if(['owner','manager'].includes(selectedProjectRole)) return '项目管理员';
   if(selectedProjectRole==='reviewer') return '项目审核人员';
-  if(selectedProjectRole==='member') return '项目成员';
+  if(selectedProjectRole==='member'){
+    const f=currentWorkFunction();
+    if(f==='developer') return '开发人员';
+    if(f==='tester') return '测试人员';
+    if(f==='product') return '产品人员';
+    if(f==='architect') return '架构人员';
+    return '项目成员';
+  }
   return '平台成员';
+}
+function roleNavTargets(){
+  if(me?.role==='admin') return ['portfolioPanel','overview','taskBoard','agentTopologyPanel','taskDetail','coordinationPanel','inboxPanel'];
+  if(['owner','manager'].includes(selectedProjectRole)) return ['portfolioPanel','overview','taskBoard','agentTopologyPanel','taskDetail','coordinationPanel','inboxPanel'];
+  if(selectedProjectRole==='reviewer') return ['portfolioPanel','overview','taskBoard','taskDetail','inboxPanel'];
+  const f=currentWorkFunction();
+  if(f==='tester') return ['portfolioPanel','overview','taskBoard','taskDetail','inboxPanel'];
+  return ['portfolioPanel','overview','taskBoard','agentTopologyPanel','inboxPanel'];
+}
+function applyRoleNavigation(){
+  const allowed=new Set(roleNavTargets());
+  document.querySelectorAll('#primaryNav button').forEach(b=>b.hidden=!allowed.has(b.dataset.target));
+  const setup=document.querySelector('.daep-nav-group + .daep-nav');
+  if(setup){
+    const setupAllowed=me?.role==='admin'||['owner','manager'].includes(selectedProjectRole);
+    setup.previousElementSibling.hidden=!setupAllowed;
+    setup.hidden=!setupAllowed;
+  }
 }
 function navigateTo(id){
   const el=$(id); if(!el) return;
@@ -309,9 +339,11 @@ function focusProjectCreate(){
   const el=$('projectName'); if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});}
 }
 function renderRoleShell(){
+  applyRoleNavigation();
   const label=currentRoleLabel();
-  $('roleCard').innerHTML='<strong>'+esc(label)+'</strong><span>'+esc(me?.name||'')+(selectedProjectRole?' · 项目角色 '+esc(selectedProjectRole):'')+'</span>';
+  $('roleCard').innerHTML='<strong>'+esc(label)+'</strong><span>'+esc(me?.name||'')+(selectedProjectRole?' · 项目角色 '+esc(selectedProjectRole):'')+(fn?' · 职能 '+esc(fn):'')+'</span>';
   const context=selectedProject ? ((projects.find(p=>p.id===selectedProject)||{}).name||selectedProject) : '未选择项目';
+  const fn=currentWorkFunction();
   $('projectContext').textContent=context;
   $('portfolioHint').textContent=selectedProject ? '当前项目：'+context+' · 角色：'+label+'；选择其他项目即可切换上下文。' : '按项目角色查看你有权访问的项目；选择项目后进入对应工作台。';
   document.querySelectorAll('#primaryNav button').forEach(b=>{
@@ -324,7 +356,7 @@ function renderPortfolio(){
   grid.innerHTML=projects.map(p=>{
     const selected=p.id===selectedProject;
     return '<article class="project-card '+(selected?'selected':'')+'" onclick="selectProject(\''+esc(p.id)+'\')">'+
-      '<div class="project-top"><span class="project-name">'+esc(p.name)+'</span><span class="role-badge">'+(selected?esc(currentRoleLabel()):'项目成员')+'</span></div>'+
+      '<div class="project-top"><span class="project-name">'+esc(p.name)+'</span><span class="role-badge">'+(selected?esc(currentRoleLabel()):(p.project_role||'项目成员'))+'</span></div>'+
       '<div class="project-id">'+esc(p.id)+'</div>'+
       '<div class="project-meta"><span>进入项目工作台</span><span>独立权限上下文</span></div>'+
       '<div class="project-open">'+(selected?'当前项目 ✓':'打开项目 →')+'</div></article>';

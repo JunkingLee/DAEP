@@ -1557,3 +1557,29 @@ def test_rc26_stage19_project_governance_includes_message_reliability_and_review
     other=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Stage19 isolation'}).json()
     denied=client.get(f"/api/v1/projects/{other['id']}/governance",headers=member_header)
     assert denied.status_code==403
+
+
+def test_rc26_ui_role_function_is_project_scoped():
+    pid, owner_id, owner_token, tid = setup_project_task()
+    developer = client.post('/api/v1/members', headers=ADMIN, json={'name':'Developer Function'}).json()
+    tester = client.post('/api/v1/members', headers=ADMIN, json={'name':'Tester Function'}).json()
+    add_dev = client.post(f'/api/v1/projects/{pid}/members', headers=ADMIN, json={'member_id':developer['id'],'role':'member','work_function':'developer'})
+    assert add_dev.status_code == 200
+    assert add_dev.json()['work_function'] == 'developer'
+    add_test = client.post(f'/api/v1/projects/{pid}/members', headers=ADMIN, json={'member_id':tester['id'],'role':'member','work_function':'tester'})
+    assert add_test.status_code == 200
+    members = client.get(f'/api/v1/projects/{pid}/members', headers=ADMIN)
+    assert members.status_code == 200
+    by_id = {row['id']: row for row in members.json()}
+    assert by_id[developer['id']]['work_function'] == 'developer'
+    assert by_id[tester['id']]['work_function'] == 'tester'
+    update = client.patch(f'/api/v1/projects/{pid}/members/{developer["id"]}/function', headers=ADMIN, json={'work_function':'architect'})
+    assert update.status_code == 200
+    assert update.json()['work_function'] == 'architect'
+    projects = client.get('/api/v1/projects', headers={'Authorization':f'Bearer {owner_token}'})
+    assert projects.status_code == 200
+    project = next(p for p in projects.json() if p['id'] == pid)
+    assert project['project_role'] == 'owner'
+    assert project['work_function'] == 'other'
+    invalid = client.patch(f'/api/v1/projects/{pid}/members/{developer["id"]}/function', headers=ADMIN, json={'work_function':'ops'})
+    assert invalid.status_code == 422
