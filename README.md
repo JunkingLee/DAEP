@@ -143,3 +143,8 @@ The dashboard now combines the project-scoped Agent registry and active work-pac
 ## RC26 Stage 2 — Explainable local Agent matching
 
 The project-scoped `GET /api/v1/projects/{project_id}/agent-matches` endpoint ranks registered local Agents against a comma-separated required-capability list and protocol (MCP by default). Each result reports matched and missing capabilities, presence freshness, availability, protocol compatibility, score and an explicit eligibility decision. Results are recommendations only: the endpoint does not assign tasks, create delegations, send messages, invoke an MCP tool or control a local Agent Runtime. Only recently-heartbeating `AVAILABLE` Agents with every requested capability and the requested protocol are marked eligible. See `docs/RC26_STAGE2_AGENT_MATCHING.md`.
+
+
+## RC26 Stage 3 — Cross-member collaboration trace
+
+The task work timeline now includes parent-task governance events, child work-package events, delivery artifacts, message acknowledgement state, and delegation offer/decision milestones with requester and recipient identities. It also returns the dependency edges for the parent task and its work-package children, including prerequisite status and whether each edge is currently blocking. The task detail view presents delegation history, work packages, dependency edges, and a chronological collaboration trace. This is a read-only governance view: it does not invoke or wake any member-local Agent Runtime. See `docs/RC26_STAGE3_COLLABORATION_TRACE.md`.
