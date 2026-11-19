@@ -589,7 +589,7 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
     a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
     with conn() as c:
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members VALUES(?,?,?,?)',(pid,a['id'],'owner',now()))
+        c.execute('INSERT INTO project_members(project_id,member_id,role,created_at,work_function) VALUES(?,?,?,?,?)',(pid,a['id'],'owner',now(),'other'))
     return {'id':pid,'name':b.name,'description':b.description}
 @app.get('/api/v1/projects')
 def projects(authorization:str=Header(None)):
