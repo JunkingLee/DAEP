@@ -924,6 +924,9 @@ SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
     'DELIVERY_EVIDENCE':{'enabled':True,'required_roles':['owner','manager','reviewer'],'required_evidence':True,'required_all_tasks_done':True,'applies_to':'DONE'}
 }
+def project_role(c,pid,actor_value):
+    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,actor_value['id'])).fetchone()
+    return row['role'] if row else None
 def project_workflow_config(c,pid):
     row=c.execute('SELECT config FROM project_workflows WHERE project_id=?',(pid,)).fetchone()
     return json.loads(row['config']) if row else DEFAULT_PROJECT_WORKFLOW
@@ -961,9 +964,6 @@ def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
     cfg=project_workflow_config(c,pid)
     stage=next((x for x in cfg.get('stages',[]) if x.get('key')==stage_key),None)
     if not stage: raise HTTPException(409,detail={'message':'Target workflow stage is not configured','stage_key':stage_key})
-    if stage_key=='DONE':
-        enforce_project_gate(c,pid,'REVIEW_REQUIRED',actor_member_id,task_id,'DONE')
-        enforce_project_gate(c,pid,'DELIVERY_EVIDENCE',actor_member_id,task_id,'DONE')
     for gate_key in [x['gate_key'] for x in c.execute('SELECT gate_key FROM project_gates WHERE project_id=?',(pid,)).fetchall()]:
         enforce_project_gate(c,pid,gate_key,actor_member_id,task_id,stage_key)
 def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
