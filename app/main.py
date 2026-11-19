@@ -80,7 +80,6 @@ class ArtifactIn(BaseModel): artifact_type:str=Field(min_length=1,max_length=80)
 class WorkResultIn(BaseModel): outcome:str=Field(pattern='^(COMPLETE|FAILED)$'); summary:str=Field(min_length=1,max_length=5000); idempotency_key:str=Field(default='',max_length=200)
 class WorkPackageScanIn(BaseModel): stale_after_seconds:int=Field(default=3600,ge=300,le=604800)
 class WorkPackageReassignIn(BaseModel): assignee_member_id:str=Field(min_length=1,max_length=120); agent_name:str=Field(min_length=1,max_length=120); reason:str=Field(min_length=1,max_length=2000)
-class WorkPackageReviewIn(BaseModel): decision:str; comment:str=Field(default='',max_length=4000)
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
@@ -848,8 +847,11 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         return {'task_id':tid,'status':status,'event_id':eid}
 
 @app.post('/api/v1/work-packages/{package_id}/review')
-def review_work_package(package_id:str,b:WorkPackageReviewIn,authorization:str=Header(None)):
+def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    decision=str(b.get('decision','')).strip().upper()
+    comment=str(b.get('comment',''))[:4000]
+    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         package=c.execute('SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?',(package_id,)).fetchone()
         if not package: raise HTTPException(404,'Work package not found')
@@ -861,15 +863,15 @@ def review_work_package(package_id:str,b:WorkPackageReviewIn,authorization:str=H
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
         if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
         stamp=now()
-        if b.decision=='APPROVE':
+        if decision=='APPROVE':
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
                 raise HTTPException(409,'Work package must have at least one artifact before approval')
             status='DONE'; progress=100
         else:
             status='IN_PROGRESS'; progress=90
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,stamp,package['child_task_id']))
-        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':b.decision,'comment':b.comment})
-        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':b.decision}
+        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
+        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
 
 @app.post('/api/v1/tasks/{parent_id}/work-packages')
 def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(None)):
