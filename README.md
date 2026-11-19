@@ -1,4 +1,4 @@
-# DAEP Enterprise Release — 1.0.0-rc22
+# DAEP Enterprise Release — 1.0.0-rc25
 
 **Distributed Agentic Engineering Platform** is a task-centric engineering control plane. It manages organizations' project work, requirements, task assignments, collaboration messages, artifacts and acceptance workflow. Developers start and operate their own local Agent Runtime; DAEP does not create, host or control those runtimes. Local Agents connect through the MCP-compatible adapter.
 
@@ -123,4 +123,14 @@ Project audit records are available through `GET /api/v1/projects/{id}/audit` wi
 
 For new production deployments, use `compose.production.yaml` and follow [the RC21 production operations and recovery runbook](docs/RC21_PRODUCTION_OPERATIONS.md). The production topology separates bootstrap, runtime and privileged PostgreSQL identities; keeps PostgreSQL off published host ports; uses a non-root, read-only API container; and provides guarded PostgreSQL backup/restore scripts. The legacy `docker-compose.rc8.yaml` remains for compatibility and local development. Passing CI does not replace a production restore drill, security review or release-owner acceptance.
 
-## RC23 release safety gate\n\nRC23 hardens PostgreSQL restore safety (source-database refusal, empty-target guard, atomic restore) and adds rendered production Compose security assertions to CI. See `docs/RC23_RELEASE_SAFETY.md` and `scripts/verify_production_compose.py`. RC23 remains a release candidate; live deployment, external integrations, encrypted off-host backup/restore, and product-owner approval remain required before GA.\n\n## RC24 restored database verification\n\nAfter restoring a backup into a separately provisioned empty database, run `DAEP_RESTORE_DATABASE=<target> scripts/verify_restored_postgres.sh`. The gate compares the restored Alembic revision with the repository head and verifies the 15 tenant-scoped tables, forced RLS policies, narrow authentication function, and database-role boundaries before traffic cutover. See `docs/RC24_RESTORE_VERIFICATION.md`. CI checks the verifier's shell syntax and static guardrails; it does not claim a live disaster-recovery drill.\n
+## RC23 release safety gate
+
+RC23 hardens PostgreSQL restore safety (source-database refusal, empty-target guard, atomic restore) and adds rendered production Compose security assertions to CI. See `docs/RC23_RELEASE_SAFETY.md` and `scripts/verify_production_compose.py`. RC23 remains a release candidate; live deployment, external integrations, encrypted off-host backup/restore, and product-owner approval remain required before GA.
+
+## RC24 restored database verification
+
+After restoring a backup into a separately provisioned empty database, run `DAEP_RESTORE_DATABASE=<target> scripts/verify_restored_postgres.sh`. The gate compares the restored Alembic revision with the repository head and verifies the 15 tenant-scoped tables, forced RLS policies, narrow authentication function, and database-role boundaries before traffic cutover. See `docs/RC24_RESTORE_VERIFICATION.md`. CI checks the verifier's shell syntax and static guardrails; it does not claim a live disaster-recovery drill.
+
+## RC25 project and task visual workspace
+
+The existing lightweight dashboard now provides project metrics, a five-lane task board with search/status filters, and task detail panels showing assignees, dependencies, multi-Agent work packages, SLA/risk metadata, artifacts and collaboration timeline. The project health score is explicitly scoped to registered active work packages. See `docs/RC25_PROJECT_WORKSPACE.md`. The dashboard uses existing authenticated APIs and does not operate local Agent runtimes.
