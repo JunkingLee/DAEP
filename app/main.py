@@ -944,8 +944,8 @@ def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stag
     if task_id and cfg.get('required_all_tasks_done'):
         row=c.execute('SELECT requirement_id FROM tasks WHERE id=?',(task_id,)).fetchone()
         if row:
-            pending=c.execute("SELECT id FROM tasks WHERE requirement_id=? AND status!='DONE'",(row['requirement_id'],)).fetchall()
-            if pending: raise HTTPException(409,detail={'message':f'Gate {gate_key} requires all requirement tasks to be DONE','gate_key':gate_key,'pending_task_ids':[x['id'] for x in pending]})
+            pending=c.execute("SELECT id FROM tasks WHERE requirement_id=? AND status!='DONE' AND id!=?",(row['requirement_id'],task_id)).fetchall()
+            if pending: raise HTTPException(409,detail={'message':f'Gate {gate_key} requires all other requirement tasks to be DONE before this task closes','gate_key':gate_key,'pending_task_ids':[x['id'] for x in pending]})
 def enforce_workflow_exit(c,pid,current_stage,actor_member_id):
     cfg=project_workflow_config(c,pid)
     stage=next((x for x in cfg.get('stages',[]) if x.get('key')==current_stage),None)
