@@ -165,3 +165,15 @@ Stage 4 completes the human-facing work-package loop without taking ownership of
 ## RC26 Stage 5 — Exception Coordination Workbench
 
 A project-scoped coordination center now aggregates exception work packages (overdue, dependency-blocked, stalled, or awaiting review), unclaimed tasks, pending reviews, and pending delegations. Human coordinators can refresh risk scans, mark stale packages for attention, open task timelines, and reassign a stalled package to a selected project member and that member's registered local Agent. Reassignment requires a reason and validates fresh Agent presence; it does not start or wake an Agent Runtime. See `docs/RC26_STAGE5_COORDINATION_WORKBENCH.md`.
+
+
+## RC26 Stage 6 — Project Governance Closure
+
+Project governance now has an explicit, auditable decision register and a project completion/responsibility snapshot:
+
+- Project owners/managers can record a decision with its rationale, accountable project member, optional due date, and up to 50 related task IDs. The decision is persisted as an immutable project-scoped audit event.
+- Project members can read the decision register with accountable-member and recorder identities; access remains project-scoped.
+- The governance snapshot reports task totals/status distribution, completed/open work, completion percentage and gate state, active work-package risk counts, and assigned-task responsibility by member.
+- Related tasks must belong to the same project, and the accountable person must be a project member. These records document human decisions; they do not auto-assign work or control local Agent Runtime processes.
+
+See `docs/RC26_STAGE6_PROJECT_GOVERNANCE.md`.
