@@ -686,7 +686,13 @@ def project_tasks(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT t.* FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=? ORDER BY t.created_at DESC',(pid,))]
+        rows=c.execute('SELECT t.* FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=? ORDER BY t.created_at DESC',(pid,)).fetchall()
+        result=[]
+        for raw in rows:
+            item=dict(raw)
+            item['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(item['id'],))]
+            result.append(item)
+        return result
 @app.post('/api/v1/requirements')
 def create_requirement(b:RequirementIn,authorization:str=Header(None)):
     a=actor(authorization); rid='req_'+uuid.uuid4().hex[:12]
