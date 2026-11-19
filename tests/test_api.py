@@ -750,3 +750,38 @@ def test_rc26_project_delegation_history_is_scoped_and_includes_member_names():
     assert client.get(f'/api/v1/projects/{pid}/delegations',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
     limited=client.get(f'/api/v1/projects/{pid}/delegations?limit=0',headers=ADMIN)
     assert limited.status_code==200 and limited.json()['count']==1
+
+
+
+def test_rc26_stage2_agent_matching_ranks_capabilities_and_presence_without_assignment():
+    pid,_,member_token,task_id=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Matching Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':second['id'],'role':'member'}).status_code==200
+    second_headers={'Authorization':'Bearer '+second['token']}
+    exact=client.post(f'/api/v1/projects/{pid}/agents/register',headers=headers,json={
+        'agent_name':'full-match','capabilities':['python','testing'],'protocols':['mcp'],'status':'AVAILABLE'})
+    partial=client.post(f'/api/v1/projects/{pid}/agents/register',headers=second_headers,json={
+        'agent_name':'partial-match','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'})
+    assert exact.status_code==200 and partial.status_code==200
+    result=client.get(f'/api/v1/projects/{pid}/agent-matches?required_capabilities=python%2Ctesting&protocol=mcp',headers=headers)
+    assert result.status_code==200
+    data=result.json()
+    assert data['eligible_count']==1 and data['recommendation_only'] is True and data['runtime_controlled'] is False
+    assert data['items'][0]['agent_name']=='full-match' and data['items'][0]['eligible'] is True
+    partial_item=next(x for x in data['items'] if x['agent_name']=='partial-match')
+    assert partial_item['matched_capabilities']==['python']
+    assert partial_item['missing_capabilities']==['testing'] and partial_item['eligible'] is False
+    before=client.get(f'/api/v1/tasks/{task_id}',headers=headers).json()
+    assert before['assignees']==[]
+
+
+def test_rc26_stage2_agent_matching_enforces_project_scope_and_input_bounds():
+    pid,_,member_token,_=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Matching outsider'}).json()
+    denied=client.get(f'/api/v1/projects/{pid}/agent-matches?required_capabilities=python',headers={'Authorization':'Bearer '+outsider['token']})
+    assert denied.status_code==403
+    too_many=','.join(f'cap{i}' for i in range(51))
+    invalid=client.get(f'/api/v1/projects/{pid}/agent-matches',params={'required_capabilities':too_many},headers=headers)
+    assert invalid.status_code==422
