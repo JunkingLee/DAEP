@@ -148,3 +148,15 @@ The project-scoped `GET /api/v1/projects/{project_id}/agent-matches` endpoint ra
 ## RC26 Stage 3 — Cross-member collaboration trace
 
 The task work timeline now includes parent-task governance events, child work-package events, delivery artifacts, message acknowledgement state, and delegation offer/decision milestones with requester and recipient identities. It also returns the dependency edges for the parent task and its work-package children, including prerequisite status and whether each edge is currently blocking. The task detail view presents delegation history, work packages, dependency edges, and a chronological collaboration trace. This is a read-only governance view: it does not invoke or wake any member-local Agent Runtime. See `docs/RC26_STAGE3_COLLABORATION_TRACE.md`.
+
+
+## RC26 Stage 4 — Human Coordination Workflow
+
+Stage 4 completes the human-facing work-package loop without taking ownership of any local Agent Runtime:
+
+- Task detail can create multiple Agent work packages with an explicit project member + registered local Agent, optional SLA, description, and project-scoped dependencies.
+- Capability-match results can be selected as a manual candidate and copied into the work-package creation form; matching never auto-assigns or wakes an Agent.
+- Reviewers (Owner/Manager/Reviewer) can approve or reject a work-package result. Rejection returns the child task to `IN_PROGRESS`; the assignee can resubmit it through the existing progress/result flow.
+- Approval requires at least one artifact and moves the work package task to `DONE`.
+- Existing dependency editing, health scanning, stalled-work governance, reassignment, durable messages, and collaboration timeline remain the source of truth.
+- DAEP still does not create, host, control, or wake local Agent Runtime processes.
