@@ -1470,3 +1470,47 @@ def test_rc26_stage17_message_delivery_overview_separates_dispatch_and_ack():
     denied=client.get('/api/v1/admin/message-delivery',
         headers={'Authorization':f"Bearer {outsider['token']}"})
     assert denied.status_code==403
+
+
+
+def test_rc26_stage18_project_message_delivery_sla_and_incident_review():
+    pid,_,_,task_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage18 SLA Member'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    mids=[]
+    for label in ('dead','ack-overdue','healthy'):
+        response=client.post('/api/v1/messages',headers=ADMIN,json={
+            'recipient_member_id':recipient['id'],'project_id':pid,'task_id':task_id,
+            'message_type':'COLLABORATION','title':label,'content':'not exposed'})
+        assert response.status_code==200,response.text
+        mids.append(response.json()['id'])
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        db.execute("UPDATE outbox SET status='DEAD',attempts=8,last_error='broker failed' WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(mids[0],))
+        db.execute("UPDATE outbox SET status='SENT',sent_at='2020-01-01T00:00:00+00:00' WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(mids[1],))
+        db.execute("UPDATE outbox SET status='SENT',sent_at=? WHERE event_type='message.created' AND json_extract(payload,'$.message_id')=?",(datetime.now(timezone.utc).isoformat(),mids[2]))
+        db.execute("UPDATE messages SET status='ACKNOWLEDGED',acked_at=? WHERE id=?",(datetime.now(timezone.utc).isoformat(),mids[2]))
+    health=client.get(f'/api/v1/projects/{pid}/message-delivery-health?dispatch_sla_seconds=10&ack_sla_seconds=10',headers=ADMIN)
+    assert health.status_code==200,health.text
+    report=health.json()
+    categories={x['message_id']:x['category'] for x in report['incidents']}
+    assert categories[mids[0]]=='DISPATCH_DEAD'
+    assert categories[mids[1]]=='ACK_OVERDUE'
+    assert mids[2] not in categories
+    assert report['ack_counts']['ACKNOWLEDGED']>=1
+    assert 'content' not in str(report)
+    member_header={'Authorization':f"Bearer {recipient['token']}"}
+    visible=client.get(f'/api/v1/projects/{pid}/message-delivery-health',headers=member_header)
+    assert visible.status_code==200
+    other=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Stage18 other project'}).json()
+    denied=client.get(f"/api/v1/projects/{other['id']}/message-delivery-health",headers=member_header)
+    assert denied.status_code==403
+    bad=client.post(f'/api/v1/projects/{pid}/message-delivery-incidents/{mids[0]}/review',
+        headers=member_header,json={'disposition':'RESOLVED','comment':'checked'})
+    assert bad.status_code==403
+    reviewed=client.post(f'/api/v1/projects/{pid}/message-delivery-incidents/{mids[0]}/review',
+        headers=ADMIN,json={'disposition':'INVESTIGATING','comment':'Investigating broker failure'})
+    assert reviewed.status_code==200,reviewed.text
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        events=db.execute("SELECT event_type,payload FROM events WHERE event_type='message.delivery.incident.reviewed'").fetchall()
+    assert any(json.loads(payload).get('message_id')==mids[0] for _,payload in events)

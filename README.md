@@ -269,3 +269,8 @@ A platform-admin-only recovery operation can restore a `message.created` outbox 
 ## RC26 Stage 17 — Message Delivery Operations Overview
 
 A platform-admin-only read-only endpoint `GET /api/v1/admin/message-delivery` provides bounded and filterable operational visibility across message delivery. It keeps Outbox dispatch (`PENDING`, `IN_FLIGHT`, `SENT`, `DEAD`, plus missing/duplicate) separate from recipient ACK (`PENDING`, `ACKNOWLEDGED`, `REJECTED`), exposes attempts/retry/lease/error metadata, and omits message titles and bodies. `SENT` explicitly means broker dispatch completion, not recipient acknowledgement. Automated tests cover state combinations, filters, authorization, and data minimization. See `docs/RC26_STAGE17_MESSAGE_DELIVERY_OVERVIEW.md`.
+
+
+## RC26 Stage 18 — Message Delivery SLA and Incident Governance
+
+Project members can inspect a project-scoped delivery health report that identifies missing/duplicate dispatch records, dead letters, dispatch SLA breaches, and broker-SENT messages whose recipient ACK exceeds a separate ACK SLA (measured from `sent_at`). Project managers/owners can append an incident review disposition and comment to the governance audit trail. The feature is read-only for delivery state and does not retry messages or control Agent Runtime. See `docs/RC26_STAGE18_MESSAGE_DELIVERY_SLA.md`.

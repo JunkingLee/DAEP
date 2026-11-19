@@ -1661,6 +1661,104 @@ def restore_missing_message_outbox(message_id:str,body:dict,authorization:str=He
               {'message_id':message_id,'outbox_id':outbox_id,'reason':reason},tenant_override=message['tenant_id'])
     return {'message_id':message_id,'outbox_id':outbox_id,'status':'PENDING','restored':True}
 
+@app.get('/api/v1/projects/{project_id}/message-delivery-health')
+def project_message_delivery_health(project_id:str,authorization:str=Header(None),
+                                    dispatch_sla_seconds:int=120,ack_sla_seconds:int=300,
+                                    limit:int=100):
+    """Project-scoped delivery SLA health; broker dispatch and recipient ACK clocks are separate."""
+    a=actor(authorization)
+    dispatch_sla_seconds=max(10,min(dispatch_sla_seconds,86400))
+    ack_sla_seconds=max(10,min(ack_sla_seconds,604800))
+    limit=max(1,min(limit,500))
+    stamp=datetime.now(timezone.utc)
+    incidents=[]
+    with conn() as c:
+        require_project_access(c,project_id,a)
+        messages=c.execute("""SELECT m.id,m.recipient_member_id,m.tenant_id,m.task_id,m.status,m.created_at,m.acked_at
+            FROM messages m JOIN tasks t ON t.id=m.task_id
+            JOIN requirements r ON r.id=t.requirement_id
+            WHERE r.project_id=? ORDER BY m.seq DESC LIMIT ?""",(project_id,limit)).fetchall()
+        outbox=c.execute("SELECT id,payload,status,attempts,available_at,lease_until,lease_owner,last_error,created_at,sent_at FROM outbox WHERE event_type='message.created'").fetchall()
+    by_message={}
+    malformed=0
+    for row in outbox:
+        try:
+            mid=json.loads(row['payload']).get('message_id')
+            if isinstance(mid,str) and mid: by_message.setdefault(mid,[]).append(row)
+            else: malformed+=1
+        except (TypeError,ValueError):
+            malformed+=1
+    dispatch_counts={k:0 for k in ('HEALTHY','MISSING','DUPLICATE','DEAD','DISPATCH_OVERDUE')}
+    ack_counts={k:0 for k in ('NOT_DUE','ACK_OVERDUE','ACKNOWLEDGED','REJECTED')}
+    def parse_stamp(value):
+        if not value: return None
+        try:
+            parsed=datetime.fromisoformat(value.replace('Z','+00:00'))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except (TypeError,ValueError):
+            return None
+    for message in messages:
+        records=by_message.get(message['id'],[])
+        dispatch='HEALTHY'; ack='NOT_DUE'; detail=None
+        if not records:
+            dispatch='MISSING'; detail='No message.created outbox record'
+        elif len(records)>1:
+            dispatch='DUPLICATE'; detail='Multiple message.created outbox records'
+        elif records[0]['status']=='DEAD':
+            dispatch='DEAD'; detail=records[0]['last_error'] or 'Outbox entered DEAD state'
+        elif records[0]['status'] in ('PENDING','IN_FLIGHT'):
+            created=parse_stamp(records[0]['created_at'])
+            if created and (stamp-created).total_seconds()>dispatch_sla_seconds:
+                dispatch='DISPATCH_OVERDUE'; detail='Broker dispatch exceeded SLA'
+        elif records[0]['status']!='SENT':
+            dispatch='HEALTHY'; detail='Unrecognized outbox state: '+str(records[0]['status'])
+        if dispatch in dispatch_counts: dispatch_counts[dispatch]+=1
+        if message['status'] in ('ACKNOWLEDGED','REJECTED'):
+            ack=message['status']
+        elif records and len(records)==1 and records[0]['status']=='SENT':
+            sent=parse_stamp(records[0]['sent_at'])
+            if sent and (stamp-sent).total_seconds()>ack_sla_seconds:
+                ack='ACK_OVERDUE'
+        if ack in ack_counts: ack_counts[ack]+=1
+        if dispatch!='HEALTHY':
+            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
+                'category':'DISPATCH_'+dispatch,'dispatch_status':dispatch,'ack_status':ack,
+                'age_seconds':max(0,int((stamp-(parse_stamp(message['created_at']) or stamp)).total_seconds())),
+                'detail':detail})
+        if ack=='ACK_OVERDUE':
+            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
+                'category':'ACK_OVERDUE','dispatch_status':dispatch,'ack_status':ack,
+                'age_seconds':max(0,int((stamp-(parse_stamp(records[0]['sent_at']) or stamp)).total_seconds())),
+                'detail':'Broker dispatch completed but recipient ACK exceeded SLA'})
+    return {'project_id':project_id,'generated_at':stamp.isoformat(),
+        'policy':{'dispatch_sla_seconds':dispatch_sla_seconds,'ack_sla_seconds':ack_sla_seconds},
+        'checked_messages':len(messages),'truncated':len(messages)==limit,
+        'dispatch_counts':dispatch_counts,'ack_counts':ack_counts,
+        'incident_count':len(incidents),'incidents':incidents[:limit],
+        'malformed_outbox_records_seen':malformed,
+        'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
+
+@app.post('/api/v1/projects/{project_id}/message-delivery-incidents/{message_id}/review')
+def review_message_delivery_incident(project_id:str,message_id:str,body:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    disposition=str(body.get('disposition','')).strip().upper()
+    comment=str(body.get('comment','')).strip()
+    if disposition not in ('INVESTIGATING','RESOLVED','ACCEPTED_RISK'):
+        raise HTTPException(422,'disposition must be INVESTIGATING, RESOLVED, or ACCEPTED_RISK')
+    if not comment or len(comment)>2000:
+        raise HTTPException(422,'A review comment (1-2000 characters) is required')
+    with conn() as c:
+        require_project_access(c,project_id,a,write=True)
+        row=c.execute("""SELECT m.task_id,m.tenant_id FROM messages m JOIN tasks t ON t.id=m.task_id
+            JOIN requirements r ON r.id=t.requirement_id WHERE m.id=? AND r.project_id=?""",
+            (message_id,project_id)).fetchone()
+        if not row: raise HTTPException(404,'Project message not found')
+        event(c,'message.delivery.incident.reviewed',a['id'],row['task_id'],
+              {'project_id':project_id,'message_id':message_id,'disposition':disposition,'comment':comment},
+              tenant_override=row['tenant_id'])
+    return {'project_id':project_id,'message_id':message_id,'disposition':disposition,'recorded':True}
+
+
 @app.get('/api/v1/admin/message-delivery')
 def message_delivery_overview(authorization:str=Header(None),limit:int=200,offset:int=0,
                               dispatch_status:str=None,ack_status:str=None):
