@@ -1122,3 +1122,67 @@ def test_rc26_stage10_concurrent_outbox_claims_never_lease_same_row_twice():
     assert target[0]['status']=='IN_FLIGHT'
     assert target[0]['lease_owner'] in ('stage10-worker-a','stage10-worker-b')
     assert len(target[0]['lease_token'])>=32
+
+
+def test_rc26_stage11_concurrent_work_result_idempotency_is_single_event_and_conflict_safe():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    pid,_,_,parent_id=setup_project_task()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage11 Result Agent'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'stage11-agent','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
+    created=client.post(f'/api/v1/tasks/{parent_id}/work-packages',headers=ADMIN,json={
+        'title':'Concurrent result','assignee_member_id':recipient['id'],'agent_name':'stage11-agent'})
+    assert created.status_code==200,created.text
+    child=created.json()['task_id']
+    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=rh,json={
+        'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/stage11',
+        'commit_sha':'stage11','metadata':{}}).status_code==200
+
+    payload={'outcome':'COMPLETE','summary':'Concurrent completion','idempotency_key':'stage11-result-once'}
+    gate=Barrier(2)
+    def submit():
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json=payload)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [pool.submit(submit),pool.submit(submit)]]
+    assert all(r.status_code==200 for r in responses),[r.text for r in responses]
+    bodies=[r.json() for r in responses]
+    assert bodies[0]['event_id']==bodies[1]['event_id']
+    events=client.get(f'/api/v1/tasks/{child}/events',headers=ADMIN)
+    assert events.status_code==200
+    matching=[e for e in events.json() if e['event_type']=='task.work_package.reported']
+    assert len(matching)==1
+
+    conflict=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
+        'outcome':'FAILED','summary':'Conflicting reuse','idempotency_key':'stage11-result-once'})
+    assert conflict.status_code==409
+
+
+def test_rc26_stage11_concurrent_task_approval_emits_one_governance_event():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _,_,owner_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+owner_token}
+    assert client.post(f'/api/v1/tasks/{task_id}/progress',headers=owner_headers,json={
+        'progress':100,'note':'Ready for concurrent review'}).status_code==200
+
+    gate=Barrier(2)
+    def approve():
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/tasks/{task_id}/review',headers=ADMIN,json={
+            'decision':'APPROVE','comment':'Stage11 concurrent approval'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[f.result(timeout=30) for f in [pool.submit(approve),pool.submit(approve)]]
+    statuses=sorted(r.status_code for r in responses)
+    assert statuses==[200,409],[r.text for r in responses]
+    assert all(r.json().get('status')=='DONE' for r in responses if r.status_code==200)
+    events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN)
+    assert events.status_code==200
+    matching=[e for e in events.json() if e['event_type']=='task.reviewed']
+    assert len(matching)==1
