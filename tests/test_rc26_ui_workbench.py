@@ -37,3 +37,14 @@ def test_rc26_manager_workbench_governance_controls():
     assert "项目收口状态" in html
     assert "/governance" in html
     assert "/decisions?limit=100" in html
+
+
+def test_rc26_workflow_gate_designer_ui():
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    assert 'id="workflowDesignerPanel"' in html
+    assert 'function loadWorkflowDesigner()' in html
+    assert 'function saveWorkflowDesigner()' in html
+    assert 'function saveProjectGate()' in html
+    assert "/workflow" in html
+    assert "/gates/" in html
+    assert "系统强制" in html
