@@ -1541,18 +1541,19 @@ def notifications(authorization:str=Header(None),after:int=0,limit:int=50):
         for row in rows: c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),row['id']))
         return {'items':rows,'next_cursor':rows[-1]['seq'] if rows else after,'has_more':len(rows)==limit}
 @app.post('/api/v1/messages/{mid}/ack')
-def ack(mid:str,b:AckIn,authorization:str=Header(None)):
+def ack(mid:str,b:AckIn,authorization: str=Header(None)):
     a=actor(authorization)
     if b.status not in ('ACKNOWLEDGED','REJECTED'): raise HTTPException(422,'Invalid acknowledgement status')
     with conn() as c:
-        existing=c.execute('SELECT status FROM messages WHERE id=? AND recipient_member_id=?',(mid,a['id'])).fetchone()
+        existing=c.execute('SELECT status,task_id,tenant_id FROM messages WHERE id=? AND recipient_member_id=?',(mid,a['id'])).fetchone()
         if not existing: raise HTTPException(404,'Message not found for current member')
         if existing['status'] in ('ACKNOWLEDGED','REJECTED'):
             if existing['status'] != b.status: raise HTTPException(409,'Message has already reached a different terminal status')
             return {'id':mid,'status':existing['status'],'idempotent':True}
-        cur=c.execute("UPDATE messages SET status=?,acked_at=? WHERE id=? AND recipient_member_id=? AND status='PENDING'",(b.status,now(),mid,a['id']))
+        stamp=now()
+        cur=c.execute("UPDATE messages SET status=?,acked_at=? WHERE id=? AND recipient_member_id=? AND status='PENDING'",(b.status,stamp,mid,a['id']))
         if cur.rowcount==0: raise HTTPException(409,'Message status changed; retry the request')
-        event(c,'message.acknowledged',a['id'],None,{'message_id':mid,'status':b.status})
+        event(c,'message.acknowledged',a['id'],existing['task_id'],{'message_id':mid,'status':b.status},tenant_override=existing['tenant_id'])
     return {'id':mid,'status':b.status,'idempotent':False}
 @app.get('/api/v1/tasks/{tid}/events')
 def task_events(tid:str,authorization:str=Header(None)):
