@@ -1262,7 +1262,7 @@ def test_rc26_stage13_concurrent_delegation_decisions_emit_one_terminal_event():
     assert events.status_code==200
     matching=[e for e in events.json()
               if e['event_type'] in ('task.delegation.accepted','task.delegation.rejected')
-              and e['payload'].get('delegation_id')==delegation_id]
+              and json.loads(e['payload']).get('delegation_id')==delegation_id]
     assert len(matching)==1
 
     with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
@@ -1310,5 +1310,5 @@ def test_rc26_stage13_concurrent_delegation_expiry_does_not_duplicate_audit():
 
     events=client.get(f'/api/v1/tasks/{task_id}/events',headers=ADMIN).json()
     matching=[e for e in events if e['event_type']=='task.delegation.expired'
-              and e['payload'].get('delegation_id')==delegation_id]
+              and json.loads(e['payload']).get('delegation_id')==delegation_id]
     assert len(matching)==1
