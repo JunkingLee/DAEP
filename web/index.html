@@ -19,7 +19,7 @@
 </div><div id="error" class="error"></div>
 </main>
 <script>
-let token='',me=null,projects=[],selectedProject=null,requirements=[],selectedProjectRole='',projectHealthItems=[],projectAgents=[],projectDelegations=[],projectAgentMatches=[];
+let token='',me=null,projects=[],selectedProject=null,requirements=[],selectedProjectRole='',projectHealthItems=[],projectAgents=[],projectDelegations=[],projectAgentMatches=[],selectedAgentCandidate=null;
 const $=id=>document.getElementById(id);const headers=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||r.statusText);return d}
 function showError(e){$('error').textContent=e.message||String(e)}
@@ -67,7 +67,38 @@ async function recommendProjectAgents(){
   const result=await api('/api/v1/projects/'+selectedProject+'/agent-matches?'+q.toString());
   projectAgentMatches=result.items||[];
   $('agentMatchSummary').textContent='候选 '+result.count+' 个 · 完全匹配且当前可用 '+result.eligible_count+' 个。此列表仅供人工决策，不会分配任务或唤醒 Agent。';
-  $('agentMatchResults').innerHTML=projectAgentMatches.map(a=>'<div class="lane"><div class="row"><strong>'+esc(a.agent_name)+' · '+esc(a.member_name)+'</strong><span class="tag">'+(a.eligible?'可用候选':esc(a.availability_reason))+'</span></div><p class="small muted">匹配 '+a.match_score+'% · 协议 '+(a.protocol_match?'兼容':'不兼容')+' · 最近心跳 '+esc(a.last_seen)+'</p><p class="small">已匹配：'+esc((a.matched_capabilities||[]).join(', ')||'无')+'</p><p class="small '+(a.missing_capabilities.length?'risk':'muted')+'">缺失：'+esc((a.missing_capabilities||[]).join(', ')||'无')+'</p></div>').join('')||'<p class="muted">没有已登记的 Agent</p>';
+  $('agentMatchResults').innerHTML=projectAgentMatches.map(a=>'<div class="lane"><div class="row"><strong>'+esc(a.agent_name)+' · '+esc(a.member_name)+'</strong><span class="tag">'+(a.eligible?'可用候选':esc(a.availability_reason))+'</span></div><p class="small muted">匹配 '+a.match_score+'% · 协议 '+(a.protocol_match?'兼容':'不兼容')+' · 最近心跳 '+esc(a.last_seen)+'</p><p class="small">已匹配：'+esc((a.matched_capabilities||[]).join(', ')||'无')+'</p><p class="small '+(a.missing_capabilities.length?'risk':'muted')+'">缺失：'+esc((a.missing_capabilities||[]).join(', ')||'无')+'</p>'+(a.eligible?'<button type="button" class="secondary" onclick="chooseAgentCandidate(\''+esc(a.member_id)+'\',\''+esc(a.agent_name)+'\')">用于当前工作包</button>':'')+'</div>').join('')||'<p class="muted">没有已登记的 Agent</p>';
+ }catch(e){showError(e)}
+}
+
+
+function chooseAgentCandidate(memberId,agentName){
+ selectedAgentCandidate={member_id:memberId,agent_name:agentName};
+ if($('wpMember')) $('wpMember').value=memberId;
+ if($('wpAgent')) $('wpAgent').value=agentName;
+ if($('wpCreateHint')) $('wpCreateHint').textContent='已选择能力匹配候选：'+memberId+' / '+agentName;
+}
+function syncWorkPackageAgentMember(){
+ const s=$('wpAgent'),o=s?.selectedOptions?.[0];
+ if(o?.dataset.member && $('wpMember')) $('wpMember').value=o.dataset.member;
+}
+async function createWorkPackageFromDetail(parentId){
+ try{
+  const memberId=$('wpMember').value,agentName=$('wpAgent').value;
+  const dependencies=[...$('wpDependencies').selectedOptions].map(o=>o.value);
+  const body={title:$('wpTitle').value.trim(),description:$('wpDescription').value,assignee_member_id:memberId,agent_name:agentName,dependencies};
+  const sla=Number($('wpSla').value||0); if(sla) body.sla_seconds=sla;
+  if(!body.title) throw Error('请输入工作包标题');
+  await api('/api/v1/tasks/'+parentId+'/work-packages',{method:'POST',body:JSON.stringify(body)});
+  await loadTasks(); await loadOverview(); await openTask(parentId);
+ }catch(e){showError(e)}
+}
+async function reviewWorkPackage(packageId,decision){
+ try{
+  const comment=decision==='REJECT'?'请按评审意见修改后重新提交':'确认工作包交付物符合要求';
+  await api('/api/v1/work-packages/'+packageId+'/review',{method:'POST',body:JSON.stringify({decision,comment})});
+  await loadTasks(); await loadOverview();
+  const parent=document.querySelector('[id="detailTitle"]')?.textContent;
  }catch(e){showError(e)}
 }
 
@@ -127,7 +158,14 @@ async function openTask(id){
   html+='<h3>跨成员委派 · '+(tl.delegations||[]).length+'</h3>';
   html+=(tl.delegations||[]).map(d=>'<div class="item"><strong>'+esc(d.requester_name)+' → '+esc(d.recipient_name)+' · '+esc(d.agent_name)+'</strong><div class="muted small">'+esc(d.status)+' · '+esc(d.reason||'无说明')+'</div><div class="muted small">发起：'+esc(d.created_at)+' · 响应：'+esc(d.responded_at||'尚未响应')+'</div></div>').join('')||'<p class="muted">暂无委派记录</p>';
   html+='<h3>跨成员工作包 · '+p.length+'</h3>';
-  html+=p.map(w=>'<div class="item"><strong>'+esc(w.title)+' <span class="tag">'+esc(w.task_status)+'</span></strong><div class="muted">'+esc(w.agent_name)+' · '+esc(w.assignee_member_id)+' · '+(w.progress||0)+'%</div><div class="muted small">风险：'+esc(w.risk_state)+' · SLA：'+esc(w.sla_due_at||'未设置')+' · 产物：'+(w.artifacts||[]).length+'</div></div>').join('')||'<p class="muted">暂无子工作包</p>';
+  const canManage=['owner','manager'].includes(selectedProjectRole)||me?.role==='admin';
+  if(canManage){
+   const memberOptions=[...$('assignees').options].map(o=>'<option value="'+o.value+'">'+esc(o.textContent)+'</option>').join('');
+   const agentOptions=projectAgents.map(a=>'<option value="'+esc(a.agent_name)+'" data-member="'+esc(a.member_id)+'">'+esc(a.agent_name)+' · '+esc(a.member_name)+' · '+esc((a.capabilities||[]).join(', ')||'无能力声明')+'</option>').join('');
+   const depOptions=projectTasks.filter(x=>x.id!==id).map(x=>'<option value="'+x.id+'">'+esc(x.title)+' · '+esc(x.status)+'</option>').join('');
+   html+='<div class="item"><strong>创建工作包</strong><div class="detailgrid"><div><label>标题</label><input id="wpTitle" placeholder="例如：实现 MCP Adapter"></div><div><label>成员</label><select id="wpMember">'+memberOptions+'</select></div><div><label>本地 Agent</label><select id="wpAgent" onchange="syncWorkPackageAgentMember()">'+agentOptions+'</select></div><div><label>SLA（秒，可选）</label><input id="wpSla" type="number" min="300" placeholder="例如 86400"></div></div><label>描述</label><textarea id="wpDescription" placeholder="工作包边界、交付要求"></textarea><label>前置依赖（可多选）</label><select id="wpDependencies" multiple size="4">'+depOptions+'</select><button type="button" onclick="createWorkPackageFromDetail(\''+id+'\')">创建并发送工作包通知</button><span id="wpCreateHint" class="muted small"></span></div>';
+  }
+  html+=p.map(w=>'<div class="item"><strong>'+esc(w.title)+' <span class="tag">'+esc(w.task_status)+'</span></strong><div class="muted">'+esc(w.agent_name)+' · '+esc(w.assignee_member_id)+' · '+(w.progress||0)+'%</div><div class="muted small">风险：'+esc(w.risk_state)+' · SLA：'+esc(w.sla_due_at||'未设置')+' · 产物：'+(w.artifacts||[]).length+'</div>'+((w.task_status==='REVIEW'&&canManage)?'<button type="button" onclick="reviewWorkPackage(\''+w.id+'\',\'APPROVE\')">审核通过</button><button type="button" class="secondary" onclick="reviewWorkPackage(\''+w.id+'\',\'REJECT\')">退回修改</button>':'')+'<button type="button" class="secondary" onclick="openTask(\''+w.child_task_id+'\')">打开工作包任务</button></div>').join('')||'<p class="muted">暂无子工作包</p>';
   html+='<h3>依赖边 · '+(tl.dependency_edges||[]).length+'</h3>';
   html+=(tl.dependency_edges||[]).map(e=>'<div class="item"><strong>'+esc(e.task_title)+' → '+esc(e.depends_on_title)+'</strong><div class="muted small">'+(e.blocked?'尚未解除阻塞：'+esc(e.depends_on_status):'依赖已完成')+'</div></div>').join('')||'<p class="muted">暂无子任务依赖</p>';
   html+='<h3>协作事件时间线 · '+tl.count+'</h3>';
