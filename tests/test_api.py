@@ -1583,3 +1583,37 @@ def test_rc26_ui_role_function_is_project_scoped():
     assert project['work_function'] == 'other'
     invalid = client.patch(f'/api/v1/projects/{pid}/members/{developer["id"]}/function', headers=ADMIN, json={'work_function':'ops'})
     assert invalid.status_code == 422
+
+
+def test_rc26_workflow_and_gate_configuration_is_project_scoped_and_system_gates_locked():
+    pid, _, _, _ = setup_project_task()
+    other = client.post('/api/v1/projects', headers=ADMIN, json={'name':'Workflow isolation'}).json()
+    default = client.get(f'/api/v1/projects/{pid}/workflow', headers=ADMIN)
+    assert default.status_code == 200
+    assert any(x['key'] == 'REVIEW' for x in default.json()['config']['stages'])
+    updated = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={'enabled':True,'stages':[
+        {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+        {'key':'TEST','name':'测试','order':2,'approval_role':'none','sla_seconds':3600},
+        {'key':'REVIEW','name':'审核','order':3,'approval_role':'reviewer','sla_seconds':7200},
+        {'key':'DONE','name':'完成','order':4,'approval_role':'none','sla_seconds':None}]})
+    assert updated.status_code == 200, updated.text
+    assert [x['key'] for x in updated.json()['config']['stages']] == ['OPEN','TEST','REVIEW','DONE']
+    invalid = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={'enabled':True,'stages':[
+        {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+        {'key':'DONE','name':'完成','order':2,'approval_role':'none','sla_seconds':None}]})
+    assert invalid.status_code == 422
+    locked = client.put(f'/api/v1/projects/{pid}/gates/REVIEW_REQUIRED', headers=ADMIN, json={'enabled':False})
+    assert locked.status_code == 409
+    custom = client.put(f'/api/v1/projects/{pid}/gates/SECURITY_REVIEW', headers=ADMIN, json={'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False})
+    assert custom.status_code == 200, custom.text
+    gates = client.get(f'/api/v1/projects/{pid}/gates', headers=ADMIN)
+    assert gates.status_code == 200
+    assert gates.json()['gates']['SECURITY_REVIEW']['config']['required_evidence'] is True
+    assert gates.json()['gates']['REVIEW_REQUIRED']['system_locked'] is True
+    other_gates = client.get(f"/api/v1/projects/{other['id']}/gates", headers=ADMIN)
+    assert other_gates.status_code == 200
+    assert 'SECURITY_REVIEW' not in other_gates.json()['gates']
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        types=[x[0] for x in db.execute("SELECT event_type FROM events WHERE event_type IN ('project.workflow.updated','project.gate.updated')").fetchall()]
+    assert 'project.workflow.updated' in types
+    assert 'project.gate.updated' in types
