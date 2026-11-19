@@ -919,25 +919,71 @@ def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(N
         require_task_access(c,parent_id,a)
         packages=c.execute('SELECT w.*,t.title,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? ORDER BY w.created_at',(parent_id,)).fetchall()
         items=[]
-        for e in c.execute('SELECT * FROM events WHERE task_id=? ORDER BY created_at',(parent_id,)).fetchall():
+        task_ids=[parent_id]+[w['child_task_id'] for w in packages]
+        for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
+            LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.task_id=? ORDER BY e.created_at""",(parent_id,)).fetchall():
             p=json.loads(e['payload'] or '{}')
             if p.get('work_package_id') or e['event_type'].startswith('task.work_package.'):
-                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],'task_id':parent_id,'event_id':e['id'],'payload':p})
+                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
+                    'task_id':parent_id,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
+                    'actor_name':e['actor_name'],'payload':p})
         for w in packages:
             cid=w['correlation_id'] or w['id']; child=w['child_task_id']
-            for e in c.execute('SELECT * FROM events WHERE task_id=? ORDER BY created_at',(child,)).fetchall():
+            for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
+                LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.task_id=? ORDER BY e.created_at""",(child,)).fetchall():
                 p=json.loads(e['payload'] or '{}')
-                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],'task_id':child,'event_id':e['id'],'correlation_id':cid,'payload':p})
+                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
+                    'task_id':child,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
+                    'actor_name':e['actor_name'],'correlation_id':cid,'payload':p})
             for msg in c.execute('SELECT id,message_type,title,status,created_at,acked_at,content FROM messages WHERE task_id=? ORDER BY created_at',(child,)).fetchall():
                 try: body=json.loads(msg['content'] or '{}')
                 except Exception: body={'content':msg['content']}
-                items.append({'occurred_at':msg['created_at'],'kind':'message','message_id':msg['id'],'message_type':msg['message_type'],'title':msg['title'],'status':msg['status'],'acked_at':msg['acked_at'],'task_id':child,'correlation_id':body.get('correlation_id',cid),'payload':body})
+                items.append({'occurred_at':msg['created_at'],'kind':'message','message_id':msg['id'],
+                    'message_type':msg['message_type'],'title':msg['title'],'status':msg['status'],
+                    'acked_at':msg['acked_at'],'task_id':child,'correlation_id':body.get('correlation_id',cid),'payload':body})
             for art in c.execute('SELECT id,artifact_type,uri,commit_sha,created_at FROM artifacts WHERE task_id=? ORDER BY created_at',(child,)).fetchall():
                 items.append({'occurred_at':art['created_at'],'kind':'artifact','task_id':child,'correlation_id':cid,'artifact':dict(art)})
-        items.sort(key=lambda x:(x['occurred_at'],x.get('event_id') or x.get('message_id') or x.get('artifact',{}).get('id','')))
+        marks=','.join('?' for _ in task_ids)
+        delegations=c.execute(f"""SELECT d.*,rq.name AS requester_name,rc.name AS recipient_name
+            FROM task_delegations d JOIN members rq ON rq.id=d.requester_member_id
+            JOIN members rc ON rc.id=d.recipient_member_id
+            WHERE d.task_id IN ({marks}) ORDER BY d.created_at""",tuple(task_ids)).fetchall()
+        for d in delegations:
+            row=dict(d)
+            items.append({'occurred_at':row['created_at'],'kind':'delegation','stage':'OFFERED',
+                'task_id':row['task_id'],'delegation_id':row['id'],'status':row['status'],
+                'requester_member_id':row['requester_member_id'],'requester_name':row['requester_name'],
+                'recipient_member_id':row['recipient_member_id'],'recipient_name':row['recipient_name'],
+                'agent_name':row['agent_name'],'reason':row['reason'],'expires_at':row['expires_at']})
+            if row['status']!='PENDING':
+                decision_at=row['responded_at'] or row['updated_at']
+                items.append({'occurred_at':decision_at,'kind':'delegation','stage':row['status'],
+                    'task_id':row['task_id'],'delegation_id':row['id'],'status':row['status'],
+                    'requester_member_id':row['requester_member_id'],'requester_name':row['requester_name'],
+                    'recipient_member_id':row['recipient_member_id'],'recipient_name':row['recipient_name'],
+                    'agent_name':row['agent_name'],'reason':row['reason'],'expires_at':row['expires_at']})
+        dependency_edges=[]
+        for tid in task_ids:
+            task=c.execute('SELECT title FROM tasks WHERE id=?',(tid,)).fetchone()
+            for dep in c.execute("""SELECT d.depends_on_task_id,t.title AS depends_on_title,t.status AS depends_on_status
+                FROM dependencies d JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=?""",(tid,)).fetchall():
+                dependency_edges.append({'task_id':tid,'task_title':task['title'] if task else tid,
+                    'depends_on_task_id':dep['depends_on_task_id'],'depends_on_title':dep['depends_on_title'],
+                    'depends_on_status':dep['depends_on_status'],'blocked':dep['depends_on_status']!='DONE'})
+        items.sort(key=lambda x:(x['occurred_at'],x.get('event_id') or x.get('message_id') or x.get('delegation_id') or x.get('artifact',{}).get('id','')))
         items=items[-limit:]
-        return {'parent_task_id':parent_id,'count':len(items),'items':items,'work_packages':[{'id':w['id'],'correlation_id':w['correlation_id'] or w['id'],'child_task_id':w['child_task_id'],'title':w['title'],'status':w['task_status'],'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],'sla_due_at':w['sla_due_at'],'risk_state':w['risk_state'],'needs_attention':bool(w['needs_attention'])} for w in packages]}
-
+        return {'parent_task_id':parent_id,'count':len(items),'items':items,
+            'dependency_edges':dependency_edges,
+            'delegations':[{'id':d['id'],'task_id':d['task_id'],'requester_member_id':d['requester_member_id'],
+                'requester_name':d['requester_name'],'recipient_member_id':d['recipient_member_id'],
+                'recipient_name':d['recipient_name'],'agent_name':d['agent_name'],'reason':d['reason'],
+                'status':d['status'],'created_at':d['created_at'],'responded_at':d['responded_at'],
+                'expires_at':d['expires_at']} for d in delegations],
+            'work_packages':[{'id':w['id'],'correlation_id':w['correlation_id'] or w['id'],
+                'child_task_id':w['child_task_id'],'title':w['title'],'status':w['task_status'],
+                'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],
+                'sla_due_at':w['sla_due_at'],'risk_state':w['risk_state'],'needs_attention':bool(w['needs_attention'])}
+                for w in packages]}
 @app.post('/api/v1/projects/{pid}/work-packages/scan-health')
 def scan_project_work_health(pid:str,authorization:str=Header(None)):
     a=actor(authorization); stamp=now()
