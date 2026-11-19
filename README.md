@@ -240,3 +240,14 @@ Stage 12 serializes work-package governance transitions that can be triggered by
 - A barrier-synchronized test verifies that concurrent work-package approvals produce exactly one successful transition and one `task.work_package.reviewed` event.
 
 This strengthens cross-member delivery consistency without creating, hosting, controlling, or waking member-local Agent Runtime processes. See `docs/RC26_STAGE12_COLLABORATION_CONSISTENCY.md`.
+
+## RC26 Stage 13 — Delegation Decision Consistency
+
+Stage 13 hardens concurrent task-delegation decisions at the collaboration boundary:
+
+- Delegation responses use SQLite `BEGIN IMMEDIATE` or PostgreSQL row-level `FOR UPDATE`.
+- The terminal `PENDING` transition is conditional; exactly one concurrent decision can win and emit the corresponding governance event.
+- Expiration observers emit `task.delegation.expired` only when they actually perform the state transition, preventing duplicate audit events.
+- Barrier-synchronized tests cover concurrent `ACCEPT`/`REJECT` decisions and concurrent expiration observation.
+
+This is deterministic concurrency coverage, not a production-scale load test or broker partition drill. See `docs/RC26_STAGE13_DELEGATION_CONSISTENCY.md`.
