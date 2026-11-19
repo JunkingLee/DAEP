@@ -39,3 +39,22 @@ def test_project_task_listing_includes_dependency_ids():
     endpoint = source.split("@app.get('/api/v1/projects/{pid}/tasks')", 1)[1].split("@app.post('/api/v1/requirements')", 1)[0]
     assert "item['dependencies']" in endpoint
     assert "depends_on_task_id" in endpoint
+
+
+def test_rc25_dependency_editor_is_manager_gated_and_calls_authorized_api():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "selectedProjectRole" in html
+    assert "function saveTaskDependencies(id)" in html
+    assert "method:'PUT'" in html
+    assert "只有项目 Owner 或 Manager 可以修改依赖关系" in html
+
+
+def test_dependency_update_endpoint_has_scope_and_cycle_guards():
+    source = (ROOT / "app" / "main.py").read_text()
+    start = source.index("@app.put('/api/v1/tasks/{tid}/dependencies')")
+    end = source.index("@app.get('/api/v1/me/tasks')", start)
+    endpoint = source[start:end]
+    assert "require_project_access(c,project_id,a,write=True)" in endpoint
+    assert "Dependencies must belong to the same project" in endpoint
+    assert "Dependency would create a cycle" in endpoint
+    assert "task.dependencies.updated" in endpoint
