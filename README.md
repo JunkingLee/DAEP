@@ -228,3 +228,15 @@ Stage 11 hardens concurrent state transitions at the API/database boundary:
 - Barrier-synchronized tests verify duplicate work-result convergence, conflicting idempotency-key reuse, and duplicate task-approval rejection.
 
 This is deterministic transaction/concurrency coverage, not a production-scale load test, broker partition drill, or proof of arbitrary MCP Host wake-up. DAEP continues to govern work and evidence without creating, hosting, controlling, or waking member-local Agent Runtime processes. See `docs/RC26_STAGE11_IDEMPOTENCY_STATE_TRANSITIONS.md`.
+
+
+## RC26 Stage 12 — Cross-member Collaboration Consistency and Recovery Governance
+
+Stage 12 serializes work-package governance transitions that can be triggered by multiple coordinators at the same time:
+
+- Work-package reassignment locks the package state before changing assignee/Agent, task assignment, notification/outbox delivery, and audit evidence.
+- Work-package review locks the package on PostgreSQL and uses a conditional `REVIEW` task transition, preventing duplicate approval/rejection governance events.
+- SQLite uses `BEGIN IMMEDIATE`; PostgreSQL uses row-level `FOR UPDATE` locking.
+- A barrier-synchronized test verifies that concurrent work-package approvals produce exactly one successful transition and one `task.work_package.reviewed` event.
+
+This strengthens cross-member delivery consistency without creating, hosting, controlling, or waking member-local Agent Runtime processes. See `docs/RC26_STAGE12_COLLABORATION_CONSISTENCY.md`.
