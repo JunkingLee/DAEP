@@ -1060,7 +1060,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     assert len(trace['work_packages'])==2
     # The message is attached to the parent task; inbox delivery and ACK are
     # asserted above. This timeline currently aggregates child-package messages.
-    assert {item['commit_sha'] for item in trace['artifacts']} >= {'api-e2e-commit','tests-e2e-commit'}
+    assert {item['artifact']['commit_sha'] for item in trace['items'] if item.get('kind')=='artifact'} >= {'api-e2e-commit','tests-e2e-commit'}
 
     parent_artifact=client.post(f'/api/v1/tasks/{parent_id}/artifacts',headers=owner_h,json={
         'artifact_type':'delivery_bundle','uri':'https://example.invalid/checkout-delivery',
