@@ -1088,3 +1088,37 @@ def test_rc26_stage7_acceptance_frontend_exposes_report_and_explicit_criteria_co
     assert 'decideRequirementAcceptance' in frontend
     assert 'verified_criteria' in frontend
     assert '请输入已逐项核验的标准编号' in frontend
+
+
+
+def test_rc26_stage10_concurrent_outbox_claims_never_lease_same_row_twice():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _,member_id,_,task_id=setup_project_task()
+    sent=client.post('/api/v1/messages',headers=ADMIN,json={
+        'recipient_member_id':member_id,'task_id':task_id,
+        'title':'Concurrent claim invariant','content':'Only one worker may own this outbox row'})
+    assert sent.status_code==200,sent.text
+
+    # Start two independent worker requests together. SQLite serializes claim
+    # transactions with BEGIN IMMEDIATE; PostgreSQL uses FOR UPDATE SKIP LOCKED.
+    gate=Barrier(2)
+    def claim(worker_id):
+        gate.wait(timeout=10)
+        response=client.post('/internal/v1/outbox/claim',headers=WORKER,json={
+            'worker_id':worker_id,'limit':100,'lease_seconds':60})
+        assert response.status_code==200,response.text
+        return response.json()['items']
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures=[pool.submit(claim,'stage10-worker-a'),pool.submit(claim,'stage10-worker-b')]
+        claimed=[item for future in futures for item in future.result(timeout=30)]
+
+    target=[item for item in claimed if item['payload'].get('message_id')==sent.json()['id']]
+    assert len(target)==1, f'target outbox row must have exactly one lease, got {len(target)}'
+    ids=[item['id'] for item in claimed]
+    assert len(ids)==len(set(ids)), 'competing workers must not receive duplicate outbox rows'
+    assert target[0]['status']=='IN_FLIGHT'
+    assert target[0]['lease_owner'] in ('stage10-worker-a','stage10-worker-b')
+    assert len(target[0]['lease_token'])>=32
