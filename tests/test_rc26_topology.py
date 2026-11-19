@@ -29,3 +29,13 @@ def test_rc26_project_delegation_board_uses_project_scoped_history():
     assert "'/api/v1/projects/'+selectedProject+'/delegations?limit=200'" in html
     assert "projectDelegations=d.items||[]" in html
     assert "PENDING" in html and "ACCEPTED" in html and "REJECTED" in html
+
+
+def test_rc26_stage2_agent_matching_panel_is_explainable_and_manual():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert 'id="agentRequiredCapabilities"' in html
+    assert 'id="agentRequiredProtocol"' in html
+    assert "async function recommendProjectAgents()" in html
+    assert "/agent-matches?" in html
+    assert "匹配" in html and "缺失：" in html
+    assert "不会分配任务或唤醒 Agent" in html
