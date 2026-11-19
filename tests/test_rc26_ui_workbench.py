@@ -16,3 +16,12 @@ def test_rc26_tester_workbench_links_requirement_acceptance_report():
     assert "showRequirementAcceptance" in html
     assert "查看验收报告" in html
     assert "查看验收报告" in html
+
+
+def test_rc26_tester_workbench_exposes_test_execution_controls():
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    assert "function testerSetProgress" in html
+    assert "function testerBlockTask" in html
+    assert "function testerAddArtifact" in html
+    assert "测试操作" in html
+    assert "添加验收证据" in html
