@@ -691,3 +691,39 @@ def test_rc20_role_change_requires_independent_owner_approval_and_audit_export()
     assert csv.status_code==200 and 'text/csv' in csv.headers['content-type'] and 'project.role_change.approved' in csv.text
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Audit outsider'}).json()
     assert client.get(f'/api/v1/projects/{pid}/audit',headers={'Authorization':'Bearer '+outsider['token']}).status_code==403
+
+
+def test_rc25_dependency_updates_enforce_project_scope_and_prevent_cycles():
+    pid, member_id, member_token, first_id = setup_project_task()
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    req_id=db.execute('SELECT requirement_id FROM tasks WHERE id=?',(first_id,)).fetchone()[0]
+    db.close()
+    second=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req_id,'title':'Second task','dependencies':[first_id]})
+    assert second.status_code==200
+    second_id=second.json()['id']
+    listed=client.get(f'/api/v1/projects/{pid}/tasks',headers=ADMIN)
+    assert listed.status_code==200
+    assert next(x for x in listed.json() if x['id']==second_id)['dependencies']==[first_id]
+
+    cycle=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=ADMIN,json={'dependencies':[second_id]})
+    assert cycle.status_code==409 and 'cycle' in cycle.json()['detail'].lower()
+    self_link=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=ADMIN,json={'dependencies':[first_id]})
+    assert self_link.status_code==400
+    duplicate=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=ADMIN,json={'dependencies':[second_id,second_id]})
+    assert duplicate.status_code==400
+
+    outsider_role={'Authorization':'Bearer '+member_token}
+    forbidden=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=outsider_role,json={'dependencies':[]})
+    assert forbidden.status_code==403
+
+    other_project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Separate project'}).json()
+    other_req=client.post('/api/v1/requirements',headers=ADMIN,json={'project_id':other_project['id'],'title':'Separate requirement'}).json()
+    other_task=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':other_req['id'],'title':'Other project task'}).json()
+    cross=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=ADMIN,json={'dependencies':[other_task['id']]})
+    assert cross.status_code==400
+
+    saved=client.put(f'/api/v1/tasks/{first_id}/dependencies',headers=ADMIN,json={'dependencies':[]})
+    assert saved.status_code==200 and saved.json()['dependencies']==[]
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        event_row=db.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND event_type='task.dependencies.updated'",(first_id,)).fetchone()
+    assert event_row[0]==1
