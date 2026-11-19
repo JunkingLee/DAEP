@@ -679,7 +679,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id":"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
