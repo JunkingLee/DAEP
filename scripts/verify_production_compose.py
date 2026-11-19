@@ -11,7 +11,7 @@ def fail(message: str) -> None:
 
 compose_file = sys.argv[1] if len(sys.argv) > 1 else "compose.production.yaml"
 result = subprocess.run(
-    ["docker", "compose", "-f", compose_file, "config", "--format", "json"],
+    ["docker", "compose", "--profile", "broker", "-f", compose_file, "config", "--format", "json"],
     check=True,
     capture_output=True,
     text=True,
