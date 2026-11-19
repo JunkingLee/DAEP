@@ -156,6 +156,11 @@ def conn():
             return _PGConn(PRIVILEGED_DATABASE_URL)
         return _PGConn(DATABASE_URL)
     os.makedirs(os.path.dirname(DB) or '.',exist_ok=True); c=sqlite3.connect(DB,timeout=5); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA busy_timeout=5000'); return c
+def begin_serialized_write(c):
+    """Serialize SQLite write-side state transitions; PostgreSQL uses row locks at call sites."""
+    if not DATABASE_URL.startswith(('postgresql://','postgres://')):
+        c.execute('BEGIN IMMEDIATE')
+
 def bootstrap():
     service_reset=_service_ctx.set(True)
     try:
@@ -342,11 +347,16 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    try:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,json.dumps(payload),now(),key,tenant))
-    except sqlite3.IntegrityError:
-        if key: return c.execute('SELECT id FROM events WHERE idempotency_key=?',(key,)).fetchone()['id']
-        raise
+    payload_json=json.dumps(payload)
+    if key:
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
+        if prior:
+            if prior['payload'] != payload_json:
+                raise HTTPException(409,'Idempotency key was used with a different payload')
+            return prior['id']
+    else:
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -924,8 +934,11 @@ def blocked(tid:str,b:dict,authorization:str=Header(None)):
 def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
+        begin_serialized_write(c)
         require_task_access(c,tid,a,assigned_only=True)
-        package=c.execute('SELECT id,parent_task_id,status,correlation_id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone()
+        package_sql='SELECT id,parent_task_id,status,correlation_id FROM task_work_packages WHERE child_task_id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
+        package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
         key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
@@ -957,13 +970,16 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
+        begin_serialized_write(c)
         pid=task_project(c,tid)
         if not pid: raise HTTPException(404,'Task not found')
         if is_admin(a): pass
         else:
             row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
             if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        task=c.execute('SELECT status FROM tasks WHERE id=?',(tid,)).fetchone()
+        task_sql='SELECT status FROM tasks WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
+        task=c.execute(task_sql,(tid,)).fetchone()
         if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
         if decision=='APPROVE':
             packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
@@ -972,7 +988,8 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
             if pending or missing:
                 raise HTTPException(409,detail={'message':'Parent task cannot be approved until every active work package is approved and has at least one artifact','pending_work_packages':pending,'missing_artifacts':missing})
         status='DONE' if decision=='APPROVE' else 'IN_PROGRESS'
-        c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,100 if decision=='APPROVE' else 90,now(),tid))
+        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,now(),tid,'REVIEW'))
+        if updated.rowcount != 1: raise HTTPException(409,'Task is no longer awaiting review')
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
 
