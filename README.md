@@ -279,3 +279,8 @@ Project members can inspect a project-scoped delivery health report that identif
 ## RC26 Stage 19 — Project Governance Message Reliability Integration
 
 The project governance snapshot now includes message dispatch/ACK health, current SLA incidents, latest review disposition, open/resolved/accepted-risk counts, and daily message/terminal-ACK volume. It reuses project-scoped access and does not alter delivery or Agent Runtime state. Historical review decisions remain in the audit stream; the daily trend reports message volume rather than inventing historical incident counts. See `docs/RC26_STAGE19_GOVERNANCE_MESSAGE_RELIABILITY.md`.
+
+
+## RC26 Stage 20 — Project Workflow and Gate Runtime Enforcement
+
+Project workflow configuration is now enforced at runtime rather than remaining a design-only setting. Managers can define ordered stages, optional stage-exit approval roles, and custom gates with an explicit target stage. Task transitions are validated against the project workflow; leaving a stage with an approval role requires that project role, custom gates can require delivery evidence or all requirement tasks to be complete, and the system REVIEW/DELIVERY gates remain immutable. A dedicated task workflow-transition API provides idempotent controlled state changes, while existing task review and work-package review paths reuse the same enforcement. Runtime coverage is included in tests/test_api.py.
