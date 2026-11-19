@@ -61,3 +61,17 @@ def test_rc26_stage4_task_detail_has_manual_work_package_creation_review_and_can
     assert "reviewWorkPackage" in html
     assert "/api/v1/work-packages/'+packageId+'/review" in html
     assert "退回修改" in html
+
+
+def test_rc26_stage5_coordination_workbench_exposes_exception_triage_and_reassignment():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert 'id="coordinationPanel"' in html
+    assert "/api/v1/projects/'+selectedProject+'/coordination" in html
+    assert "renderCoordinationCenter" in html
+    assert "未认领任务" in html
+    assert "待审核任务" in html
+    assert "待响应委派" in html
+    assert "scanStalledWorkPackages" in html
+    assert "/work-packages/scan-stalled" in html
+    assert "reassignCoordinationPackage" in html
+    assert "/api/v1/work-packages/'+packageId+'/reassign" in html
