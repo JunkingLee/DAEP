@@ -1000,7 +1000,10 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
-        package=c.execute('SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?',(package_id,)).fetchone()
+        begin_serialized_write(c)
+        package_sql='SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
+        package=c.execute(package_sql,(package_id,)).fetchone()
         if not package: raise HTTPException(404,'Work package not found')
         pid=package['project_id']
         if is_admin(a): pass
@@ -1016,7 +1019,8 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             status='DONE'; progress=100
         else:
             status='IN_PROGRESS'; progress=90
-        c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,stamp,package['child_task_id']))
+        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
+        if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
         eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
         return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
 
@@ -1274,7 +1278,10 @@ def reassign_work_package(package_id:str,b:WorkPackageReassignIn,authorization:s
     a=actor(authorization); agent_name=b.agent_name.strip()
     if not agent_name: raise HTTPException(422,'agent_name must not be blank')
     with conn() as c:
-        package=c.execute('SELECT * FROM task_work_packages WHERE id=?',(package_id,)).fetchone()
+        begin_serialized_write(c)
+        package_sql='SELECT * FROM task_work_packages WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
+        package=c.execute(package_sql,(package_id,)).fetchone()
         if not package: raise HTTPException(404,'Work package not found')
         require_project_access(c,package['project_id'],a,write=True)
         if package['status']!='ACTIVE': raise HTTPException(409,'Only active work packages can be reassigned')
