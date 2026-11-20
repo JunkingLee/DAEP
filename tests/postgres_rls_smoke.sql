@@ -84,6 +84,20 @@ BEGIN
     RAISE EXCEPTION 'RLS privilege escalation: caller-forged auth_lookup exposed foreign members';
   END IF;
   PERFORM set_config('app.auth_lookup', 'false', true);
+  PERFORM set_config('app.member_id', 'rls-member-a', true);
+  PERFORM set_config('app.lifecycle_action', '', true);
+
+  UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
+  BEGIN
+    UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
+    RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project accepted normal write';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  PERFORM set_config('app.lifecycle_action', 'REOPEN', true);
+  UPDATE projects SET status='ACTIVE' WHERE id='rls-probe-a';
+  PERFORM set_config('app.lifecycle_action', '', true);
 
   IF (SELECT count(*) FROM requirements WHERE id IN ('rls-req-a','rls-req-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS requirement isolation failed';
