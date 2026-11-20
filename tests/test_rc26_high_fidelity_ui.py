@@ -183,3 +183,29 @@ def test_rc27_system_admin_has_user_management_surface():
     assert 'function openCreateUser()' in HTML
     assert 'function loadUsers()' in HTML
     assert "const visible={governance:manager||reviewer,exceptions:manager,packages:Boolean(me),users:admin}" in HTML
+
+
+def test_rc27_system_admin_has_user_lifecycle_workbench():
+    for marker in [
+        "function openUserDetail(",
+        "function toggleUserStatus(",
+        "function openResetPassword(",
+        "function resetUserPassword(",
+        "/api/v1/members/'+encodeURIComponent(id)",
+        "/disable",
+        "/enable",
+        "/reset-password",
+        "项目归属",
+        "旧的 API/MCP Token 会被撤销",
+    ]:
+        assert marker in HTML, f"missing user lifecycle UI contract: {marker}"
+
+def test_rc27_project_member_management_uses_platform_account_directory():
+    for marker in [
+        "async function loadMemberCandidates()",
+        "/api/v1/projects/'+selectedProject+'/member-candidates",
+        "选择平台账号",
+        "m.username||m.id",
+        "只有项目管理员可以管理项目成员",
+    ]:
+        assert marker in HTML, f"missing project member directory UI contract: {marker}"
