@@ -16,24 +16,24 @@
 </style>
 </head>
 <body>
-<div id="auth" class="auth">
+<div id="auth" class="auth" data-testid="login-screen">
   <div class="login">
     <div class="login-hero"><div class="brandmark">A</div><h1>DAEP</h1><p>Distributed Agentic Engineering Platform</p><p class="slogan">Build Together · Deliver Better</p><p class="small">AI-Powered · Role-Based · Governance-Driven</p></div>
-    <div class="login-form"><h2>欢迎进入 DAEP</h2><p class="muted">连接你的成员身份，进入项目工作台。</p><div class="field"><label>成员 Token</label><input id="token" type="password" placeholder="Bearer token（不含前缀）"></div><button class="btn" onclick="connect()">登录并进入平台</button><div id="authmsg" class="msg"></div></div>
+    <div class="login-form"><h2>欢迎进入 DAEP</h2><p class="muted">连接你的成员身份，进入项目工作台。</p><div class="field"><label>成员 Token</label><input id="token" type="password" data-testid="token-input" placeholder="Bearer token（不含前缀）"></div><button class="btn" data-testid="login-submit" onclick="connect()">登录并进入平台</button><div id="authmsg" class="msg"></div></div>
   </div>
 </div>
 
-<div id="app" class="app hidden">
+<div id="app" class="app hidden" data-testid="app-shell">
 <header class="topbar">
   <div class="top-brand"><span class="brandmark">A</span><span>DAEP</span></div>
-  <div class="project-switch"><span>项目</span><select id="projectSelect" onchange="selectProject(this.value)"></select></div>
+  <div class="project-switch"><span>项目</span><select id="projectSelect" data-testid="project-switcher" onchange="selectProject(this.value)"></select></div>
   <div class="top-search"><input id="globalSearch" placeholder="搜索需求、任务、成员或 Work Package" oninput="globalSearch()"></div>
   <div class="top-user"><span id="topRole" class="badge">未连接</span><div id="topAvatar" class="avatar">U</div><span id="topName">用户</span></div>
 </header>
 <div class="shell">
 <aside class="sidebar">
   <div class="side-caption">DAEP WORKSPACE</div>
-  <nav class="nav" id="nav">
+  <nav class="nav" id="nav" data-testid="primary-nav">
     <button data-page="portfolio" onclick="go('portfolio')">▦ 我的项目</button>
     <button data-page="overview" onclick="go('overview')">◈ 项目总览</button>
     <button data-page="workbench" onclick="go('workbench')">▤ 我的工作台</button>
@@ -45,16 +45,16 @@
     <button data-page="packages" onclick="go('packages')">◫ Work Package</button>
     <button data-page="inbox" onclick="go('inbox')">✉ 消息收件箱</button>
   </nav>
-  <div class="rolebox" id="roleBox"><strong>未选择角色</strong><span>连接后显示当前项目角色</span></div>
+  <div class="rolebox" id="roleBox" data-testid="current-role"><strong>未选择角色</strong><span>连接后显示当前项目角色</span></div>
 </aside>
 
 <main class="content">
-<section id="portfolio" class="page">
+<section id="portfolio" class="page" data-testid="page-portfolio">
   <div class="page-head"><div><h1>我的项目</h1><p class="muted">项目组合 · 多项目上下文切换 · 项目级角色隔离</p></div><div class="actions"><button id="newProjectBtn" class="btn" onclick="openCreateProject()">＋ 新建项目</button></div></div>
   <div class="grid" id="portfolioGrid"></div>
 </section>
 
-<section id="overview" class="page">
+<section id="overview" class="page" data-testid="page-overview">
   <div class="hero">
     <div class="hero-line"><div class="project-title"><div class="project-icon">A</div><div><h1 id="projectNameTitle">Apollo 项目</h1><p class="muted" id="projectMeta">下一代分布式开发平台 · 进行中</p></div></div><span id="healthBadge" class="badge green">健康度 92</span></div>
   </div>
@@ -67,47 +67,47 @@
   </div>
 </section>
 
-<section id="workbench" class="page">
+<section id="workbench" class="page" data-testid="page-workbench">
   <div class="page-head"><div><h1 id="workbenchTitle">开发工作台</h1><p id="workbenchHint" class="muted">聚合当前角色最重要的工作。</p></div><div class="role-tabs" id="roleTabs"></div></div>
   <div class="metrics" id="workbenchMetrics"></div>
   <div class="workbench" id="workbenchCards"></div>
 </section>
 
-<section id="work" class="page">
+<section id="work" class="page" data-testid="page-work">
   <div class="page-head"><div><h1>工作</h1><p class="muted">需求、任务、流程状态和交付证据</p></div><div class="actions" id="workCreateActions"><button class="btn secondary" onclick="openCreateRequirement()">＋ 新增需求</button><button class="btn secondary" onclick="openCreateTask()">＋ 新建任务</button></div></div>
   <div class="card" id="taskBoardCard"><div class="card-head"><h3>任务看板</h3><div class="actions"><input id="taskFilter" placeholder="搜索任务" oninput="renderTaskBoard()" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px"><button class="btn secondary" onclick="loadTasks()">刷新</button></div></div><div class="kanban" id="taskBoard"></div></div>
   <div class="grid" style="margin-top:14px"><div class="card span-6"><div class="card-head"><h3>需求列表</h3><span class="muted small" id="reqCount"></span></div><div id="requirementsList" class="list"></div></div><div class="card span-6"><div class="card-head"><h3>最近任务</h3></div><div id="recentTasks" class="list"></div></div></div>
 </section>
 
-<section id="collaboration" class="page"><div id="agentTopologyPanel">
+<section id="collaboration" class="page" data-testid="page-collaboration"><div id="agentTopologyPanel">
   <div class="page-head"><div><h1>Agent 协作</h1><p class="muted">成员本地 Agent · MCP 协议 · 能力匹配 · 协作时间线</p></div><button class="btn secondary" onclick="loadCollaboration()">刷新状态</button></div>
   <div class="card"><div class="agent-map"><div id="agentLeft" class="agent"></div><div class="hub">DAEP</div><div id="agentRight" class="agent"></div></div></div>
   <div class="grid" style="margin-top:14px"><div class="card span-8"><div class="card-head"><h3>Agent 在线拓扑</h3><span class="muted small">最近心跳 ≤ 120s</span></div><div id="agentTopology"><div id="agentList" class="list"></div></div></div><div class="card span-4"><h3>能力匹配</h3><div class="field"><label>所需能力</label><input id="agentRequiredCapabilities" placeholder="python, testing, architecture"><input id="agentRequiredProtocol" value="mcp" placeholder="协议"></div><button class="btn" onclick="recommendProjectAgents()">查找候选 Agent</button><div id="agentMatches" style="margin-top:12px"></div><div class="notice" style="margin-top:10px">能力匹配仅提供解释性候选，不会分配任务或唤醒 Agent。DAEP 不托管或唤醒 Agent Runtime。</div></div></div>
 <div class="card" id="delegationPanel" style="margin-top:14px"><div class="card-head"><h3>跨成员委派</h3><span class="muted small">PENDING · ACCEPTED · REJECTED</span></div><div id="delegationBoard" class="list"></div></div></div></section>
 
-<section id="governance" class="page">
+<section id="governance" class="page" data-testid="page-governance">
   <div class="page-head"><div><h1>项目治理</h1><p class="muted">Workflow · Gate · 决策 · 验收 · 审计</p></div><button class="btn secondary" onclick="loadGovernance()">刷新治理</button></div>
   <div class="card"><div class="card-head"><h3>Workflow</h3><span class="badge">项目可配置</span></div><div id="flow" class="flow"></div></div>
   <div class="grid" style="margin-top:14px"><div class="card span-6"><h3>Gate 配置</h3><div id="gates" class="list"></div></div><div class="card span-6"><h3>项目决策</h3><div id="decisions" class="list"></div></div></div>
   <div class="card" style="margin-top:14px"><div class="card-head"><h3>需求验收</h3><span class="muted small">所有任务 DONE + 交付证据 + 验收标准</span></div><div id="acceptanceList" class="list"></div></div>
 </section>
 
-<section id="dependencies" class="page">
+<section id="dependencies" class="page" data-testid="page-dependencies">
   <div class="page-head"><div><h1>依赖关系</h1><p class="muted">任务前置依赖 · 阻塞传播 · 交付顺序</p></div><button class="btn secondary" onclick="renderDependencies()">刷新</button></div>
   <div class="card"><div id="dependencyView" class="empty">暂无依赖数据</div></div>
 </section>
 
-<section id="exceptions" class="page"><div id="coordinationPanel">
+<section id="exceptions" class="page" data-testid="page-exceptions"><div id="coordinationPanel">
   <div class="page-head"><div><h1>异常协调中心</h1><p class="muted">逾期 · 依赖阻塞 · 停滞 · 待审核 · 未认领 · 待响应委派</p></div><button class="btn secondary" onclick="loadExceptions()">扫描异常</button></div>
   <div class="metrics" id="exceptionMetrics"></div><div id="exceptionList" class="list"></div>
 </div></section>
 
-<section id="packages" class="page">
+<section id="packages" class="page" data-testid="page-packages">
   <div class="page-head"><div><h1>Work Package</h1><p class="muted">多 Agent 工作包 · SLA · 风险 · 交付产物</p></div><button class="btn secondary" onclick="loadPackages()">刷新健康度</button></div>
   <div class="grid" id="workPackageBoard"></div>
 </section>
 
-<section id="inbox" class="page">
+<section id="inbox" class="page" data-testid="page-inbox">
   <div class="page-head"><div><h1>消息收件箱</h1><p class="muted">跨成员协作消息 · ACK · 可靠投递</p></div><button class="btn secondary" onclick="loadInbox()">刷新</button></div>
   <div class="card"><div id="inboxList" class="list"></div></div>
 </section>
@@ -116,7 +116,7 @@
 </div>
 
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle">详情</h2><button class="btn ghost" type="button" onclick="closeModal()">关闭</button></div><div id="modalBody"></div></div></div>
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite" data-testid="toast"></div>
 
 <script>
 let token='',me=null,projects=[],selectedProject='',selectedProjectRole='',selectedWorkFunction='',requirements=[],projectTasks=[],projectMembers=[],workflowConfig=null,gateConfig={},currentPage='overview',projectHealthItems=[],projectAgents=[],projectDelegations=[];
