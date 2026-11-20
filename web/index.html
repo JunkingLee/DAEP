@@ -243,7 +243,7 @@ main.content{container-type:inline-size}
   .muted{color:#475467}
 }
 
-</style>
+.top-user{position:relative}.profile-trigger{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:10px;cursor:pointer}.profile-trigger:hover{background:#f2f4f7}.profile-trigger:focus-visible{outline:3px solid rgba(49,94,251,.22);outline-offset:2px}.profile-caret{color:var(--muted);font-size:14px}.profile-menu{position:absolute;right:0;top:48px;width:190px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:var(--shadow-lg);z-index:80}.profile-menu button{width:100%;text-align:left;background:transparent;padding:10px 11px;border-radius:8px;color:var(--ink)}.profile-menu button:hover{background:#f5f7fb}.profile-menu .danger-item{color:#b42318}.profile-menu.hidden{display:none!important}</style>
 </head>
 <body>
 <div id="auth" class="auth" data-testid="login-screen">
@@ -258,7 +258,7 @@ main.content{container-type:inline-size}
   <div class="top-brand"><span class="brandmark">A</span><span>DAEP</span></div>
   <div class="project-switch"><span>项目</span><select id="projectSelect" data-testid="project-switcher" onchange="selectProject(this.value)"></select></div>
   <div class="top-search"><input id="globalSearch" aria-label="全局搜索" placeholder="搜索需求、任务、成员或 Work Package" oninput="globalSearch()"></div>
-  <div class="top-user"><span id="topRole" class="badge">未连接</span><div id="topAvatar" class="avatar">U</div><span id="topName">用户</span></div>
+  <div class="top-user"><span id="topRole" class="badge">未连接</span><div class="profile-trigger" onclick="openProfileMenu()" tabindex="0" role="button" aria-label="打开用户菜单" onkeydown="if(event.key==='Enter'||event.key===' ')openProfileMenu()"><div id="topAvatar" class="avatar">U</div><span id="topName">用户</span><span class="profile-caret">⌄</span></div><div id="profileMenu" class="profile-menu hidden" role="menu"><button onclick="openProfile()">个人资料</button><button onclick="openChangePassword()">修改密码</button><button class="danger-item" onclick="logout()">退出登录</button></div></div>
 </header>
 <div class="shell">
 <aside class="sidebar">
@@ -443,6 +443,14 @@ async function loadInbox(){try{const d=await api('/api/v1/me/notifications');con
 async function ack(id){await api('/api/v1/messages/'+id+'/ack',{method:'POST',body:JSON.stringify({status:'ACKNOWLEDGED'})});await loadInbox();toast('消息已确认')}
 function globalSearch(){const q=($('globalSearch').value||'').toLowerCase();if(!q){renderTaskBoard();return}go('work');$('taskFilter').value=q;renderTaskBoard()}
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Enter'&&e.target?.matches?.('.graphnode'))e.target.click()});
+function openProfileMenu(){if(!me)return;$('profileMenu')?.classList.toggle('hidden')}
+function closeProfileMenu(){$('profileMenu')?.classList.add('hidden')}
+function logout(){token='';me=null;projects=[];users=[];selectedProject='';selectedProjectRole='';selectedWorkFunction='';closeProfileMenu();$('app').classList.add('hidden');$('auth').classList.remove('hidden');$('password').value='';$('authmsg').textContent='';$('username').focus();toast('已退出登录')}
+function openProfile(){closeProfileMenu();openModal('个人资料','<div class="field"><label>姓名</label><input id="profileName" value="'+esc(me?.name||'')+'"></div><div class="field"><label>登录账号</label><input id="profileUsername" value="'+esc(me?.username||'')+'"></div><div class="notice">修改登录账号后，下次登录请使用新的账号。项目角色和工作职能仍由项目成员身份决定。</div><div class="actions" style="margin-top:14px"><button class="btn" onclick="saveProfile()">保存修改</button></div>')}
+async function saveProfile(){const name=$('profileName')?.value.trim()||'',username=$('profileUsername')?.value.trim().toLowerCase()||'';if(!name||!username){toast('姓名和登录账号不能为空');return}try{const d=await api('/api/v1/me',{method:'PATCH',body:JSON.stringify({name,username})});me={...me,...d};$('topName').textContent=me.name;$('topAvatar').textContent=(me.name||'U').slice(0,1).toUpperCase();renderRoleShell();closeModal();toast('个人资料已更新')}catch(e){showError(e)}}
+function openChangePassword(){closeProfileMenu();openModal('修改密码','<div class="field"><label>当前密码</label><input id="currentPassword" type="password" autocomplete="current-password"></div><div class="field"><label>新密码</label><input id="newPassword" type="password" autocomplete="new-password" placeholder="至少 12 位"></div><div class="field"><label>确认新密码</label><input id="confirmPassword" type="password" autocomplete="new-password"></div><div class="notice">修改密码后当前登录凭证会刷新，当前会话保持登录。</div><div class="actions" style="margin-top:14px"><button class="btn" onclick="savePassword()">确认修改</button></div>')}
+async function savePassword(){const current=$('currentPassword')?.value||'',next=$('newPassword')?.value||'',confirm=$('confirmPassword')?.value||'';if(next.length<12){toast('新密码至少 12 位');return}if(next!==confirm){toast('两次输入的新密码不一致');return}try{await api('/api/v1/auth/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next})});closeModal();toast('密码修改成功')}catch(e){showError(e)}}
+document.addEventListener('click',e=>{if(!e.target.closest('.top-user'))closeProfileMenu()})
 </script>
 </body>
 </html>
