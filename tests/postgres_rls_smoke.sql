@@ -88,12 +88,11 @@ BEGIN
   PERFORM set_config('app.lifecycle_action', '', true);
 
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
-  BEGIN
-    UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
+  UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
     RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project accepted normal write';
-  EXCEPTION WHEN insufficient_privilege THEN
-    NULL;
-  END;
+  END IF;
 
   PERFORM set_config('app.lifecycle_action', 'REOPEN', true);
   UPDATE projects SET status='ACTIVE' WHERE id='rls-probe-a';
