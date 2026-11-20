@@ -195,7 +195,7 @@ def init():
         CREATE TABLE IF NOT EXISTS members(id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT UNIQUE,role TEXT NOT NULL DEFAULT 'developer',token TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',token_status TEXT NOT NULL DEFAULT 'ACTIVE',token_created_at TEXT,token_revoked_at TEXT,token_expires_at TEXT,oidc_subject TEXT,oidc_email TEXT,password_hash TEXT,password_status TEXT NOT NULL DEFAULT 'ACTIVE');
         CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS oidc_states(state_hash TEXT PRIMARY KEY,nonce TEXT NOT NULL,code_verifier TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default');
+        CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',status TEXT NOT NULL DEFAULT 'ACTIVE');
         CREATE TABLE IF NOT EXISTS project_members(project_id TEXT NOT NULL,member_id TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'member',work_function TEXT NOT NULL DEFAULT 'other',joined_at TEXT NOT NULL,PRIMARY KEY(project_id,member_id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(member_id) REFERENCES members(id));
         CREATE TABLE IF NOT EXISTS requirements(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT,acceptance_criteria TEXT,status TEXT NOT NULL DEFAULT 'OPEN',created_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,requirement_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT,status TEXT NOT NULL DEFAULT 'READY',progress INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(requirement_id) REFERENCES requirements(id));
@@ -232,6 +232,8 @@ def init():
         work_package_cols={r['name'] for r in c.execute('PRAGMA table_info(task_work_packages)').fetchall()}
         for col,ddl in [('needs_attention','INTEGER NOT NULL DEFAULT 0'),('stalled_at','TEXT'),('stall_reason','TEXT'),('correlation_id','TEXT'),('sla_due_at','TEXT'),('risk_state',"TEXT NOT NULL DEFAULT 'ON_TRACK'")]:
             if col not in work_package_cols: c.execute(f'ALTER TABLE task_work_packages ADD COLUMN {col} {ddl}')
+        project_cols={r['name'] for r in c.execute('PRAGMA table_info(projects)').fetchall()}
+        if 'status' not in project_cols: c.execute("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
         project_member_cols={r['name'] for r in c.execute('PRAGMA table_info(project_members)').fetchall()}
         if 'work_function' not in project_member_cols: c.execute("ALTER TABLE project_members ADD COLUMN work_function TEXT NOT NULL DEFAULT 'other'")
         c.execute("UPDATE project_members SET work_function='other' WHERE work_function IS NULL OR work_function=''")
@@ -371,9 +373,10 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
     if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -386,6 +389,8 @@ def require_task_access(c, tid, a, assigned_only=False):
     if not pid: raise HTTPException(404,'Task not found')
     if is_admin(a): return
     if assigned_only:
+        project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
+        if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -743,6 +748,52 @@ def projects(authorization:str=Header(None)):
         if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
         else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
         return [dict(x) for x in rows]
+@app.post('/api/v1/projects/{pid}/close')
+def close_project(pid:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization); reason=str(b.get('reason','')).strip()
+    if len(reason)<10: raise HTTPException(422,'Closure reason must be at least 10 characters')
+    with conn() as c:
+        begin_serialized_write(c)
+        require_project_access(c,pid,a,write=True)
+        project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
+        if project['status']=='CLOSED': raise HTTPException(409,'Project is already closed')
+        blockers=[]
+        reqs=c.execute("SELECT id,title,status FROM requirements WHERE project_id=? AND status!='ACCEPTED'",(pid,)).fetchall()
+        if reqs: blockers.append({'type':'requirements','ids':[x['id'] for x in reqs]})
+        tasks=c.execute("""SELECT t.id,t.status FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+                           WHERE r.project_id=? AND t.status!='DONE'""",(pid,)).fetchall()
+        if tasks: blockers.append({'type':'tasks','ids':[x['id'] for x in tasks]})
+        packages=c.execute("SELECT id FROM task_work_packages WHERE project_id=? AND status='ACTIVE'",(pid,)).fetchall()
+        if packages: blockers.append({'type':'active_work_packages','ids':[x['id'] for x in packages]})
+        attention=c.execute("SELECT id FROM task_work_packages WHERE project_id=? AND status='ACTIVE' AND needs_attention=1",(pid,)).fetchall()
+        if attention: blockers.append({'type':'exceptions','ids':[x['id'] for x in attention]})
+        delegations=c.execute("SELECT id FROM task_delegations WHERE project_id=? AND status='PENDING'",(pid,)).fetchall()
+        if delegations: blockers.append({'type':'pending_delegations','ids':[x['id'] for x in delegations]})
+        approvals=c.execute("SELECT id FROM project_approvals WHERE project_id=? AND status='PENDING'",(pid,)).fetchall()
+        if approvals: blockers.append({'type':'pending_approvals','ids':[x['id'] for x in approvals]})
+        if blockers: raise HTTPException(409,detail={'message':'Project cannot be closed until all delivery obligations are complete','blockers':blockers})
+        stamp=now()
+        c.execute("UPDATE projects SET status='CLOSED' WHERE id=? AND status='ACTIVE'",(pid,))
+        event(c,'project.closed',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id'])
+    return {'project_id':pid,'status':'CLOSED','closed_at':stamp,'reason':reason}
+
+@app.post('/api/v1/projects/{pid}/reopen')
+def reopen_project(pid:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization); reason=str(b.get('reason','')).strip()
+    if len(reason)<10: raise HTTPException(422,'Reopen reason must be at least 10 characters')
+    with conn() as c:
+        begin_serialized_write(c)
+        require_project_access(c,pid,a)
+        role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+        if not is_admin(a) and (not role or role['role']!='owner'):
+            raise HTTPException(403,'Project owner approval required')
+        project=c.execute('SELECT status,tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        if project['status']!='CLOSED': raise HTTPException(409,'Project is not closed')
+        stamp=now()
+        c.execute("UPDATE projects SET status='ACTIVE' WHERE id=? AND status='CLOSED'",(pid,))
+        event(c,'project.reopened',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=project['tenant_id'])
+    return {'project_id':pid,'status':'ACTIVE','reopened_at':stamp,'reason':reason}
+
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -9998,10 +10049,3 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
         require_project_access(c,req['project_id'],a)
-        criteria=json.loads(req['acceptance_criteria'] or '[]')
-        tasks=c.execute("SELECT t.id,t.title,t.status,t.progress,t.updated_at,(SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count FROM tasks t WHERE t.requirement_id=? ORDER BY t.created_at,t.id",(rid,)).fetchall()
-        items=[dict(x) for x in tasks]
-        missing=[x['id'] for x in items if x['status']!='DONE' or x['artifact_count']<1]
-        return {'requirement_id':rid,'project_id':req['project_id'],'title':req['title'],'status':req['status'],
-            'acceptance_criteria':[{'index':i,'text':v} for i,v in enumerate(criteria)],'task_count':len(items),
-            'tasks':items,'all_tasks_done':bool(items) and all(x['status']=='DONE' for x in items),
