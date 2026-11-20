@@ -189,7 +189,9 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def unbind_agent(agent_id: str, project_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            _agent_owner(c,agent_id,a)
+            project=c.execute("SELECT tenant_id,status FROM projects WHERE id=?",(project_id,)).fetchone()
+            if not project: raise HTTPException(404,'Project not found')
+            if project['tenant_id'] != a.get('tenant_id','tenant-default'): raise HTTPException(403,'Tenant isolation violation')
             if not is_admin(a):
                 prow=c.execute("SELECT role FROM project_members WHERE project_id=? AND member_id=?",(project_id,a['id'])).fetchone()
                 if not prow or prow['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
