@@ -18,7 +18,7 @@ def test_rc26_role_workbench_uses_final_high_fidelity_shell():
 def test_rc26_tester_workbench_links_requirement_acceptance_report():
     assert "showRequirementAcceptance" in HTML
     assert "查看验收报告" in HTML
-    assert "/api/v1/requirements/"+id+"/acceptance" in HTML
+    assert "/api/v1/requirements/'+id+'/acceptance" in HTML
 
 
 def test_rc26_tester_workbench_exposes_test_execution_controls():
