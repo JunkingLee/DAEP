@@ -4,7 +4,7 @@ This optional workstation-side process reads the member durable inbox and forwar
 
 Environment:
 - `DAEP_API_URL`
-- `DAEP_AGENT_TOKEN` (member API token, never the platform or worker token)
+- `DAEP_AGENT_TOKEN` (preferred first-class Agent MCP token; never the platform or worker token)
 - `DAEP_AGENT_COMMAND` (argv-style command; no shell execution)
 - `DAEP_AGENT_CURSOR_FILE`
 - `DAEP_AGENT_POLL_SECONDS`
@@ -22,4 +22,4 @@ python -m daep_agent_bridge.bridge
 The message JSON is supplied on stdin to the configured command.
 
 
-For multi-member projects, each member may register their own local Agent through the DAEP MCP adapter. Discovery is project-scoped and capability-filtered. The bridge remains a message transport helper; it does not manage Agent runtimes or coordinate execution internally.
+For multi-member projects, each member may create and bind a first-class Agent through DAEP, then connect the local MCP adapter with its one-time-issued Agent Token. Legacy member-token operation remains supported for compatibility. Discovery is project-scoped and capability-filtered. The bridge remains a message transport helper; it does not manage Agent runtimes or coordinate execution internally.
