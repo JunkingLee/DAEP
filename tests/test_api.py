@@ -2135,3 +2135,107 @@ def test_rc34_closure_rejects_pending_delegations_and_exceptions():
     blockers=closed.json()['detail']['blockers']
     assert any(x['type']=='active_work_packages' for x in blockers)
     assert any(x['type']=='exceptions' for x in blockers)
+
+
+def test_rc35_closed_project_freezes_platform_admin_task_mutations_and_allows_read():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC35 Admin Freeze'}).json()
+    pid=project['id']
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid,'title':'RC35 lifecycle requirement'}).json()
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req['id'],'title':'RC35 lifecycle task'}).json()
+    tid=task['id']
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    db.execute("UPDATE requirements SET status='ACCEPTED' WHERE id=?",(req['id'],))
+    db.commit(); db.close()
+    closed=client.post(f'/api/v1/projects/{pid}/close',headers=ADMIN,json={
+        'reason':'RC35 test closes a fully delivered project'})
+    assert closed.status_code==200,closed.text
+    assert client.get(f'/api/v1/tasks/{tid}',headers=ADMIN).status_code==200
+    assert client.post(f'/api/v1/tasks/{tid}/progress',headers=ADMIN,json={
+        'progress':100}).status_code==409
+    assert client.post(f'/api/v1/tasks/{tid}/blocked',headers=ADMIN,json={
+        'reason':'must remain frozen'}).status_code==409
+    assert client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'post-close','uri':'https://example.invalid/closed'}).status_code==409
+
+
+def test_rc35_closed_project_blocks_cross_tenant_admin_and_owner_writes():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC35 Tenant Freeze'}).json()
+    pid=project['id']
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE projects SET tenant_id='tenant-other' WHERE id=?",(pid,))
+    db.commit(); db.close()
+    assert client.get(f'/api/v1/projects/{pid}/members',headers=ADMIN).status_code==403
+
+
+def test_rc35_closure_blocks_real_pending_delegation():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC35 Pending Delegation'}).json()
+    pid=project['id']
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC35 Delegation Manager'}).json()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC35 Delegation Recipient'}).json()
+    mh={'Authorization':'Bearer '+manager['token']}
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+    req=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid,'title':'RC35 delegation requirement'}).json()
+    task=client.post('/api/v1/tasks',headers=mh,json={
+        'requirement_id':req['id'],'title':'RC35 delegation task',
+        'assignee_member_ids':[manager['id']]}).json()
+    tid=task['id']
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    db.execute("UPDATE requirements SET status='ACCEPTED' WHERE id=?",(req['id'],))
+    db.commit(); db.close()
+    delegation=client.post(f'/api/v1/tasks/{tid}/delegations',headers=mh,json={
+        'recipient_member_id':recipient['id'],'agent_name':'rc35-agent',
+        'reason':'Pending closure blocker'}).json()
+    assert delegation['status']=='PENDING'
+    blocked=client.post(f'/api/v1/projects/{pid}/close',headers=mh,json={
+        'reason':'Pending delegation must block project closure'})
+    assert blocked.status_code==409,blocked.text
+    assert any(x['type']=='pending_delegations' for x in blocked.json()['detail']['blockers'])
+    assert client.post(f'/api/v1/delegations/{delegation["id"]}/respond',headers=rh,json={
+        'decision':'REJECT','reason':'Close test cleanup'}).status_code==200
+
+
+def test_rc35_lifecycle_migration_contract_is_additive_and_postgres_scoped():
+    migration=open('alembic/versions/0025_rc35_project_lifecycle.py',encoding='utf-8').read()
+    assert 'revision = "0025_rc35_project_lifecycle"' in migration
+    assert 'down_revision = "0024_rc26_workflow_gates"' in migration
+    assert "ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE'" in migration
+    assert "CHECK (status IN ('ACTIVE','CLOSED'))" in migration
+    assert "CREATE POLICY daep_projects_select" in migration
+    assert "CREATE POLICY daep_projects_update" in migration
+    assert "current_setting('app.lifecycle_action', true)='REOPEN'" in migration
+    assert "if bind.dialect.name != 'postgresql':" in migration
+
+
+def test_rc35_sqlite_upgrade_adds_active_project_status():
+    import app.main as module
+    old_db=module.DB
+    target=os.path.join(tempfile.gettempdir(),'rc35-legacy-projects.db')
+    try: os.remove(target)
+    except FileNotFoundError: pass
+    db=sqlite3.connect(target)
+    db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL)")
+    db.execute("CREATE TABLE members(id TEXT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,token TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default')")
+    db.execute("CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT,created_at TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT 'tenant-default')")
+    db.execute("INSERT INTO tenants VALUES('tenant-default','Default','ACTIVE','2026-01-01')")
+    db.execute("INSERT INTO members VALUES('m1','Legacy','admin','legacy-token','2026-01-01','tenant-default')")
+    db.execute("INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES('legacy-p','Legacy','','m1','2026-01-01','tenant-default')")
+    db.commit(); db.close()
+    module.DB=target
+    try:
+        module.init()
+        db=sqlite3.connect(target)
+        cols={r[1] for r in db.execute('PRAGMA table_info(projects)').fetchall()}
+        status=db.execute("SELECT status FROM projects WHERE id='legacy-p'").fetchone()[0]
+        db.close()
+        assert 'status' in cols and status=='ACTIVE'
+    finally:
+        module.DB=old_db
