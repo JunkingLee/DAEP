@@ -26,7 +26,21 @@ def upgrade():
       FOR INSERT WITH CHECK (daep_tenant_visible(tenant_id) AND status='ACTIVE')""")
     op.execute("""CREATE POLICY daep_projects_update ON projects
       FOR UPDATE
-      USING (daep_tenant_visible(tenant_id) AND status='ACTIVE')
+      USING (
+        daep_tenant_visible(tenant_id)
+        AND (
+          status='ACTIVE'
+          OR (
+            status='CLOSED'
+            AND EXISTS (
+              SELECT 1 FROM project_members pm
+              WHERE pm.project_id=projects.id
+                AND pm.member_id=current_setting('app.member_id', true)
+                AND pm.role='owner'
+            )
+          )
+        )
+      )
       WITH CHECK (daep_tenant_visible(tenant_id) AND status IN ('ACTIVE','CLOSED'))""")
 
 def downgrade():
