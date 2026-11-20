@@ -129,3 +129,18 @@ def test_rc26_high_fidelity_shell_has_no_accidental_escaped_script_tokens():
     assert "\\nfunction" not in HTML
     assert "\\\\'" not in HTML
     assert not re.search(r"<script[^>]*>[^<]*\\n", HTML)
+
+
+def test_rc26_high_fidelity_shell_has_role_navigation_contracts_and_accessibility_hooks():
+    assert "const visible={governance:manager||reviewer,exceptions:manager,packages:Boolean(me)}" in HTML
+    assert "function setRoleTab(role)" in HTML
+    assert 'aria-current="' in HTML
+    assert 'role="dialog" aria-modal="true"' in HTML
+    assert "first?.focus()" in HTML
+    assert "async function saveProjectGate()" in HTML
+    assert "async function saveProjectGate(){return}" not in HTML
+
+
+def test_rc26_high_fidelity_shell_has_no_duplicate_function_definitions_for_critical_actions():
+    for name in ["saveProjectGate", "renderRoleWorkbench", "loadCollaboration", "loadGovernance"]:
+        assert len(re.findall(r"function\s+" + re.escape(name) + r"\s*\(", HTML)) == 1, name
