@@ -606,7 +606,7 @@ def create_member(body:dict,authorization:str=Header(None)):
     password=str(body.get('password',''))
     role=body.get('role','member')
     if not name or not username: raise HTTPException(422,'Name and username are required')
-    if role not in ('member','manager','reviewer'): raise HTTPException(422,'Invalid platform role')
+    if role!='member': raise HTTPException(422,'New platform users must use the member account role; project roles are assigned per project')
     if len(password)<12 or len(password)>256: raise HTTPException(422,'Password must be 12-256 characters')
     mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
     tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
