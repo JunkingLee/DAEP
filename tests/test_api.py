@@ -1737,7 +1737,13 @@ def test_rc26_workflow_runtime_custom_gate_is_project_scoped_and_idempotent():
 
 
 def test_rc26_multi_project_role_isolation_and_function_navigation_contract():
-    project_a, manager_id, manager_token, task_a = setup_project_task()
+    project_a, _, _, _ = setup_project_task()
+    manager = client.post('/api/v1/members', headers=ADMIN, json={'name':'Multi Project Manager'})
+    assert manager.status_code == 200
+    manager_id, manager_token = manager.json()['id'], manager.json()['token']
+    assert client.post(f'/api/v1/projects/{project_a}/members', headers=ADMIN, json={
+        'member_id': manager_id, 'role':'manager', 'work_function':'other'
+    }).status_code == 200
     project_b = client.post('/api/v1/projects', headers=ADMIN, json={'name':'Role Isolation B'}).json()['id']
     project_c = client.post('/api/v1/projects', headers=ADMIN, json={'name':'Role Isolation C'}).json()['id']
     assert client.post(f'/api/v1/projects/{project_b}/members', headers=ADMIN, json={

@@ -940,8 +940,11 @@ def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stag
     if cfg.get('required_roles'):
         platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
         if not platform or platform['role']!='admin':
-            role=project_role(c,pid,{'id':actor_member_id})
-            if role not in cfg['required_roles']: raise HTTPException(403,f'Gate {gate_key} requires one of: {", ".join(cfg["required_roles"])}')
+            member_role=project_role(c,pid,{'id':actor_member_id})
+            function_row=c.execute('SELECT work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,actor_member_id)).fetchone()
+            work_function=function_row['work_function'] if function_row else None
+            if member_role not in cfg['required_roles'] and work_function not in cfg['required_roles']:
+                raise HTTPException(403,f'Gate {gate_key} requires one of: {", ".join(cfg["required_roles"])}')
     if task_id and cfg.get('required_evidence'):
         if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(task_id,)).fetchone() is None:
             raise HTTPException(409,detail={'message':f'Gate {gate_key} requires delivery evidence','gate_key':gate_key,'task_id':task_id})
