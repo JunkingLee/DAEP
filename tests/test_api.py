@@ -211,7 +211,8 @@ def test_tenant_project_isolation():
     t=client.post('/api/v1/tenants',headers=ADMIN,json={'name':'Tenant C'}).json()['id']
     m=client.post('/api/v1/members',headers=ADMIN,json={'name':'Tenant C Dev','tenant_id':t}).json()
     ch={'Authorization':f"Bearer {m['token']}"}
-    p=client.post('/api/v1/projects',headers=ch,json={'name':'Tenant C Project'}); assert p.status_code==200
+    p=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Tenant C Project','tenant_id':t}); assert p.status_code==200
+    add=client.post(f"/api/v1/projects/{p.json()['id']}/members",headers=ADMIN,json={'member_id':m['id'],'role':'manager'}); assert add.status_code==200
     # The global admin can see all tenants; a tenant member cannot see default-tenant resources.
     default_project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Default Tenant Project'}).json()
     listed=client.get('/api/v1/projects',headers=ch).json()
@@ -279,7 +280,8 @@ def test_outbox_and_audit_events_use_resource_tenant():
     tenant = client.post('/api/v1/tenants',headers=ADMIN,json={'name':'Outbox Tenant'}).json()['id']
     member = client.post('/api/v1/members',headers=ADMIN,json={'name':'Tenant User','tenant_id':tenant}).json()
     mh={'Authorization':f"Bearer {member['token']}"}
-    project=client.post('/api/v1/projects',headers=mh,json={'name':'Tenant Project'}).json()
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Tenant Project','tenant_id':tenant}).json()
+    assert client.post(f"/api/v1/projects/{project['id']}/members",headers=ADMIN,json={'member_id':member['id'],'role':'manager'}).status_code==200
     req=client.post('/api/v1/requirements',headers=mh,json={'project_id':project['id'],'title':'Tenant Req'}).json()
     task=client.post('/api/v1/tasks',headers=mh,json={'requirement_id':req['id'],'title':'Tenant Task','assignee_member_ids':[member['id']]}).json()
     sent=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':member['id'],'project_id':project['id'],'task_id':task['id'],'title':'Tenant dispatch','content':'hello'})
@@ -313,7 +315,8 @@ def test_legacy_cross_tenant_links_are_not_exposed_by_reads():
     member_b=client.post('/api/v1/members',headers=ADMIN,json={'name':'B outsider','tenant_id':tenant_b}).json()
     ha={'Authorization':f"Bearer {member_a['token']}"}
     hb={'Authorization':f"Bearer {member_b['token']}"}
-    project=client.post('/api/v1/projects',headers=ha,json={'name':'A project'}).json()
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'A project','tenant_id':tenant_a}).json()
+    assert client.post(f"/api/v1/projects/{project['id']}/members",headers=ADMIN,json={'member_id':member_a['id'],'role':'owner'}).status_code==200
     req=client.post('/api/v1/requirements',headers=ha,json={'project_id':project['id'],'title':'A requirement'}).json()
     task=client.post('/api/v1/tasks',headers=ha,json={'requirement_id':req['id'],'title':'A task'}).json()
     # Simulate a bad legacy row written before strict tenant checks existed.
