@@ -1974,7 +1974,7 @@ def test_rc33_release_decision_is_manager_scoped_and_project_bound():
     assert created.status_code==200,created.text
 
     # Acceptance remains independently governed by the acceptance contract.
-    report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=rh)
+    report=client.get(f"/api/v1/requirements/{req.json()['id']}/acceptance-report",headers=rh)
     assert report.status_code==200,report.text
     assert report.json()['ready_for_acceptance'] is False
 
