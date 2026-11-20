@@ -681,7 +681,9 @@ def accept_agent_task_assignment(assignment_id:str, authorization:str=Header(Non
     with conn() as c:
         row=c.execute('SELECT * FROM agent_task_assignments WHERE id=? AND agent_id=?',(assignment_id,a['agent_id'])).fetchone()
         if not row: raise HTTPException(404,'Assignment not found for this Agent')
-        require_project_access(c,row['project_id'],a,write=True)
+        require_project_access(c,row['project_id'],a)
+        project=c.execute('SELECT status FROM projects WHERE id=?',(row['project_id'],)).fetchone()
+        if not project or project['status']=='CLOSED': raise HTTPException(409,'Project is closed or unavailable')
         if row['status']=='ACCEPTED': return {'id':assignment_id,'status':'ACCEPTED'}
         if row['status']!='ASSIGNED': raise HTTPException(409,'Assignment is no longer available')
         binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(row['project_id'],a['agent_id'])).fetchone()
