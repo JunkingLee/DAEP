@@ -43,7 +43,7 @@ def accept_agent_task(assignment_id: str) -> dict:
 
 @mcp.tool()
 def get_my_tasks() -> list:
-    """List engineering tasks available to the authenticated identity; Agent access is limited by project binding and assignment policy."""
+    """List tasks assigned to the authenticated member. Agent tokens should call list_my_agent_tasks."""
     return call('GET','/api/v1/me/tasks')
 
 @mcp.tool()
@@ -60,6 +60,11 @@ def list_agent_task_assignments(task_id: str) -> dict:
 def assign_task_to_agent(task_id: str, agent_id: str) -> dict:
     """Assign a task to an active Agent bound to the same project; requires project manager authority."""
     return call('POST',f'/api/v1/tasks/{task_id}/agent-assignments',{'agent_id':agent_id})
+
+@mcp.tool()
+def revoke_agent_task_assignment(assignment_id: str, reason: str = '') -> dict:
+    """Revoke an active Agent task assignment; requires project manager authority."""
+    return call('POST',f'/api/v1/agent-assignments/{assignment_id}/revoke',{'reason':reason})
 
 @mcp.tool()
 def get_task_detail(task_id: str) -> dict:
