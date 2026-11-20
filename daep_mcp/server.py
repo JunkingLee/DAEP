@@ -28,12 +28,12 @@ def call(method, path, payload=None):
 
 @mcp.tool()
 def get_my_tasks() -> list:
-    """List engineering tasks assigned to the authenticated member."""
+    """List engineering tasks available to the authenticated identity; Agent access is limited by project binding and assignment policy."""
     return call('GET','/api/v1/me/tasks')
 
 @mcp.tool()
 def get_task_detail(task_id: str) -> dict:
-    """Read a task, its assignees, dependencies and current status."""
+    """Read a task only when the authenticated identity has access to its project."""
     return call('GET',f'/api/v1/tasks/{task_id}')
 
 @mcp.tool()
