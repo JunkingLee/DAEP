@@ -1,14 +1,15 @@
-"""DAEP MCP stdio adapter. The member controls and launches this process locally."""
+"""DAEP MCP stdio adapter. The member controls and launches this process locally. Prefer DAEP_AGENT_TOKEN for first-class Agent identity; DAEP_MEMBER_TOKEN remains a compatibility fallback."""
 import json, os, urllib.request, urllib.error, urllib.parse
 from mcp.server.fastmcp import FastMCP
 
 API=os.getenv('DAEP_API_URL','http://127.0.0.1:8000').rstrip('/')
-TOKEN=os.getenv('DAEP_MEMBER_TOKEN','')
+TOKEN=os.getenv('DAEP_AGENT_TOKEN','')
+if not TOKEN: TOKEN=os.getenv('DAEP_MEMBER_TOKEN','')  # backwards-compatible fallback
 mcp=FastMCP('DAEP Engineering Platform')
 
 def call(method, path, payload=None):
     if not TOKEN:
-        raise RuntimeError('Set DAEP_MEMBER_TOKEN in the MCP process environment')
+        raise RuntimeError('Set DAEP_AGENT_TOKEN in the MCP process environment')
     data=None if payload is None else json.dumps(payload).encode()
     req=urllib.request.Request(API+path,data=data,method=method,headers={
         'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Accept':'application/json'})
