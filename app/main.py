@@ -780,8 +780,11 @@ def close_project(pid:str,b:dict,authorization:str=Header(None)):
         if approvals: blockers.append({'type':'pending_approvals','ids':[x['id'] for x in approvals]})
         if blockers: raise HTTPException(409,detail={'message':'Project cannot be closed until all delivery obligations are complete','blockers':blockers})
         stamp=now()
-        c.execute("UPDATE projects SET status='CLOSED' WHERE id=? AND status='ACTIVE'",(pid,))
-        event(c,'project.closed',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id'])
+        updated=c.execute("UPDATE projects SET status='CLOSED' WHERE id=? AND status='ACTIVE'",(pid,)).rowcount
+        if updated != 1: raise HTTPException(409,'Project closure state changed concurrently')
+        current=c.execute('SELECT status,tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        if not current or current['status']!='CLOSED': raise HTTPException(409,'Project closure was not persisted')
+        event(c,'project.closed',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=current['tenant_id'])
     return {'project_id':pid,'status':'CLOSED','closed_at':stamp,'reason':reason}
 
 @app.post('/api/v1/projects/{pid}/reopen')
