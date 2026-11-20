@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # RC9 dual-Agent real interoperability preflight.
-# This script only checks prerequisites; it does not start, wake, or control Agent Runtime.
+# This script only checks prerequisites; it does not start, activate, or control Agent Runtime.
 
 : "${DAEP_API_URL:?DAEP_API_URL is required}"
 : "${DAEP_MEMBER_TOKEN_A:?DAEP_MEMBER_TOKEN_A is required}"
