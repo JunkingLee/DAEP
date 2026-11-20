@@ -45,9 +45,9 @@ def test_rc26_high_fidelity_shell_has_role_workbenches_and_governance_controls()
     for marker in [
         "系统管理员",
         "项目管理员",
-        "产品工作台",
-        "开发工作台",
-        "测试 / 验收工作台",
+        "f==='product'",
+        "f==='tester'",
+        "else cards=[",
         "项目审核人员",
         "Workflow",
         "Gate",
