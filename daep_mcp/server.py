@@ -47,6 +47,21 @@ def get_my_tasks() -> list:
     return call('GET','/api/v1/me/tasks')
 
 @mcp.tool()
+def accept_agent_task_assignment(task_id: str) -> dict:
+    """Accept a task explicitly assigned to this Agent identity."""
+    return call('POST',f'/api/v1/tasks/{task_id}/agent-assignments/accept',{})
+
+@mcp.tool()
+def list_agent_task_assignments(task_id: str) -> list:
+    """List Agent assignments for a task; requires project access."""
+    return call('GET',f'/api/v1/tasks/{task_id}/agent-assignments')
+
+@mcp.tool()
+def assign_task_to_agent(task_id: str, agent_id: str) -> dict:
+    """Assign a task to an active Agent bound to the same project; requires project manager authority."""
+    return call('POST',f'/api/v1/tasks/{task_id}/agent-assignments',{'agent_id':agent_id})
+
+@mcp.tool()
 def get_task_detail(task_id: str) -> dict:
     """Read a task only when the authenticated identity has access to its project."""
     return call('GET',f'/api/v1/tasks/{task_id}')
