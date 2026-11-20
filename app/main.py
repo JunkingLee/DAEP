@@ -639,7 +639,7 @@ def create_member(body:dict,authorization:str=Header(None)):
     tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
     with conn() as c:
         if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): username=f"{username}.{uuid.uuid4().hex[:6]}"
+        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): raise HTTPException(409,'Username already exists')
         c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
     return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id,'token':token}
 @app.get('/api/v1/members')
@@ -2271,17 +2271,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
-
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
     if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
