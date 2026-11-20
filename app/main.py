@@ -1473,11 +1473,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f"{a['id']}:{tid}:{idempotency_key}" if idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
             if prior:
-                if prior['payload'] != json.dumps(b.model_dump()): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
@@ -1500,12 +1503,15 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
         payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
-                if prior['payload']!=json.dumps(payload): raise HTTPException(409,'Idempotency key was used with a different result')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
                 return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
         if b.outcome=='COMPLETE':
             count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
@@ -3298,11 +3304,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f"{a['id']}:{tid}:{idempotency_key}" if idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
             if prior:
-                if prior['payload'] != json.dumps(b.model_dump()): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
@@ -3325,12 +3334,15 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
         payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
-                if prior['payload']!=json.dumps(payload): raise HTTPException(409,'Idempotency key was used with a different result')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
                 return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
         if b.outcome=='COMPLETE':
             count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
@@ -5119,11 +5131,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f"{a['id']}:{tid}:{idempotency_key}" if idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
             if prior:
-                if prior['payload'] != json.dumps(b.model_dump()): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
@@ -5146,12 +5161,15 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
         payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
-                if prior['payload']!=json.dumps(payload): raise HTTPException(409,'Idempotency key was used with a different result')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
                 return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
         if b.outcome=='COMPLETE':
             count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
@@ -7056,11 +7074,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f"{a['id']}:{tid}:{idempotency_key}" if idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
             if prior:
-                if prior['payload'] != json.dumps(b.model_dump()): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
@@ -7083,12 +7104,15 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
         payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
-                if prior['payload']!=json.dumps(payload): raise HTTPException(409,'Idempotency key was used with a different result')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
                 return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
         if b.outcome=='COMPLETE':
             count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
@@ -8877,11 +8901,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f"{a['id']}:{tid}:{idempotency_key}" if idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
             if prior:
-                if prior['payload'] != json.dumps(b.model_dump()): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
@@ -8904,12 +8931,15 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        key=f"work-result:{a['id']}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
+        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
+        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
         payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
         if key:
             prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
             if prior:
-                if prior['payload']!=json.dumps(payload): raise HTTPException(409,'Idempotency key was used with a different result')
+                prior_payload=json.loads(prior['payload'] or '{}')
+                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
+                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
                 return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
         if b.outcome=='COMPLETE':
             count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
