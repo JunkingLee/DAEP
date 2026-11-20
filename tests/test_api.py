@@ -1017,7 +1017,7 @@ def test_rc26_full_role_delivery_to_project_closure_e2e():
     assert configured.status_code==200,configured.text
     gate=client.put(f'/api/v1/projects/{pid}/gates/TEST_EVIDENCE',headers=manager_h,json={
         'enabled':True,'required_roles':['tester'],'required_evidence':True,
-        'required_all_tasks_done':False,'applies_to':'TEST'})
+        'required_all_tasks_done':False,'applies_to':'REVIEW'})
     assert gate.status_code==200,gate.text
 
     req=client.post('/api/v1/requirements',headers=manager_h,json={
@@ -1750,9 +1750,9 @@ def test_rc26_multi_project_role_isolation_and_function_navigation_contract():
     b=client.get(f'/api/v1/projects/{project_b}/members',headers=ADMIN)
     c=client.get(f'/api/v1/projects/{project_c}/members',headers=ADMIN)
     assert a.status_code == b.status_code == c.status_code == 200
-    amap={x['member_id']:x for x in a.json().get('members',a.json())}
-    bmap={x['member_id']:x for x in b.json().get('members',b.json())}
-    cmap={x['member_id']:x for x in c.json().get('members',c.json())}
+    aj=a.json(); amap={x['member_id']:x for x in (aj.get('members',aj) if isinstance(aj,dict) else aj)}
+    bj=b.json(); bmap={x['member_id']:x for x in (bj.get('members',bj) if isinstance(bj,dict) else bj)}
+    cj=c.json(); cmap={x['member_id']:x for x in (cj.get('members',cj) if isinstance(cj,dict) else cj)}
     assert amap[manager_id]['project_role'] in ('owner','manager')
     assert bmap[manager_id]['project_role']=='member'
     assert bmap[manager_id]['work_function']=='tester'
