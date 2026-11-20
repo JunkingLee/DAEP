@@ -209,3 +209,8 @@ def test_rc27_project_member_management_uses_platform_account_directory():
         "只有项目管理员可以管理项目成员",
     ]:
         assert marker in HTML, f"missing project member directory UI contract: {marker}"
+
+
+def test_rc28_role_navigation_enforces_hidden_page_access_in_client():
+    assert "function canViewPage(page)" in HTML
+    assert "if(!canViewPage(page)){toast('当前角色无权访问该页面');return}" in HTML
