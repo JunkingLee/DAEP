@@ -147,3 +147,61 @@ def test_rc30_role_matrix_documents_server_side_boundaries():
     assert "row['role'] not in ('owner','manager')" in MAIN
     assert "role['role'] not in ('owner','manager','reviewer')" in MAIN
     assert "assigned_only=True" in MAIN
+
+
+def test_rc31_mutation_endpoint_scope_matrix_is_explicit():
+    # High-risk mutation routes are pinned to server-side authorization helpers.
+    # This prevents a future UI-only permission change from silently creating
+    # an API privilege-escalation path.
+    endpoint_guards = {
+        "@app.post('/api/v1/requirements')": ["require_project_access(c,b.project_id,a,write=True)"],
+        "@app.post('/api/v1/tasks')": ["require_project_access(c,req['project_id'],a,write=True)"],
+        "@app.post('/api/v1/tasks/{tid}/progress')": ["require_task_access(c,tid,a,assigned_only=True)"],
+        "@app.post('/api/v1/tasks/{tid}/blocked')": ["require_task_access(c,tid,a,assigned_only=True)"],
+        "@app.post('/api/v1/tasks/{tid}/artifacts')": ["require_task_access(c,tid,a,assigned_only=True)"],
+        "@app.post('/api/v1/tasks/{tid}/review')": ["Reviewer role required"],
+        "@app.post('/api/v1/projects/{pid}/members')": ["require_project_access(c,pid,a,write=True)"],
+        "@app.post('/api/v1/projects/{pid}/role-change-requests')": ["require_project_access(c,pid,a,write=True)"],
+        "@app.post('/api/v1/projects/{pid}/agents/register')": ["require_project_access(c,pid,a)"],
+        "@app.post('/api/v1/projects/{pid}/agents/heartbeat')": ["require_project_access(c,pid,a)"],
+        "@app.post('/api/v1/tasks/{tid}/delegations')": ["require_task_access(c,tid,a,assigned_only=True)"],
+        "@app.post('/api/v1/delegations/{did}/respond')": ["require_project_access(c,row['project_id'],a)"],
+        "@app.post('/api/v1/work-packages/{package_id}/reassign')": ["require_project_access(c,package_row['project_id'],a,write=True)"],
+        "@app.post('/api/v1/work-packages/{package_id}/review')": ["Reviewer role required"],
+    }
+    for route, guards in endpoint_guards.items():
+        assert route in MAIN, f"missing endpoint: {route}"
+        start = MAIN.index(route)
+        next_at = MAIN.find("@app.", start + len(route))
+        block = MAIN[start: next_at if next_at >= 0 else len(MAIN)]
+        for guard in guards:
+            assert guard in block, f"{route} lost server-side guard: {guard}"
+
+
+def test_rc31_platform_user_mutations_remain_admin_only():
+    for route in [
+        "@app.post('/api/v1/members')",
+        "@app.get('/api/v1/members/{member_id}')",
+        "@app.post('/api/v1/members/{member_id}/disable')",
+        "@app.post('/api/v1/members/{member_id}/enable')",
+        "@app.post('/api/v1/members/{member_id}/reset-password')",
+    ]:
+        assert route in MAIN
+        start = MAIN.index(route)
+        next_at = MAIN.find("@app.", start + len(route))
+        block = MAIN[start: next_at if next_at >= 0 else len(MAIN)]
+        assert "Platform administrator required" in block, f"{route} is not admin-only"
+
+
+def test_rc31_read_paths_still_require_project_or_task_scope():
+    for route, guard in [
+        ("@app.get('/api/v1/projects/{pid}/requirements')", "require_project_access(c,pid,a)"),
+        ("@app.get('/api/v1/projects/{pid}/tasks')", "require_project_access(c,pid,a)"),
+        ("@app.get('/api/v1/tasks/{tid}/events')", "require_task_access(c,tid,a)"),
+        ("@app.get('/api/v1/tasks/{tid}/artifacts')", "require_task_access(c,tid,a)"),
+    ]:
+        assert route in MAIN
+        start = MAIN.index(route)
+        next_at = MAIN.find("@app.", start + len(route))
+        block = MAIN[start: next_at if next_at >= 0 else len(MAIN)]
+        assert guard in block, f"{route} lost scope guard"
