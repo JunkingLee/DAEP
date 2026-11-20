@@ -20,7 +20,7 @@ def test_rc27_member_provisioning_requires_password_and_username():
     assert "password" in block
     assert "Password must be 12-256 characters" in block
     assert "Username already exists" in block
-    assert "role not in ('member','manager','reviewer')" in block
+    assert "role!='member'" in block
 
 
 def test_rc27_api_token_remains_machine_auth_not_web_login():
@@ -38,3 +38,25 @@ def test_rc27_project_member_directory_and_roles_are_separate_from_platform_acco
     member_route = MAIN.split("@app.post('/api/v1/projects/{pid}/members')",1)[1].split("@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')",1)[0]
     assert "role not in ('member','reviewer','manager')" in member_route
     assert "work_function not in ('developer','tester','product','architect','other')" in member_route
+
+
+def test_rc27_account_lifecycle_admin_contract():
+    assert "@app.get('/api/v1/members/{member_id}')" in MAIN
+    assert "@app.post('/api/v1/members/{member_id}/disable')" in MAIN
+    assert "@app.post('/api/v1/members/{member_id}/enable')" in MAIN
+    assert "@app.post('/api/v1/members/{member_id}/reset-password')" in MAIN
+    lifecycle = MAIN.split("@app.get('/api/v1/members/{member_id}')",1)[1].split("@app.post('/api/v1/members/{member_id}/revoke-token')",1)[0]
+    assert "Platform administrator required" in lifecycle
+    assert "password_status='DISABLED'" in lifecycle
+    assert "token_status='REVOKED'" in lifecycle
+    assert "hash_password(password)" in lifecycle
+    assert "member.account.disabled" in lifecycle
+    assert "member.account.enabled" in lifecycle
+    assert "member.password.reset" in lifecycle
+
+def test_rc27_project_member_directory_contract_is_preserved():
+    assert "m.username" in MAIN.split("@app.get('/api/v1/projects/{pid}/members')",1)[1].split("@app.post('/api/v1/projects/{pid}/members')",1)[0]
+    block = MAIN.split("@app.get('/api/v1/projects/{pid}/member-candidates')",1)[1].split("@app.post('/api/v1/projects/{pid}/members')",1)[0]
+    assert "already_member" in block
+    assert "password_status='ACTIVE'" in block
+    assert "SELECT tenant_id FROM projects WHERE id=?" in block
