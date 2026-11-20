@@ -7,6 +7,7 @@ BATCH=max(1,min(int(os.getenv('DAEP_WORKER_BATCH','20')),100))
 LEASE=max(10,min(int(os.getenv('DAEP_WORKER_LEASE_SECONDS','60')),900))
 POLL=max(1,int(os.getenv('DAEP_WORKER_POLL_SECONDS','2')))
 DEST=os.getenv('DAEP_BROKER_WEBHOOK_URL','')
+BROKER_TOKEN=os.getenv('DAEP_BROKER_WEBHOOK_TOKEN','')
 
 
 def call(method,path,payload=None):
@@ -21,8 +22,13 @@ def deliver(item):
     # queue bridge, or service that translates the envelope to Kafka/RabbitMQ/etc.
     if not DEST:
         raise RuntimeError('DAEP_BROKER_WEBHOOK_URL is not configured')
+    if len(BROKER_TOKEN)<32:
+        raise RuntimeError('DAEP_BROKER_WEBHOOK_TOKEN with at least 32 characters is required')
     req=urllib.request.Request(DEST,data=json.dumps(item['payload']).encode(),method='POST',headers={
-        'Content-Type':'application/json','X-DAEP-Event-Type':item['event_type'],'X-DAEP-Message-ID':item['payload'].get('message_id','')})
+        'Content-Type':'application/json','Authorization':'Bearer '+BROKER_TOKEN,
+        'X-DAEP-Event-Type':item['event_type'],'X-DAEP-Outbox-ID':item['id'],
+        'X-DAEP-Delivery-Attempt':str(item['attempts']),
+        'X-DAEP-Message-ID':item['payload'].get('message_id','')})
     with urllib.request.urlopen(req,timeout=20) as r:
         if r.status >= 300: raise RuntimeError(f'broker returned HTTP {r.status}')
 
@@ -32,9 +38,9 @@ def run_once():
     for item in result.get('items',[]):
         try:
             deliver(item)
-            call('POST',f"/internal/v1/outbox/{item['id']}/complete",{'worker_id':WORKER_ID})
+            call('POST',f"/internal/v1/outbox/{item['id']}/complete",{'worker_id':WORKER_ID,'lease_token':item['lease_token']})
         except Exception as exc:
-            try: call('POST',f"/internal/v1/outbox/{item['id']}/fail",{'worker_id':WORKER_ID,'error':str(exc)[:2000]})
+            try: call('POST',f"/internal/v1/outbox/{item['id']}/fail",{'worker_id':WORKER_ID,'lease_token':item['lease_token'],'error':str(exc)[:2000]})
             except Exception: pass
     return result.get('count',0)
 
