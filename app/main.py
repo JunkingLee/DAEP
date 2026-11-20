@@ -13,7 +13,8 @@ ADMIN_TOKEN=os.getenv('DAEP_ADMIN_TOKEN','change-me-before-use')
 async def lifespan(app):
     bootstrap()
     from app.agent_identity import ensure_agent_schema
-    ensure_agent_schema(conn)
+    if not DATABASE_URL.startswith(('postgresql://','postgres://')):
+        ensure_agent_schema(conn)
     yield
 
 app=FastAPI(title='DAEP Enterprise Platform API',version='1.0.0-rc9',description='Task-centric distributed agent engineering platform',lifespan=lifespan)
