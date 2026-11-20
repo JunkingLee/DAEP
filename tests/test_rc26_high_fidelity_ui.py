@@ -79,8 +79,8 @@ def test_rc26_high_fidelity_shell_has_agent_collaboration_surface():
 def test_rc26_high_fidelity_shell_has_responsive_visual_system():
     for marker in [
         "@media",
-        "--navy:",
-        "--blue:",
+        "--nav:",
+        "--brand:",
         "--bg:",
         "grid-template-columns",
         "border-radius:",
