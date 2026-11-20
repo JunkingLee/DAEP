@@ -1,5 +1,8 @@
 import hashlib, secrets, uuid, json
+from datetime import datetime, timezone
 from fastapi import Header, HTTPException
+
+def now(): return datetime.now(timezone.utc).isoformat()
 from pydantic import BaseModel, Field
 
 class AgentCreateIn(BaseModel):
