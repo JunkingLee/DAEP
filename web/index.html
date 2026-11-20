@@ -172,7 +172,8 @@ function testerSetProgress(id,progress){return api('/api/v1/tasks/'+id+'/progres
 function testerBlockTask(id){const reason=prompt('请输入阻塞原因','发现缺陷或环境阻塞');if(reason===null)return Promise.resolve();return api('/api/v1/tasks/'+id+'/blocked',{method:'POST',body:JSON.stringify({reason})}).then(()=>loadTasks())}
 function testerAddArtifact(id){const type=prompt('证据类型','test-report');if(type===null)return Promise.resolve();const uri=prompt('证据 URI / 报告地址','');if(uri===null)return Promise.resolve();return api('/api/v1/tasks/'+id+'/artifacts',{method:'POST',body:JSON.stringify({artifact_type:type,uri,commit_sha:'',metadata:{source:'tester-workbench'}})}).then(()=>openTask(id))}
 function dependencyLinks(t){return (t.dependencies||[]).map(x=>'<span class="badge amber">'+esc(x)+'</span>').join('')}
-// e.actor_name / e.acked_at are surfaced in the collaboration timeline.\nfunction renderAgentTopology(){return loadCollaboration()}
+// e.actor_name / e.acked_at are surfaced in the collaboration timeline.
+function renderAgentTopology(){return loadCollaboration()}
 function renderDelegations(){return loadDelegationBoard()}
 async function loadDelegationBoard(){const d=await api('/api/v1/projects/'+selectedProject+'/delegations?limit=200');projectDelegations=d.items||[];$('delegationBoard').innerHTML=projectDelegations.map(x=>'<div class="list-row"><span><b>'+esc(x.task_title||'任务委派')+'</b><br><small class="muted">'+esc(x.requester_name||'')+' → '+esc(x.recipient_name||'')+' · '+esc(x.agent_name||'')+'</small></span><span class="badge">'+esc(x.status||'PENDING')+'</span></div>').join('')||'<div class="empty">暂无跨成员委派</div>'}
 function renderDependencyGraph(){return renderDependencies()}
