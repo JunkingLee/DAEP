@@ -219,6 +219,28 @@ def get_task_work_summary(parent_task_id: str) -> dict:
     return call('GET',f'/api/v1/tasks/{parent_task_id}/work-summary')
 
 
+@mcp.tool()
+def report_agent_task_progress(task_id: str, progress: int, note: str = '') -> dict:
+    """Report progress for a task accepted by this Agent identity; 100% requires at least one artifact."""
+    if not 0 <= progress <= 100: raise ValueError('progress must be between 0 and 100')
+    return call('POST',f'/api/v1/tasks/{task_id}/progress',{'progress':progress,'note':note})
+
+
+@mcp.tool()
+def report_agent_task_blocked(task_id: str, reason: str) -> dict:
+    """Report a blocker for a task accepted by this Agent identity."""
+    if not reason.strip(): raise ValueError('reason is required')
+    return call('POST',f'/api/v1/tasks/{task_id}/blocked',{'reason':reason})
+
+
+@mcp.tool()
+def submit_agent_task_artifact(task_id: str, artifact_type: str, uri: str, commit_sha: str = '') -> dict:
+    """Submit an artifact for a task accepted by this Agent identity before requesting human review."""
+    if not artifact_type.strip() or not uri.strip(): raise ValueError('artifact_type and uri are required')
+    return call('POST',f'/api/v1/tasks/{task_id}/artifacts',{
+        'artifact_type':artifact_type,'uri':uri,'commit_sha':commit_sha or None,'metadata':{}})
+
+
 if __name__=='__main__':
     import urllib.parse
     mcp.run(transport='stdio')
