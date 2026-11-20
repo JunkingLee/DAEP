@@ -2161,13 +2161,17 @@ def test_rc35_closed_project_freezes_platform_admin_task_mutations_and_allows_re
         'artifact_type':'post-close','uri':'https://example.invalid/closed'}).status_code==409
 
 
-def test_rc35_closed_project_blocks_cross_tenant_admin_and_owner_writes():
+def test_rc35_closed_project_blocks_cross_tenant_member_reads():
     project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC35 Tenant Freeze'}).json()
     pid=project['id']
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC35 Tenant Manager'}).json()
+    mh={'Authorization':'Bearer '+manager['token']}
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
     db.execute("UPDATE projects SET tenant_id='tenant-other' WHERE id=?",(pid,))
     db.commit(); db.close()
-    assert client.get(f'/api/v1/projects/{pid}/members',headers=ADMIN).status_code==403
+    assert client.get(f'/api/v1/projects/{pid}/members',headers=mh).status_code==403
 
 
 def test_rc35_closure_blocks_real_pending_delegation():
