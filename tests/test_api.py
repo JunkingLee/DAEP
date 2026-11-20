@@ -378,7 +378,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0025_rc35_project_lifecycle (head)' in heads
+    assert '0027_rc37_agent_task_assignment (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -949,7 +949,7 @@ def test_rc26_stage7_requirement_acceptance_requires_all_criteria_tasks_and_arti
     task=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req['id'],'title':'Implement checkout','assignee_member_ids':[m['id']]}).json()
     report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=ADMIN).json()
     assert report['ready_for_acceptance'] is False and report['task_count']==1
-    incomplete=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
+    incomplete=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
     assert incomplete.status_code==409
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
     db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(task['id'],))
