@@ -100,6 +100,14 @@ def authenticate_agent_token(conn, raw_token):
                 raise HTTPException(401,'Agent token expired')
             c.execute("UPDATE agent_tokens SET last_used_at=? WHERE id=?",(now(),row['token_id']))
             c.execute("UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=?",(now(),now(),row['agent_id']))
+            try:
+                from app.main import _tenant_ctx, _member_ctx, _admin_ctx, _agent_ctx
+                _tenant_ctx.set(row['tenant_id'])
+                _member_ctx.set(row['owner_member_id'])
+                _admin_ctx.set(False)
+                _agent_ctx.set(row['agent_id'])
+            except Exception:
+                pass
             return dict(row)
     finally:
         if lookup_reset is not None:
