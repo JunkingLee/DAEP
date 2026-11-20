@@ -1,473 +1,182 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DAEP · Engineering Control Plane</title>
-<style>.role-hidden{display:none!important}</style><style>
-:root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#182230;background:#f4f6f8}*{box-sizing:border-box}body{margin:0}header{background:#172b4d;color:white;padding:20px 28px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:20px;margin:0}main{max-width:1200px;margin:24px auto;padding:0 18px}.panel{background:white;border:1px solid #e2e7ed;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #172b4d0a}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}h2{font-size:16px;margin:0 0 14px}label{display:block;font-size:12px;color:#5b6675;margin:9px 0 5px}input,textarea,select{width:100%;border:1px solid #ccd4df;border-radius:7px;padding:10px;font:inherit;background:white}textarea{min-height:65px}button{background:#2457a7;color:white;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;margin:6px 4px 0 0}button.secondary{background:#e9eef5;color:#23364d}.muted{color:#657286;font-size:13px}.item{border-top:1px solid #edf0f4;padding:10px 0}.item strong{display:block}.tag{font-size:11px;border-radius:20px;background:#edf2f8;padding:3px 8px;color:#42536a}.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}.status{color:#13724a}.error{color:#b42318;white-space:pre-wrap}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}.metric{background:#f5f7fa;border:1px solid #e8edf3;border-radius:9px;padding:13px}.metric b{display:block;font-size:24px;margin-top:5px}.board{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.lane{background:#f7f9fb;border:1px solid #e5eaf0;border-radius:9px;padding:10px;min-height:100px}.lane h3{font-size:13px;margin:0 0 8px}.taskcard{background:white;border:1px solid #e2e7ed;border-radius:8px;padding:10px;margin:7px 0;cursor:pointer}.bar{height:7px;background:#e5eaf0;border-radius:8px;overflow:hidden;margin-top:7px}.bar span{display:block;height:100%;background:#3974bd}.detailgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.small{font-size:12px}.filters{display:flex;gap:10px;max-width:540px;margin:10px 0}.risk{color:#b54708}.good{color:#13724a}.graphwrap{overflow:auto;border:1px solid #e8edf3;border-radius:9px;background:#fbfcfe;padding:8px}.depgraph{display:block;min-width:100%;height:auto}.graphnode{cursor:pointer}.graphnode rect{fill:#fff;stroke:#cbd5e1;stroke-width:1.3}.graphnode:hover rect{stroke:#3974bd;stroke-width:2.2}.graphnode text{font-family:inherit;fill:#263548}.graphedge{fill:none;stroke:#94a3b8;stroke-width:1.7}.dep-link{display:inline-block;margin:3px 5px 3px 0;padding:5px 8px;border:1px solid #dce4ee;border-radius:6px;background:#f7f9fc;color:#2457a7;cursor:pointer}.hidden{display:none}@media(max-width:600px){header{padding:16px}main{margin:14px auto}}
-
-/* RC26 UI Architecture: role-aware application shell */
-:root{--daep-navy:#172b4d;--daep-blue:#2563eb;--daep-blue-soft:#eff6ff;--daep-border:#e5eaf0;--daep-bg:#f5f7fb;--daep-text:#182230;--daep-muted:#667085;--daep-good:#13724a;--daep-warn:#b54708;--daep-danger:#b42318}
-body{background:var(--daep-bg);color:var(--daep-text)}
-header{position:sticky;top:0;z-index:20;height:64px;padding:0 24px;background:#fff;color:var(--daep-text);border-bottom:1px solid var(--daep-border);box-shadow:0 1px 5px rgba(23,43,77,.06)}
-header .brand{display:flex;align-items:center;gap:12px;font-weight:750;letter-spacing:.1px}
-header .brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;display:grid;place-items:center;font-weight:800}
-header .header-context{font-size:13px;color:var(--daep-muted);padding-left:10px;border-left:1px solid var(--daep-border)}
-header .header-actions{display:flex;align-items:center;gap:10px}
-header .identity-pill{padding:7px 10px;border:1px solid var(--daep-border);border-radius:999px;background:#f8fafc;color:#475467}
-main{max-width:none;margin:0;padding:0}
-#app.app-shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:calc(100vh - 64px)}
-.daep-sidebar{position:sticky;top:64px;height:calc(100vh - 64px);overflow:auto;background:var(--daep-navy);color:#d7e2f2;padding:18px 12px}
-.daep-logo-sub{font-size:10px;opacity:.68;margin:2px 0 20px 42px}
-.daep-nav-group{margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8ea3c1;padding:0 10px}
-.daep-nav{display:flex;flex-direction:column;gap:4px}
-.daep-nav button{width:100%;text-align:left;margin:0;border:0;background:transparent;color:#d7e2f2;padding:10px 11px;border-radius:8px;font-size:13px}
-.daep-nav button:hover,.daep-nav button.active{background:#244f8f;color:#fff}
-.daep-role-card{margin-top:20px;padding:12px;border:1px solid #2b466d;border-radius:10px;background:#132541}
-.daep-role-card strong{display:block;color:#fff;font-size:13px}
-.daep-role-card span{display:block;color:#9fb2ce;font-size:11px;margin-top:4px}
-.daep-content{min-width:0;padding:24px}
-#portfolioPanel{border:0;background:transparent;box-shadow:none;padding:0}
-.portfolio-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}
-.portfolio-head h2{font-size:24px;margin:0 0 5px}
-.portfolio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:12px}
-.project-card{background:#fff;border:1px solid var(--daep-border);border-radius:14px;padding:16px;cursor:pointer;box-shadow:0 2px 8px rgba(23,43,77,.05);transition:.15s}
-.project-card:hover{transform:translateY(-1px);border-color:#9bbcf5;box-shadow:0 6px 18px rgba(23,43,77,.08)}
-.project-card.selected{border:2px solid var(--daep-blue);padding:15px;background:var(--daep-blue-soft)}
-.project-card .project-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
-.project-card .project-name{font-weight:700;font-size:15px}
-.project-card .project-id{font-size:10px;color:#98a2b3;margin-top:5px}
-.project-card .project-meta{display:flex;gap:12px;margin-top:13px;color:#667085;font-size:12px}
-.project-card .project-open{margin-top:13px;color:var(--daep-blue);font-size:12px;font-weight:650}
-.role-badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px}
-.project-status{font-size:11px;font-weight:650}
-.project-status.good{color:var(--daep-good)}.project-status.warn{color:var(--daep-warn)}
-.panel{border-radius:14px;box-shadow:0 2px 10px rgba(23,43,77,.05);border-color:var(--daep-border)}
-#overview{background:linear-gradient(135deg,#fff,#f8fbff)}
-.section-anchor{scroll-margin-top:84px}.workbench-card{background:#fff;border:1px solid var(--daep-border);border-radius:10px;padding:12px}.workbench-card h3{margin:0 0 8px;font-size:13px}.workbench-card .wb-list{display:grid;gap:7px}.workbench-card .wb-item{padding:8px;border:1px solid #edf0f4;border-radius:8px}.workbench-kpi{display:flex;justify-content:space-between;gap:8px;align-items:center}.workbench-kpi b{font-size:22px}
-@media(max-width:900px){#app.app-shell{grid-template-columns:1fr}.daep-sidebar{position:sticky;top:64px;height:auto;padding:8px;z-index:10}.daep-nav{flex-direction:row;overflow:auto}.daep-nav-group,.daep-role-card{display:none}.daep-nav button{white-space:nowrap;width:auto}.daep-content{padding:16px}}
-@media(max-width:600px){header{padding:0 14px}.header-context{display:none!important}.daep-content{padding:12px}.portfolio-head{display:block}.portfolio-head button{margin-top:8px}}
-</style></head><body>
-<header>
-  <div class="brand"><span class="brand-mark">A</span><div><div>DAEP</div><div style="font-size:10px;color:#98a2b3;font-weight:500">Distributed Agentic Engineering Platform</div></div></div>
-  <div class="header-context" id="projectContext">未选择项目</div>
-  <div class="header-actions"><span class="muted">项目协作控制台</span><span id="identity" class="identity-pill">Not connected</span></div>
-</header>
-<main>
-<section class="panel" id="auth"><h2>连接平台</h2><p class="muted">输入个人成员 Token。Token 仅保存在当前页面内存，不写入浏览器持久存储。</p><div class="row"><input id="token" type="password" placeholder="Bearer token（不含 Bearer 前缀）"><button onclick="connect()">连接</button></div><div id="authmsg" class="muted"></div></section>
-<div id="app" class="hidden app-shell">
-<aside class="daep-sidebar">
-  <div class="daep-logo-sub">ROLE-AWARE WORKSPACE</div>
-  <div class="daep-nav-group">工作空间</div>
-  <nav class="daep-nav" id="primaryNav">
-    <button data-target="portfolioPanel" onclick="navigateTo('portfolioPanel')">⌂ 我的项目</button>
-    <button data-target="overview" onclick="navigateTo('overview')">◈ 项目总览</button>
-    <button data-target="myWorkbenchPanel" onclick="navigateTo('myWorkbenchPanel')">▤ 我的工作台</button><button data-target="managerWorkbenchPanel" onclick="navigateTo('managerWorkbenchPanel')">▥ 项目治理台</button>
-    <button data-target="taskBoard" onclick="navigateTo('taskBoard')">▣ 工作</button>
-    <button data-target="agentTopologyPanel" onclick="navigateTo('agentTopologyPanel')">◉ 协作</button>
-    <button data-target="taskDetail" onclick="navigateTo('taskDetail')">✓ 治理</button>
-  </nav>
-  <div class="daep-nav-group">项目设置</div>
-  <nav class="daep-nav">
-    <button data-target="dependencyPanel" onclick="navigateTo('dependencyPanel')">依赖关系</button>
-    <button data-target="coordinationPanel" onclick="navigateTo('coordinationPanel')">异常协调</button>
-    <button data-target="workPackagePanel" onclick="navigateTo('workPackagePanel')">Work Package</button>
-    <button data-target="inboxPanel" onclick="navigateTo('inboxPanel')">消息收件箱</button>
-  </nav>
-  <div class="daep-role-card" id="roleCard"><strong>未连接</strong><span>连接后显示当前平台 / 项目角色</span></div>
-</aside>
-<div class="daep-content"><section class="section-anchor" id="portfolioPanel">
-  <div class="portfolio-head">
-    <div><h2>我的项目组合</h2><p class="muted" id="portfolioHint">按项目角色查看你有权访问的项目；切换项目后工作台上下文会同步切换。</p></div>
-    <button id="projectCreateAction" type="button" onclick="focusProjectCreate()">＋ 新建项目</button>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DAEP · Build Together · Deliver Better</title>
+<style>
+:root{--navy:#132744;--navy2:#1d3c68;--blue:#2563eb;--blue2:#4f8cff;--sky:#eef6ff;--bg:#f4f7fb;--card:#fff;--line:#e5ebf3;--text:#182230;--muted:#6b778c;--green:#16a06a;--amber:#e8a11a;--red:#e5484d;--purple:#7357d8;--shadow:0 8px 28px rgba(27,55,94,.07);font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,input,textarea,select{font:inherit}button{border:0;cursor:pointer}.hidden{display:none!important}.muted{color:var(--muted)}.small{font-size:12px}
+.auth{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#eaf4ff,#f7fbff 55%,#eef2ff)}
+.login{width:min(940px,92vw);display:grid;grid-template-columns:42% 58%;background:#fff;border:1px solid var(--line);border-radius:24px;overflow:hidden;box-shadow:0 24px 70px rgba(28,63,107,.16)}
+.login-hero{padding:54px;background:linear-gradient(150deg,#1d5db6,#14345d);color:#fff;position:relative;overflow:hidden}.login-hero:after{content:"";position:absolute;width:340px;height:340px;border:1px solid rgba(255,255,255,.15);border-radius:50%;right:-160px;bottom:-140px}.brandmark{width:48px;height:48px;border-radius:14px;background:#fff;color:#2563eb;display:grid;place-items:center;font-size:25px;font-weight:900}.login-hero h1{font-size:42px;margin:28px 0 8px}.login-hero p{color:#cfe1fb;line-height:1.8}.login-hero .slogan{margin-top:70px;font-weight:700;color:#fff}.login-form{padding:54px}.login-form h2{font-size:25px;margin:0 0 8px}.field{margin:16px 0}.field label{display:block;font-size:12px;font-weight:700;color:#59677b;margin-bottom:7px}.field input,.field textarea,.field select{width:100%;padding:12px 13px;border:1px solid #ccd7e6;border-radius:10px;outline:none;background:#fff}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px #2563eb16}.btn{padding:10px 15px;border-radius:9px;background:var(--blue);color:#fff;font-weight:700}.btn:hover{filter:brightness(.96)}.btn.secondary{background:#edf3fb;color:#2d4767}.btn.ghost{background:transparent;color:#47627f}.btn.danger{background:#fff0f0;color:#c4343a}.login-form .btn{width:100%;margin-top:8px;padding:13px}.msg{margin-top:12px;font-size:13px;color:var(--red)}
+.app{min-height:100vh}.topbar{height:64px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 22px;gap:18px;position:sticky;top:0;z-index:50}.top-brand{display:flex;align-items:center;gap:10px;font-weight:850;font-size:18px}.top-brand .brandmark{width:34px;height:34px;border-radius:10px;font-size:18px;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff}.project-switch{display:flex;align-items:center;gap:8px;margin-left:14px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#f9fbfe}.project-switch select{border:0;background:transparent;font-weight:700;outline:none;max-width:210px}.top-search{flex:1;max-width:360px;margin-left:auto}.top-search input{width:100%;border:1px solid var(--line);background:#f8fafc;padding:9px 12px;border-radius:9px}.top-user{display:flex;align-items:center;gap:9px}.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-weight:800}.shell{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:calc(100vh - 64px)}.sidebar{background:var(--navy);color:#d9e6f8;padding:16px 12px;position:sticky;top:64px;height:calc(100vh - 64px);overflow:auto}.side-caption{font-size:10px;color:#86a0c3;letter-spacing:.1em;padding:10px}.nav{display:grid;gap:4px}.nav button{background:transparent;color:#d6e4f6;text-align:left;padding:10px 12px;border-radius:9px;font-size:13px}.nav button:hover,.nav button.active{background:#25518d;color:#fff}.rolebox{margin:20px 4px 0;padding:13px;border:1px solid #29476f;border-radius:12px;background:#10223d}.rolebox strong{display:block;color:#fff;font-size:13px}.rolebox span{font-size:11px;color:#9db1cd;display:block;margin-top:4px}.content{padding:24px;min-width:0}.page{display:none}.page.active{display:block}.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}.page-head h1{font-size:25px;margin:0 0 5px}.page-head p{margin:0}.actions{display:flex;gap:8px;flex-wrap:wrap}.hero{background:linear-gradient(120deg,#fff,#f5f9ff);border:1px solid #dfe9f7;border-radius:18px;padding:22px;box-shadow:var(--shadow);margin-bottom:16px}.hero-line{display:flex;justify-content:space-between;align-items:center;gap:20px}.project-title{display:flex;align-items:center;gap:14px}.project-icon{width:52px;height:52px;border-radius:15px;background:linear-gradient(135deg,#3c82f6,#6c5ce7);color:#fff;display:grid;place-items:center;font-size:23px;font-weight:900}.badge{display:inline-flex;align-items:center;padding:4px 9px;border-radius:99px;font-size:11px;font-weight:700;background:#eef4ff;color:#3568b5}.badge.green{background:#e8f8f1;color:#11774d}.badge.amber{background:#fff5df;color:#a76800}.badge.red{background:#fff0f0;color:#c3383e}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}.metric{background:#fff;border:1px solid var(--line);border-radius:13px;padding:15px;box-shadow:var(--shadow)}.metric .label{font-size:12px;color:var(--muted)}.metric .value{font-size:27px;font-weight:850;margin:6px 0}.delta{font-size:11px;color:var(--green)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.span-8{grid-column:span 8}.span-6{grid-column:span 6}.span-4{grid-column:span 4}.card{background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow);padding:16px}.card h3{font-size:14px;margin:0 0 13px}.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.list{display:grid;gap:8px}.list-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid #edf1f6;border-radius:10px;background:#fff}.list-row:hover{border-color:#c8dbf7}.progress{height:7px;border-radius:8px;background:#e8eef6;overflow:hidden}.progress i{display:block;height:100%;background:linear-gradient(90deg,#2e73eb,#4f91ff);border-radius:8px}.chart{height:220px;display:flex;align-items:end;gap:10px;padding:20px 8px 4px;background:linear-gradient(#fff,#f9fbfe);border-radius:12px}.bar{flex:1;background:linear-gradient(#5b96ff,#2d6de3);border-radius:7px 7px 3px 3px;min-height:20px;position:relative}.bar span{position:absolute;bottom:-21px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--muted)}.kanban{display:grid;grid-template-columns:repeat(5,minmax(190px,1fr));gap:10px;overflow:auto}.lane{background:#f6f8fb;border:1px solid var(--line);border-radius:12px;padding:10px;min-height:260px}.lane h4{margin:2px 4px 9px;font-size:12px}.task{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px;margin:7px 0;box-shadow:0 2px 6px rgba(30,55,85,.04);cursor:pointer}.task strong{font-size:12px;display:block}.task small{display:block;color:var(--muted);margin-top:7px}.task .task-foot{display:flex;justify-content:space-between;margin-top:8px;font-size:10px;color:var(--muted)}.role-tabs{display:flex;gap:5px;padding:4px;background:#f1f5fa;border-radius:10px;width:max-content}.role-tabs button{background:transparent;padding:7px 11px;border-radius:7px;font-size:12px;color:#52627a}.role-tabs button.active{background:#fff;color:#2259b2;box-shadow:0 2px 7px #1b37620c}.workbench{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.wb-card{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.wb-card .wb-icon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--sky);color:var(--blue);font-weight:800}.wb-card h4{margin:9px 0 4px;font-size:13px}.wb-card b{font-size:23px}.flow{display:flex;align-items:center;gap:8px;overflow:auto;padding:18px 4px}.flow-step{min-width:130px;text-align:center;padding:12px;border-radius:12px;background:#eef5ff;border:1px solid #cfe0fb;color:#265da9;font-size:12px;font-weight:800}.flow-step.done{background:#eaf8f2;border-color:#bde8d4;color:#14764f}.flow-step.review{background:#fff6e6;border-color:#f3d49b;color:#9a6200}.arrow{color:#8da0b7}.agent-map{display:grid;grid-template-columns:1fr 160px 1fr;align-items:center;gap:14px;min-height:210px}.agent{padding:18px;border:1px solid var(--line);border-radius:14px;text-align:center;background:#fbfdff}.agent .avatar{margin:0 auto 8px}.hub{height:110px;width:110px;margin:auto;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#2563eb,#7357d8);color:#fff;font-weight:900;box-shadow:0 0 0 12px #eaf1ff}.exception{border-left:4px solid var(--red)}.decision{border-left:4px solid var(--purple)}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--line);font-size:12px}.table th{color:var(--muted);font-weight:650}.empty{padding:30px;text-align:center;color:var(--muted)}.toast{position:fixed;right:22px;bottom:22px;background:#172b4d;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 12px 30px #0003;z-index:100}.modal{position:fixed;inset:0;background:#07152966;display:grid;place-items:center;z-index:90;padding:20px}.modal-card{width:min(820px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:18px;padding:20px;box-shadow:0 30px 80px #07152933}.modal-head{display:flex;justify-content:space-between;align-items:center}.modal-head h2{margin:0}.notice{padding:10px 12px;border-radius:9px;background:#eef6ff;color:#2c5d9e;font-size:12px}.gate{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:10px}.gate.locked{background:#f7f8fa}.switch{width:38px;height:22px;border-radius:20px;background:#cbd5e1;position:relative}.switch.on{background:var(--blue)}.switch:after{content:"";width:16px;height:16px;background:#fff;border-radius:50%;position:absolute;top:3px;left:3px}.switch.on:after{left:19px}.mobile-only{display:none}
+@media(max-width:1100px){.shell{grid-template-columns:190px 1fr}.metrics{grid-template-columns:repeat(2,1fr)}.grid .span-8,.grid .span-6,.grid .span-4{grid-column:span 12}.workbench{grid-template-columns:1fr}.top-search{display:none}}
+@media(max-width:760px){.topbar{padding:0 12px}.project-switch{margin-left:0}.top-user span{display:none}.shell{grid-template-columns:1fr}.sidebar{position:sticky;top:64px;height:auto;padding:8px;z-index:40}.sidebar .side-caption,.rolebox{display:none}.nav{display:flex;overflow:auto}.nav button{white-space:nowrap}.content{padding:14px}.page-head{display:block}.page-head .actions{margin-top:10px}.metrics{grid-template-columns:1fr 1fr}.login{grid-template-columns:1fr}.login-hero{display:none}.login-form{padding:32px}.mobile-only{display:block}}
+</style>
+</head>
+<body>
+<div id="auth" class="auth">
+  <div class="login">
+    <div class="login-hero"><div class="brandmark">A</div><h1>DAEP</h1><p>Distributed Agentic Engineering Platform</p><p class="slogan">Build Together · Deliver Better</p><p class="small">AI-Powered · Role-Based · Governance-Driven</p></div>
+    <div class="login-form"><h2>欢迎进入 DAEP</h2><p class="muted">连接你的成员身份，进入项目工作台。</p><div class="field"><label>成员 Token</label><input id="token" type="password" placeholder="Bearer token（不含前缀）"></div><button class="btn" onclick="connect()">登录并进入平台</button><div id="authmsg" class="msg"></div></div>
   </div>
-  <div class="portfolio-grid" id="portfolioGrid"></div>
-</section><section class="panel section-anchor" id="overview"><h2>项目工作台</h2><p class="muted" id="overviewHint">选择项目查看整体进度与协作健康状况</p><div class="metrics" id="metrics"></div><div id="healthSummary" class="muted"></div></section><section class="panel section-anchor" id="myWorkbenchPanel"><div class="row"><div><h2 id="myWorkbenchTitle">我的工作台</h2><p class="muted" id="myWorkbenchHint">按当前项目角色聚合你的待办、工作包和治理事项。</p></div><button type="button" class="secondary" onclick="renderMyWorkbench()">刷新</button></div><div class="metrics" id="myWorkbenchMetrics"></div><div class="board" id="myWorkbenchBoard"></div></section><section class="panel section-anchor" id="managerWorkbenchPanel"><div class="row"><div><h2>项目治理台</h2><p class="muted">项目管理员的组合视图：健康度、完成门禁、风险、责任分布与项目决策。</p></div><button type="button" class="secondary" onclick="loadManagerGovernance()">刷新治理</button></div><div class="metrics" id="managerGovernanceMetrics"></div><div id="managerGovernanceSummary" class="muted"></div><div class="board" id="managerGovernanceBoard"></div><div class="item"><strong>记录项目决策</strong><div class="detailgrid"><div><label>决策标题</label><input id="decisionTitle" placeholder="例如：确定本迭代交付范围"></div><div><label>责任人</label><select id="decisionAccountable"></select></div><div><label>截止时间（可选）</label><input id="decisionDueAt" type="datetime-local"></div></div><label>决策内容</label><textarea id="decisionText" placeholder="明确项目当前采取的决策"></textarea><label>决策依据（可选）</label><textarea id="decisionRationale" placeholder="风险、验收、依赖或业务依据"></textarea><label>关联任务（可多选）</label><select id="decisionTasks" multiple size="5"></select><button type="button" onclick="recordManagerDecision()">记录项目决策</button></div><div class="item"><strong>项目收口状态</strong><div id="managerClosureState" class="muted">选择项目后自动计算</div></div></section><section class="panel section-anchor" id="workflowDesignerPanel"><div class="row"><div><h2>流程与门禁设计器</h2><p class="muted">项目管理员可调整阶段、审批角色、SLA 和项目级附加门禁；系统强制门禁不可关闭。</p></div><button class="secondary" onclick="loadWorkflowDesigner()">刷新配置</button></div><div id="workflowStages" class="board"></div><div class="item"><strong>新增流程阶段</strong><div class="detailgrid"><input id="wfKey" placeholder="阶段 Key，例如 TEST"><input id="wfName" placeholder="阶段名称，例如 测试"><select id="wfRole"><option value="none">无需审批</option><option value="reviewer">审核人员</option><option value="manager">项目管理员</option><option value="owner">项目 Owner</option></select><input id="wfSla" type="number" min="300" placeholder="SLA 秒"></div><button onclick="addWorkflowStage()">添加阶段</button><button onclick="saveWorkflowDesigner()">保存流程</button></div><div class="item"><strong>项目附加门禁</strong><div id="gateDesigner" class="board"></div><div class="detailgrid"><input id="gateKey" placeholder="门禁 Key，例如 SECURITY_REVIEW"><label><input id="gateEnabled" type="checkbox" checked> 启用</label><label><input id="gateEvidence" type="checkbox"> 要求证据</label><label><input id="gateAllDone" type="checkbox"> 要求全部任务完成</label><select id="gateAppliesTo"><option value="DONE">应用于完成 DONE</option><option value="REVIEW">应用于进入 REVIEW</option><option value="TEST">应用于测试阶段 TEST</option></select></div><button onclick="saveProjectGate()">保存附加门禁</button></div></section><section class="panel" id="taskBoard"><div class="row"><h2>任务看板</h2><button class="secondary" onclick="loadTasks()">刷新看板</button></div><div class="filters"><input id="taskFilter" placeholder="搜索任务标题或 ID" oninput="renderTaskBoard()"><select id="statusFilter" onchange="renderTaskBoard()"><option value="">所有状态</option><option>READY</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>REVIEW</option><option>DONE</option></select></div><div class="board" id="board"></div></section><section class="panel" id="delegationPanel"><div class="row"><h2>跨成员任务委派</h2><span id="delegationSummary" class="muted"></span></div><div class="filters"><select id="delegationStatusFilter" onchange="renderDelegations()"><option value="">所有委派状态</option><option>PENDING</option><option>ACCEPTED</option><option>REJECTED</option><option>EXPIRED</option></select></div><div id="delegationBoard" class="board"></div></section><section class="panel" id="agentTopologyPanel"><div class="row"><h2>Agent 协作拓扑</h2><button class="secondary" onclick="loadOverview()">刷新 Agent 状态</button></div><p class="muted">仅展示成员自行注册的本地 Agent、最近心跳和 DAEP 中的任务关联；DAEP 不托管或唤醒 Agent Runtime。</p><div id="agentTopologySummary" class="muted"></div><div id="agentTopology" class="board"></div><div class="item"><strong>协作 Agent 能力匹配（推荐，不自动分配）</strong><div class="filters"><input id="agentRequiredCapabilities" placeholder="所需能力，逗号分隔，例如 python,testing"><input id="agentRequiredProtocol" value="mcp" placeholder="协议"><button type="button" onclick="recommendProjectAgents()">查找候选 Agent</button></div><div id="agentMatchSummary" class="muted"></div><div id="agentMatchResults" class="board"></div></div></section><section class="panel" id="workPackagePanel"><div class="row"><h2>项目多 Agent 工作包</h2><button class="secondary" id="scanHealthButton" onclick="scanProjectHealth()">刷新风险扫描</button></div><div class="filters"><select id="workPackageRiskFilter" onchange="renderWorkPackages()"><option value="">所有风险状态</option><option>ON_TRACK</option><option>OVERDUE</option><option>BLOCKED_DEPENDENCY</option><option>STALLED</option><option>IN_REVIEW</option><option>COMPLETED</option></select></div><div id="workPackageSummary" class="muted"></div><div id="workPackageBoard" class="board"></div></section><section class="panel" id="coordinationPanel"><div class="row"><h2>异常协作与人工协调中心</h2><div><button type="button" class="secondary" onclick="loadOverview()">刷新</button> <button type="button" class="secondary" onclick="scanStalledWorkPackages()">扫描停滞</button></div></div><p class="muted">集中处理逾期、依赖阻塞、停滞、待审核、未认领任务和待响应委派。重新委派需要人工选择在线成员与其本地 Agent。</p><div id="coordinationSummary" class="muted"></div><div id="coordinationBoard" class="board"></div></section><section class="panel" id="dependencyPanel"><div class="row"><h2>任务依赖关系图</h2><span id="dependencySummary" class="muted"></span></div><p class="muted">箭头从前置任务指向后续任务；点击节点可打开任务详情。无依赖的任务也会显示。</p><div class="graphwrap" id="dependencyGraph"><p class="muted">选择项目后显示任务关系</p></div></section><section class="panel hidden" id="taskDetail"><div class="row"><h2 id="detailTitle">任务详情</h2><button class="secondary" onclick="closeTaskDetail()">关闭</button></div><div id="detailContent"></div></section>
-<div class="grid">
-<section class="panel"><h2>项目</h2><div class="row"><input id="projectName" placeholder="新项目名称"><button onclick="createProject()">创建项目</button></div><div id="projects"></div></section>
-<section class="panel" id="memberManagementPanel"><h2>项目成员</h2><div id="members" class="muted">选择项目以查看成员</div><div class="row"><input id="newMemberId" placeholder="成员 ID"><select id="memberRole"><option>member</option><option>manager</option><option>reviewer</option></select><select id="memberWorkFunction"><option value="other">其他</option><option value="developer">开发</option><option value="tester">测试</option><option value="product">产品</option><option value="architect">架构</option></select></div><button onclick="addMember()">添加/更新成员</button><p class="muted small">项目管理员可在这里同时设置项目角色与工作职能；同一成员在不同项目可拥有不同职能。</p></section>
 </div>
-<div class="grid">
-<section class="panel" id="requirementCreatePanel"><h2>需求</h2><input id="reqTitle" placeholder="需求标题"><label>描述</label><textarea id="reqDesc"></textarea><button onclick="createRequirement()">创建需求</button><div id="requirements"></div></section>
-<section class="panel" id="taskCreatePanel"><h2>工程任务</h2><select id="reqSelect"><option value="">先创建或选择需求</option></select><input id="taskTitle" placeholder="任务标题"><label>描述</label><textarea id="taskDesc"></textarea><label>分配成员（可多选）</label><select id="assignees" multiple size="4"></select><button onclick="createTask()">创建任务</button><div id="tasks"></div></section>
-</div>
-<section class="panel section-anchor" id="inboxPanel"><h2>我的消息收件箱</h2><button class="secondary" onclick="loadInbox()">刷新消息</button><div id="inbox"></div></section>
-</div></div><div id="error" class="error"></div>
+
+<div id="app" class="app hidden">
+<header class="topbar">
+  <div class="top-brand"><span class="brandmark">A</span><span>DAEP</span></div>
+  <div class="project-switch"><span>项目</span><select id="projectSelect" onchange="selectProject(this.value)"></select></div>
+  <div class="top-search"><input id="globalSearch" placeholder="搜索需求、任务、成员或 Work Package" oninput="globalSearch()"></div>
+  <div class="top-user"><span id="topRole" class="badge">未连接</span><div id="topAvatar" class="avatar">U</div><span id="topName">用户</span></div>
+</header>
+<div class="shell">
+<aside class="sidebar">
+  <div class="side-caption">DAEP WORKSPACE</div>
+  <nav class="nav" id="nav">
+    <button data-page="portfolio" onclick="go('portfolio')">▦ 我的项目</button>
+    <button data-page="overview" onclick="go('overview')">◈ 项目总览</button>
+    <button data-page="workbench" onclick="go('workbench')">▤ 我的工作台</button>
+    <button data-page="work" onclick="go('work')">▣ 工作</button>
+    <button data-page="collaboration" onclick="go('collaboration')">◎ 协作</button>
+    <button data-page="governance" onclick="go('governance')">◇ 治理</button>
+    <button data-page="dependencies" onclick="go('dependencies')">⌁ 依赖关系</button>
+    <button data-page="exceptions" onclick="go('exceptions')">! 异常协调</button>
+    <button data-page="packages" onclick="go('packages')">◫ Work Package</button>
+    <button data-page="inbox" onclick="go('inbox')">✉ 消息收件箱</button>
+  </nav>
+  <div class="rolebox" id="roleBox"><strong>未选择角色</strong><span>连接后显示当前项目角色</span></div>
+</aside>
+
+<main class="content">
+<section id="portfolio" class="page">
+  <div class="page-head"><div><h1>我的项目</h1><p class="muted">项目组合 · 多项目上下文切换 · 项目级角色隔离</p></div><div class="actions"><button id="newProjectBtn" class="btn" onclick="openCreateProject()">＋ 新建项目</button></div></div>
+  <div class="grid" id="portfolioGrid"></div>
+</section>
+
+<section id="overview" class="page">
+  <div class="hero">
+    <div class="hero-line"><div class="project-title"><div class="project-icon">A</div><div><h1 id="projectNameTitle">Apollo 项目</h1><p class="muted" id="projectMeta">下一代分布式开发平台 · 进行中</p></div></div><span id="healthBadge" class="badge green">健康度 92</span></div>
+  </div>
+  <div class="metrics" id="overviewMetrics"></div>
+  <div class="grid">
+    <div class="card span-8"><div class="card-head"><h3>项目进度趋势</h3><span class="muted small">计划进度 / 实际进度</span></div><div class="chart" id="progressChart"></div></div>
+    <div class="card span-4"><div class="card-head"><h3>待处理事项</h3><span class="muted small">实时</span></div><div class="list" id="attentionList"></div></div>
+    <div class="card span-6"><div class="card-head"><h3>项目成员</h3><button class="btn secondary" onclick="openMembers()">管理成员</button></div><div id="memberAvatars"></div></div>
+    <div class="card span-6"><div class="card-head"><h3>项目状态</h3><span id="completionText" class="badge">进行中</span></div><div class="progress"><i id="completionBar" style="width:76%"></i></div><p id="completionHint" class="muted small">项目完成度 76% · 预计交付 2026-06-30</p></div>
+  </div>
+</section>
+
+<section id="workbench" class="page">
+  <div class="page-head"><div><h1 id="workbenchTitle">开发工作台</h1><p id="workbenchHint" class="muted">聚合当前角色最重要的工作。</p></div><div class="role-tabs" id="roleTabs"></div></div>
+  <div class="metrics" id="workbenchMetrics"></div>
+  <div class="workbench" id="workbenchCards"></div>
+</section>
+
+<section id="work" class="page">
+  <div class="page-head"><div><h1>工作</h1><p class="muted">需求、任务、流程状态和交付证据</p></div><div class="actions"><button class="btn secondary" onclick="openCreateRequirement()">＋ 新增需求</button><button class="btn secondary" onclick="openCreateTask()">＋ 新建任务</button></div></div>
+  <div class="card"><div class="card-head"><h3>任务看板</h3><div class="actions"><input id="taskFilter" placeholder="搜索任务" oninput="renderTaskBoard()" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px"><button class="btn secondary" onclick="loadTasks()">刷新</button></div></div><div class="kanban" id="taskBoard"></div></div>
+  <div class="grid" style="margin-top:14px"><div class="card span-6"><div class="card-head"><h3>需求列表</h3><span class="muted small" id="reqCount"></span></div><div id="requirementsList" class="list"></div></div><div class="card span-6"><div class="card-head"><h3>最近任务</h3></div><div id="recentTasks" class="list"></div></div></div>
+</section>
+
+<section id="collaboration" class="page">
+  <div class="page-head"><div><h1>Agent 协作</h1><p class="muted">成员本地 Agent · MCP 协议 · 能力匹配 · 协作时间线</p></div><button class="btn secondary" onclick="loadCollaboration()">刷新状态</button></div>
+  <div class="card"><div class="agent-map"><div id="agentLeft" class="agent"></div><div class="hub">DAEP</div><div id="agentRight" class="agent"></div></div></div>
+  <div class="grid" style="margin-top:14px"><div class="card span-8"><div class="card-head"><h3>Agent 在线拓扑</h3><span class="muted small">最近心跳 ≤ 120s</span></div><div id="agentList" class="list"></div></div><div class="card span-4"><h3>能力匹配</h3><div class="field"><label>所需能力</label><input id="capabilities" placeholder="python, testing, architecture"></div><button class="btn" onclick="recommendProjectAgents()">查找候选 Agent</button><div id="agentMatches" style="margin-top:12px"></div></div></div>
+</section>
+
+<section id="governance" class="page">
+  <div class="page-head"><div><h1>项目治理</h1><p class="muted">Workflow · Gate · 决策 · 验收 · 审计</p></div><button class="btn secondary" onclick="loadGovernance()">刷新治理</button></div>
+  <div class="card"><div class="card-head"><h3>Workflow</h3><span class="badge">项目可配置</span></div><div id="flow" class="flow"></div></div>
+  <div class="grid" style="margin-top:14px"><div class="card span-6"><h3>Gate 配置</h3><div id="gates" class="list"></div></div><div class="card span-6"><h3>项目决策</h3><div id="decisions" class="list"></div></div></div>
+  <div class="card" style="margin-top:14px"><div class="card-head"><h3>需求验收</h3><span class="muted small">所有任务 DONE + 交付证据 + 验收标准</span></div><div id="acceptanceList" class="list"></div></div>
+</section>
+
+<section id="dependencies" class="page">
+  <div class="page-head"><div><h1>依赖关系</h1><p class="muted">任务前置依赖 · 阻塞传播 · 交付顺序</p></div><button class="btn secondary" onclick="renderDependencies()">刷新</button></div>
+  <div class="card"><div id="dependencyView" class="empty">暂无依赖数据</div></div>
+</section>
+
+<section id="exceptions" class="page">
+  <div class="page-head"><div><h1>异常协调中心</h1><p class="muted">逾期 · 依赖阻塞 · 停滞 · 待审核 · 未认领 · 待响应委派</p></div><button class="btn secondary" onclick="loadExceptions()">扫描异常</button></div>
+  <div class="metrics" id="exceptionMetrics"></div><div id="exceptionList" class="list"></div>
+</section>
+
+<section id="packages" class="page">
+  <div class="page-head"><div><h1>Work Package</h1><p class="muted">多 Agent 工作包 · SLA · 风险 · 交付产物</p></div><button class="btn secondary" onclick="loadPackages()">刷新健康度</button></div>
+  <div class="grid" id="packageGrid"></div>
+</section>
+
+<section id="inbox" class="page">
+  <div class="page-head"><div><h1>消息收件箱</h1><p class="muted">跨成员协作消息 · ACK · 可靠投递</p></div><button class="btn secondary" onclick="loadInbox()">刷新</button></div>
+  <div class="card"><div id="inboxList" class="list"></div></div>
+</section>
 </main>
+</div>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle">详情</h2><button class="btn ghost" onclick="closeModal()">关闭</button></div><div id="modalBody"></div></div></div>
+<div id="toast" class="toast hidden"></div>
+
 <script>
-let token='',me=null,projects=[],selectedProject=null,requirements=[],selectedProjectRole='',selectedWorkFunction='',projectHealthItems=[],projectAgents=[],projectDelegations=[],projectAgentMatches=[],selectedAgentCandidate=null,projectMembers=[],projectCoordination=null,projectGovernance=null,projectDecisions=[];
-const $=id=>document.getElementById(id);const headers=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
-async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||r.statusText);return d}
-function showError(e){$('error').textContent=e.message||String(e)}
-async function connect(){try{token=$('token').value.trim();me=await api('/api/v1/me');$('identity').textContent=me.name+' · '+me.role;$('authmsg').textContent='连接成功';$('app').classList.remove('hidden');renderRoleShell();await loadProjects();await loadInbox()}catch(e){showError(e)}}
-async function loadProjects(){projects=await api('/api/v1/projects');renderPortfolio();$('projects').innerHTML=projects.map(p=>`<div class="item"><button class="secondary" onclick="selectProject('${p.id}')">打开</button><strong>${esc(p.name)}</strong><span class="muted">${esc(p.id)}</span></div>`).join('')||'<p class="muted">暂无项目</p>'}
-async function createProject(){try{const p=await api('/api/v1/projects',{method:'POST',body:JSON.stringify({name:$('projectName').value})});$('projectName').value='';await loadProjects();await selectProject(p.id)}catch(e){showError(e)}}
-async function selectProject(id){try{selectedProject=id;await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()]);await loadOverview();await loadManagerGovernance();await loadWorkflowDesigner();renderRoleShell();renderPortfolio();$('overviewHint').textContent='当前项目：'+((projects.find(p=>p.id===id)||{}).name||id)}catch(e){showError(e)}}
-async function loadProjectMembers(){const m=await api(`/api/v1/projects/${selectedProject}/members`);const current=m.find(x=>x.id===me.id)||{};selectedProjectRole=current.project_role||'';selectedWorkFunction=current.work_function||'';renderRoleShell();renderPortfolio();$('members').innerHTML=m.map(x=>`<div class="item"><strong>${esc(x.name)} <span class="tag">${esc(x.project_role)}</span> <span class="tag">${esc(workFunctionLabel(x.work_function))}</span></strong><div class="muted">${esc(x.id)}</div></div>`).join('')||'暂无成员';$('assignees').innerHTML=m.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.id})</option>`).join('')}
-async function addMember(){try{await api(`/api/v1/projects/${selectedProject}/members`,{method:'POST',body:JSON.stringify({member_id:$('newMemberId').value,role:$('memberRole').value,work_function:$('memberWorkFunction').value})});$('newMemberId').value='';await loadProjectMembers()}catch(e){showError(e)}}
-async function loadRequirements(){requirements=await api(`/api/v1/projects/${selectedProject}/requirements`);$('requirements').innerHTML=requirements.map(r=>`<div class="item"><strong>${esc(r.title)} <span class="tag">${esc(r.status)}</span></strong><span class="muted small">${esc(r.id)}</span><button type="button" class="secondary" onclick="showRequirementAcceptance('${r.id}')">验收报告</button></div>`).join('')||'<p class="muted">暂无需求</p>';$('reqSelect').innerHTML=requirements.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')||'<option value="">先创建需求</option>'}
-async function showRequirementAcceptance(id){try{const d=await api('/api/v1/requirements/'+id+'/acceptance-report');let html='<h3>需求验收 · '+esc(d.title)+'</h3><p>状态：'+esc(d.status)+' · 任务：'+d.task_count+' · 可验收：'+(d.ready_for_acceptance?'是':'否')+'</p><h4>验收标准</h4>'+(d.acceptance_criteria||[]).map(c=>'<div class="item">'+c.index+'. '+esc(c.text)+'</div>').join('')+'<h4>交付任务</h4>'+(d.tasks||[]).map(t=>'<div class="item">'+esc(t.title)+' · '+esc(t.status)+' · '+t.artifact_count+' 项交付证据</div>').join('')+'<p class="muted small">审批时必须逐项确认验收标准；所有任务必须 DONE 且每项任务至少有一个交付产物。</p>'+(d.status!=='ACCEPTED'?'<button type="button" onclick="decideRequirementAcceptance(\''+id+'\',\'APPROVE\','+d.acceptance_criteria.length+')">通过验收</button><button type="button" class="secondary" onclick="decideRequirementAcceptance(\''+id+'\',\'REJECT\','+d.acceptance_criteria.length+')">退回需求</button>':'');$('requirements').insertAdjacentHTML('beforeend','<div class="item" id="acceptance-'+id+'">'+html+'</div>')}catch(e){showError(e)}}
-async function decideRequirementAcceptance(id,decision,count){try{let verified=[];if(decision==='APPROVE'){const raw=prompt('请输入已逐项核验的标准编号（从 0 开始，逗号分隔）：',Array.from({length:count},(_,i)=>i).join(','));if(raw===null)return;verified=raw.split(',').map(x=>Number(x.trim())).filter(Number.isInteger)}else if(!confirm('确认将需求退回 OPEN 状态？'))return;const comment=prompt('验收意见（可留空）：','')||'';await api('/api/v1/requirements/'+id+'/acceptance',{method:'POST',body:JSON.stringify({decision,verified_criteria:verified,comment})});await loadRequirements();await showRequirementAcceptance(id);showMessage('需求验收状态已更新')}catch(e){showError(e)}}
-async function createRequirement(){try{await api('/api/v1/requirements',{method:'POST',body:JSON.stringify({project_id:selectedProject,title:$('reqTitle').value,description:$('reqDesc').value})});$('reqTitle').value='';$('reqDesc').value='';await loadRequirements();await loadOverview()}catch(e){showError(e)}}
-let projectTasks=[];
-async function loadTasks(){if(!selectedProject)return;projectTasks=await api('/api/v1/projects/'+selectedProject+'/tasks');renderTaskBoard();renderDependencyGraph();$('tasks').innerHTML=projectTasks.slice(0,8).map(t=>'<div class="item"><strong>'+esc(t.title)+' <span class="tag">'+esc(t.status)+'</span></strong><span class="muted">'+(t.progress||0)+'% · '+esc(t.id)+'</span></div>').join('')||'<p class="muted">暂无任务</p>'}
-async function transitionTaskWorkflow(tid,target){
- try{
-  await api('/api/v1/tasks/'+tid+'/workflow-transition',{method:'POST',headers:{'Idempotency-Key':'wf-'+tid+'-'+target+'-'+Date.now()},body:JSON.stringify({target_stage:target})});
-  await loadTasks(); await loadOverview(); if(!$('taskDetail').classList.contains('hidden')) await openTask(tid);
- }catch(e){showError(e)}
-}
-function renderTaskBoard(){
- const q=($('taskFilter').value||'').toLowerCase(),st=$('statusFilter').value;
- const stages=(workflowConfig?.stages||[]).slice().sort((a,b)=>a.order-b.order);
- const order=stages.map(x=>x.key); if(!order.includes('BLOCKED')) order.push('BLOCKED');
- const labels=Object.fromEntries(stages.map(x=>[x.key,x.name])); labels.BLOCKED='受阻';
- $('board').innerHTML=order.filter(s=>!st||st===s).map(s=>{
-  const items=projectTasks.filter(t=>t.status===s&&(!q||(t.title+' '+t.id).toLowerCase().includes(q)));
-  return '<div class="lane"><h3>'+esc(labels[s]||s)+' · '+items.length+'</h3>'+items.map(t=>'<div class="taskcard" onclick="openTask(\''+t.id+'\')"><strong>'+esc(t.title)+'</strong><div class="muted small">'+esc(t.id)+'</div><div class="bar"><span style="width:'+Math.max(0,Math.min(100,Number(t.progress)||0))+'%"></span></div><div class="muted small">'+(t.progress||0)+'% 完成 · '+esc(t.status)+'</div>'+(workflowConfig?.stages||[]).filter(x=>x.key!==t.status).slice(0,3).map(x=>'<button type="button" class="secondary small" onclick="event.stopPropagation();transitionTaskWorkflow(\''+t.id+'\',\''+x.key+'\')">→ '+esc(x.name)+'</button>').join('')+'</div>').join('')+'</div>';
- }).join('');
-}
+let token='',me=null,projects=[],selectedProject='',selectedProjectRole='',selectedWorkFunction='',requirements=[],projectTasks=[],projectMembers=[],workflowConfig=null,gateConfig={},currentPage='overview';
 
-
-
-function renderDelegations(){
- const filter=$('delegationStatusFilter').value;
- const items=projectDelegations.filter(d=>!filter||d.status===filter);
- const labels={PENDING:'等待接收',ACCEPTED:'已接受',REJECTED:'已拒绝',EXPIRED:'已过期'};
- $('delegationBoard').innerHTML=items.map(d=>'<div class="lane"><div class="row"><strong>'+esc(d.task_title)+'</strong><span class="tag">'+esc(labels[d.status]||d.status)+'</span></div><p class="muted">'+esc(d.requester_name)+' → '+esc(d.recipient_name)+'</p><p>Agent：'+esc(d.agent_name)+'</p><p class="small muted">'+esc(d.reason||'未填写委派说明')+'</p><p class="small muted">创建：'+esc(d.created_at)+' · 到期：'+esc(d.expires_at)+'</p><button type="button" class="secondary" onclick="openTask(\''+d.task_id+'\')">打开任务及协作时间线</button></div>').join('')||'<p class="muted">当前筛选条件下没有委派记录</p>';
- $('delegationSummary').textContent=items.length+' / '+projectDelegations.length+' 条委派';
-}
-
-function renderAgentTopology(){
- const agents=projectAgents||[],items=projectHealthItems||[];
- const cards=agents.map(a=>{
-  const assigned=items.filter(w=>w.agent_name===a.agent_name&&w.assignee_member_id===a.member_id);
-  const risks=assigned.filter(w=>['OVERDUE','BLOCKED_DEPENDENCY','STALLED'].includes(w.risk_state)).length;
-  const state=a.status==='AVAILABLE'?'可用':a.status==='BUSY'?'忙碌':'离线';
-  return '<div class="lane"><div class="row"><strong>'+esc(a.agent_name)+'</strong><span class="tag">'+state+'</span></div><p class="muted">'+esc(a.member_name)+' · '+esc(a.member_id)+'</p><p class="small">协议：'+esc((a.protocols||[]).join(', '))+'</p><p class="small">能力：'+esc((a.capabilities||[]).join(', ')||'未声明')+'</p><p class="muted">关联工作包 '+assigned.length+' 个 · 风险 '+risks+' 个</p>'+(assigned.map(w=>'<div class="item"><strong>'+esc(w.title)+'</strong><span class="tag">'+esc(w.risk_state)+'</span><p class="small muted">'+esc(w.task_status)+' · '+(Number(w.progress)||0)+'%</p><button type="button" class="secondary" onclick="openTask(\''+w.parent_task_id+'\')">打开协作任务</button></div>').join('')||'<p class="muted small">暂无关联工作包</p>')+'<p class="small muted">最近心跳：'+esc(a.last_seen)+'</p></div>';
- }).join('');
- const mapped=new Set(agents.map(a=>a.agent_name+'|'+a.member_id));
- const orphan=items.filter(w=>!mapped.has(w.agent_name+'|'+w.assignee_member_id));
- $('agentTopology').innerHTML=cards+(orphan.length?'<div class="lane"><strong>未匹配到当前 Agent 注册记录</strong><p class="muted small">'+orphan.length+' 个工作包；可能是 Agent 尚未注册或心跳已过期</p>'+orphan.map(w=>'<p class="small">'+esc(w.title)+' · '+esc(w.agent_name)+' · '+esc(w.risk_state)+'</p>').join('')+'</div>':'')||'<p class="muted">该项目尚无 Agent 注册记录</p>';
- $('agentTopologySummary').textContent=agents.length+' 个已登记 Agent · '+agents.filter(a=>a.status!=='OFFLINE').length+' 个最近在线 · '+items.length+' 个活动工作包';
-}
-
-async function recommendProjectAgents(){
- try{
-  const capabilities=$('agentRequiredCapabilities').value.trim(),protocol=$('agentRequiredProtocol').value.trim()||'mcp';
-  const q=new URLSearchParams({required_capabilities:capabilities,protocol});
-  const result=await api('/api/v1/projects/'+selectedProject+'/agent-matches?'+q.toString());
-  projectAgentMatches=result.items||[];
-  $('agentMatchSummary').textContent='候选 '+result.count+' 个 · 完全匹配且当前可用 '+result.eligible_count+' 个。此列表仅供人工决策，不会分配任务或唤醒 Agent。';
-  $('agentMatchResults').innerHTML=projectAgentMatches.map(a=>'<div class="lane"><div class="row"><strong>'+esc(a.agent_name)+' · '+esc(a.member_name)+'</strong><span class="tag">'+(a.eligible?'可用候选':esc(a.availability_reason))+'</span></div><p class="small muted">匹配 '+a.match_score+'% · 协议 '+(a.protocol_match?'兼容':'不兼容')+' · 最近心跳 '+esc(a.last_seen)+'</p><p class="small">已匹配：'+esc((a.matched_capabilities||[]).join(', ')||'无')+'</p><p class="small '+(a.missing_capabilities.length?'risk':'muted')+'">缺失：'+esc((a.missing_capabilities||[]).join(', ')||'无')+'</p>'+(a.eligible?'<button type="button" class="secondary" onclick="chooseAgentCandidate(\''+esc(a.member_id)+'\',\''+esc(a.agent_name)+'\')">用于当前工作包</button>':'')+'</div>').join('')||'<p class="muted">没有已登记的 Agent</p>';
- }catch(e){showError(e)}
-}
-
-
-function chooseAgentCandidate(memberId,agentName){
- selectedAgentCandidate={member_id:memberId,agent_name:agentName};
- if($('wpMember')) $('wpMember').value=memberId;
- if($('wpAgent')) $('wpAgent').value=agentName;
- if($('wpCreateHint')) $('wpCreateHint').textContent='已选择能力匹配候选：'+memberId+' / '+agentName;
-}
-function syncWorkPackageAgentMember(){
- const s=$('wpAgent'),o=s?.selectedOptions?.[0];
- if(o?.dataset.member && $('wpMember')) $('wpMember').value=o.dataset.member;
-}
-async function createWorkPackageFromDetail(parentId){
- try{
-  const memberId=$('wpMember').value,agentName=$('wpAgent').value;
-  const dependencies=[...$('wpDependencies').selectedOptions].map(o=>o.value);
-  const body={title:$('wpTitle').value.trim(),description:$('wpDescription').value,assignee_member_id:memberId,agent_name:agentName,dependencies};
-  const sla=Number($('wpSla').value||0); if(sla) body.sla_seconds=sla;
-  if(!body.title) throw Error('请输入工作包标题');
-  await api('/api/v1/tasks/'+parentId+'/work-packages',{method:'POST',body:JSON.stringify(body)});
-  await loadTasks(); await loadOverview(); await openTask(parentId);
- }catch(e){showError(e)}
-}
-async function reviewWorkPackage(packageId,decision){
- try{
-  const comment=decision==='REJECT'?'请按评审意见修改后重新提交':'确认工作包交付物符合要求';
-  await api('/api/v1/work-packages/'+packageId+'/review',{method:'POST',body:JSON.stringify({decision,comment})});
-  await loadTasks(); await loadOverview();
-  const parent=document.querySelector('[id="detailTitle"]')?.textContent;
- }catch(e){showError(e)}
-}
-
-
-function renderCoordinationCenter(){
- const c=projectCoordination||{counts:{},exception_work_packages:[],unclaimed_tasks:[],pending_reviews:[],pending_delegations:[]};
- const counts=c.counts||{};
- $('coordinationSummary').textContent='异常工作包 '+(counts.exception_work_packages||0)+' · 未认领任务 '+(counts.unclaimed_tasks||0)+' · 待审核 '+(counts.pending_reviews||0)+' · 待响应委派 '+(counts.pending_delegations||0);
- const canManage=['owner','manager'].includes(selectedProjectRole)||me?.role==='admin';
- const labels={OVERDUE:'逾期',BLOCKED_DEPENDENCY:'依赖阻塞',STALLED:'停滞',IN_REVIEW:'待审核',ON_TRACK:'正常'};
- let html='';
- if(c.exception_work_packages.length){
-  html+='<div class="lane"><h3>异常工作包</h3>'+c.exception_work_packages.map(w=>{
-   const options=projectAgents.map(a=>'<option value="'+esc(a.member_id)+'|'+esc(a.agent_name)+'">'+esc(a.member_name)+' · '+esc(a.agent_name)+' · '+esc(a.status)+' · '+esc(a.last_seen)+'</option>').join('');
-   const memberOptions=projectMembers.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+esc(m.id)+'</option>').join('');
-   return '<div class="item"><div class="row"><strong>'+esc(w.title)+'</strong><span class="tag">'+esc(labels[w.risk_state]||w.risk_state)+'</span></div><p class="small muted">'+esc(w.task_status)+' · '+(w.progress||0)+'% · 当前 '+esc(w.assignee_name||w.assignee_member_id)+' / '+esc(w.agent_name)+'</p><p class="small muted">Agent 状态：'+esc(w.agent_status)+' · SLA：'+esc(w.sla_due_at||'未设置')+' · 最近活动：'+esc(w.updated_at)+'</p>'+(w.stall_reason?'<p class="small risk">停滞原因：'+esc(w.stall_reason)+'</p>':'')+(w.blocking_dependencies||[]).map(d=>'<p class="small risk">阻塞依赖：'+esc(d.title)+' · '+esc(d.status)+'</p>').join('')+'<button type="button" class="secondary" onclick="openTask(\''+w.parent_task_id+'\')">打开父任务与时间线</button>'+(canManage&&w.needs_attention?'<div class="detailgrid"><div><label>重新委派成员</label><select id="coordMember_'+w.work_package_id+'">'+memberOptions+'</select></div><div><label>成员已注册 Agent</label><select id="coordAgent_'+w.work_package_id+'">'+options+'</select></div></div><label>重新委派原因</label><input id="coordReason_'+w.work_package_id+'" placeholder="说明停滞处理与交接原因"><button type="button" onclick="reassignCoordinationPackage(\''+w.work_package_id+'\')">确认重新委派</button>':'')+'</div>';
-  }).join('')+'</div>';
- }else html+='<div class="lane"><h3>异常工作包</h3><p class="muted">当前没有已标记的异常工作包</p></div>';
- html+='<div class="lane"><h3>未认领任务 · '+c.unclaimed_tasks.length+'</h3>'+(c.unclaimed_tasks.map(t=>'<div class="item"><strong>'+esc(t.title)+'</strong><p class="small muted">'+esc(t.status)+' · '+(t.progress||0)+'% · '+esc(t.task_id)+'</p><button type="button" class="secondary" onclick="openTask(\''+t.task_id+'\')">打开任务并安排负责人</button></div>').join('')||'<p class="muted">没有未认领任务</p>')+'</div>';
- html+='<div class="lane"><h3>待审核任务 · '+c.pending_reviews.length+'</h3>'+(c.pending_reviews.map(t=>'<div class="item"><strong>'+esc(t.title)+'</strong><p class="small muted">产物 '+t.artifact_count+' 个 · '+esc(t.updated_at)+'</p><button type="button" class="secondary" onclick="openTask(\''+t.task_id+'\')">打开任务并审核</button></div>').join('')||'<p class="muted">没有待审核任务</p>')+'</div>';
- html+='<div class="lane"><h3>待响应委派 · '+c.pending_delegations.length+'</h3>'+(c.pending_delegations.map(d=>'<div class="item"><strong>'+esc(d.task_title)+'</strong><p class="small muted">'+esc(d.requester_name)+' → '+esc(d.recipient_name)+' · '+esc(d.agent_name)+'</p><p class="small muted">'+esc(d.reason||'无说明')+' · 到期 '+esc(d.expires_at)+'</p><button type="button" class="secondary" onclick="openTask(\''+d.task_id+'\')">查看委派和协作时间线</button></div>').join('')||'<p class="muted">没有待响应委派</p>')+'</div>';
- $('coordinationBoard').innerHTML=html;
-}
-async function scanStalledWorkPackages(){
- try{const r=await api('/api/v1/projects/'+selectedProject+'/work-packages/scan-stalled',{method:'POST',body:JSON.stringify({stale_after_seconds:3600})});await loadOverview();$('coordinationSummary').textContent+=' · 本次标记停滞 '+r.marked_count+' 个（1 小时无活动）'}catch(e){showError(e)}
-}
-async function reassignCoordinationPackage(packageId){
- try{
-  const selected=$('coordAgent_'+packageId).value.split('|');
-  if(selected.length!==2||!selected[0]||!selected[1]) throw Error('请选择一个已登记 Agent');
-  const reason=$('coordReason_'+packageId).value.trim();if(!reason) throw Error('请填写重新委派原因');
-  const memberId=$('coordMember_'+packageId).value;if(memberId!==selected[0]) throw Error('所选 Agent 必须属于选定成员');
-  await api('/api/v1/work-packages/'+packageId+'/reassign',{method:'POST',body:JSON.stringify({assignee_member_id:memberId,agent_name:selected[1],reason})});
-  await loadTasks();await loadOverview();
- }catch(e){showError(e)}
-}
-
-function renderMyWorkbench(){
- if(!selectedProject||!me)return;
- const f=currentWorkFunction(), role=selectedProjectRole;
- const isManager=['owner','manager'].includes(role)||me.role==='admin';
- const isTester=f==='tester'||role==='reviewer';
- const assigned=(projectTasks||[]).filter(t=>(t.assignees||[]).some(a=>a.id===me.id));
- const active=assigned.filter(t=>['READY','IN_PROGRESS','BLOCKED'].includes(t.status));
- const review=assigned.filter(t=>t.status==='REVIEW');
- const minePackages=(projectHealthItems||[]).filter(w=>w.assignee_member_id===me.id);
- const risk=minePackages.filter(w=>['OVERDUE','BLOCKED_DEPENDENCY','STALLED'].includes(w.risk_state));
- const pendingReviews=(projectCoordination?.pending_reviews||[]);
- const title=isManager?'项目管理工作台':isTester?'测试 / 验收工作台':f==='product'?'产品工作台':f==='architect'?'架构工作台':'开发工作台';
- $('myWorkbenchTitle').textContent=title;
- $('myWorkbenchHint').textContent=isManager?'聚合项目健康、异常、委派与待治理事项。':isTester?'聚合待验证任务、审核与验收证据。':'聚合你负责的任务、Work Package、Agent 协作与阻塞事项。';
- const metrics=isManager?[['项目任务',projectTasks.length],['异常工作包',(projectHealthItems||[]).filter(w=>w.risk_state!=='ON_TRACK'&&w.risk_state!=='COMPLETED').length],['待审核',pendingReviews.length],['待响应委派',(projectCoordination?.pending_delegations||[]).length]]:[['我的任务',assigned.length],['进行中',active.length],['待审核',review.length],['风险工作包',risk.length]];
- $('myWorkbenchMetrics').innerHTML=metrics.map(x=>'<div class="metric workbench-kpi"><span class="muted">'+x[0]+'</span><b>'+x[1]+'</b></div>').join('');
- const taskItems=(isManager?projectTasks:assigned).filter(t=>t.status!=='DONE').slice(0,8);
- const packageItems=(isManager?projectHealthItems:minePackages).filter(w=>w.risk_state!=='COMPLETED').slice(0,8);
- const reviewItems=isManager?pendingReviews.slice(0,8):review.slice(0,8);
- const taskHtml='<div class="workbench-card"><h3>'+(isManager?'项目任务':'我的任务')+'</h3><div class="wb-list">'+(taskItems.map(t=>'<div class="wb-item"><div class="row"><strong>'+esc(t.title)+'</strong><span class="tag">'+esc(t.status)+'</span></div><div class="muted small">'+(Number(t.progress)||0)+'% · '+esc((t.assignees||[]).map(a=>a.name).join('、')||'未分配')+'</div><button type="button" class="secondary" onclick="openTask(\''+t.id+'\')">打开</button></div>').join('')||'<p class="muted">暂无待处理任务</p>')+'</div></div>';
- const packageHtml='<div class="workbench-card"><h3>Work Package</h3><div class="wb-list">'+(packageItems.map(w=>'<div class="wb-item"><div class="row"><strong>'+esc(w.title)+'</strong><span class="tag">'+esc(w.risk_state)+'</span></div><div class="muted small">'+esc(w.agent_name)+' · '+(Number(w.progress)||0)+'% · SLA '+esc(w.sla_due_at||'未设置')+'</div><button type="button" class="secondary" onclick="openTask(\''+w.parent_task_id+'\')">查看协作</button></div>').join('')||'<p class="muted">暂无活动工作包</p>')+'</div></div>';
- const reviewHtml='<div class="workbench-card"><h3>'+(isTester?'待验证 / 验收':'待处理审核')+'</h3><div class="wb-list">'+(reviewItems.map(t=>{const id=t.task_id||t.id;return '<div class="wb-item"><strong>'+esc(t.title)+'</strong><div class="muted small">'+esc(t.updated_at||t.status||'')+'</div><button type="button" class="secondary" onclick="openTask(\''+id+'\')">进入详情</button>'+(isTester&&t.requirement_id?'<button type="button" class="secondary" onclick="showRequirementAcceptance(\''+t.requirement_id+'\')">查看验收报告</button>':'')+'</div>'}).join('')||'<p class="muted">暂无待处理项</p>')+'</div></div>';
- $('myWorkbenchBoard').innerHTML=taskHtml+packageHtml+reviewHtml;
-}
-function renderWorkPackages(){
- const filter=$('workPackageRiskFilter').value;
- const items=projectHealthItems.filter(x=>!filter||x.risk_state===filter);
- const labels={ON_TRACK:'正常',OVERDUE:'逾期',BLOCKED_DEPENDENCY:'依赖阻塞',STALLED:'停滞',IN_REVIEW:'待审核',COMPLETED:'已完成'};
- $('workPackageBoard').innerHTML=items.map(w=>'<div class="lane"><div class="row"><strong>'+esc(w.title)+'</strong><span class="tag">'+esc(labels[w.risk_state]||w.risk_state)+'</span></div><p class="muted">'+esc(w.agent_name)+' · '+esc(w.assignee_member_id)+'</p><div class="bar"><span style="width:'+Math.max(0,Math.min(100,Number(w.progress)||0))+'%"></span></div><p class="muted">'+(Number(w.progress)||0)+'% · '+esc(w.task_status)+'</p><p class="small muted">SLA：'+esc(w.sla_due_at||'未设置')+'</p>'+(w.blocking_dependencies||[]).map(d=>'<p class="small risk">阻塞：'+esc(d.title)+' · '+esc(d.status)+'</p>').join('')+'<button type="button" class="secondary" onclick="openTask(\''+w.parent_task_id+'\')">查看父任务与协作时间线</button></div>').join('')||'<p class="muted">当前筛选条件下没有工作包</p>';
- $('workPackageSummary').textContent=items.length+' / '+projectHealthItems.length+' 个工作包';
-}
-async function scanProjectHealth(){
- try{await api('/api/v1/projects/'+selectedProject+'/work-packages/scan-health',{method:'POST'});await loadOverview()}catch(e){showError(e)}
-}
-
-function renderDependencyGraph(){
- const tasks=projectTasks||[],byId=new Map(tasks.map(t=>[t.id,t])),memo=new Map();
- function depth(id,visiting=new Set()){
-  if(memo.has(id))return memo.get(id);
-  if(visiting.has(id))return 0;
-  const next=new Set(visiting);next.add(id);
-  const deps=(byId.get(id)?.dependencies||[]).filter(x=>byId.has(x));
-  const value=deps.length?Math.max(...deps.map(x=>depth(x,next)+1)):0;
-  memo.set(id,value);return value;
- }
- if(!tasks.length){$('dependencyGraph').innerHTML='<p class="muted">当前项目还没有任务</p>';$('dependencySummary').textContent='0 个任务';return}
- const cols=new Map();
- tasks.forEach(t=>{const d=depth(t.id);if(!cols.has(d))cols.set(d,[]);cols.get(d).push(t)});
- const positions=new Map();let maxRows=1;
- [...cols.keys()].sort((a,b)=>a-b).forEach(d=>{const rows=cols.get(d);maxRows=Math.max(maxRows,rows.length);rows.forEach((t,n)=>positions.set(t.id,{x:24+d*270,y:24+n*104}))});
- const width=48+(Math.max(...cols.keys())+1)*270,height=48+maxRows*104;
- let edges='';
- tasks.forEach(t=>(t.dependencies||[]).forEach(dep=>{const a=positions.get(dep),b=positions.get(t.id);if(!a||!b)return;const x1=a.x+220,y1=a.y+35,x2=b.x,y2=b.y+35,m=(x1+x2)/2;edges+='<path class="graphedge" d="M '+x1+' '+y1+' C '+m+' '+y1+', '+m+' '+y2+', '+x2+' '+y2+'" marker-end="url(#depArrow)"/>'}));
- const nodes=tasks.map(t=>{const p=positions.get(t.id),title=String(t.title||'').length>25?String(t.title).slice(0,24)+'…':(t.title||'未命名任务');return '<g class="graphnode" role="button" tabindex="0" aria-label="打开任务 '+esc(t.title)+'" onclick="openTask(\''+t.id+'\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \')openTask(\''+t.id+'\')"><title>'+esc(t.title)+' · '+esc(t.status)+'</title><rect x="'+p.x+'" y="'+p.y+'" width="220" height="70" rx="9"/><text x="'+(p.x+12)+'" y="'+(p.y+25)+'" font-size="13" font-weight="600">'+esc(title)+'</text><text x="'+(p.x+12)+'" y="'+(p.y+48)+'" font-size="11">'+esc(t.status)+' · '+(Number(t.progress)||0)+'%</text></g>'}).join('');
- $('dependencyGraph').innerHTML='<svg class="depgraph" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="项目任务依赖关系图"><defs><marker id="depArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/></marker></defs>'+edges+nodes+'</svg>';
- const relations=tasks.reduce((n,t)=>n+(t.dependencies||[]).filter(x=>byId.has(x)).length,0);
- $('dependencySummary').textContent=tasks.length+' 个任务 · '+relations+' 条依赖关系'+(relations?'':' · 尚未建立任务依赖');
-}
-function byIdTask(id){return projectTasks.find(x=>x.id===id)||null}
-function dependencyLinks(t){
- const deps=(t.dependencies||[]).map(id=>byIdTask(id)).filter(Boolean);
- const downstream=projectTasks.filter(x=>(x.dependencies||[]).includes(t.id));
- const render=(x,label)=>'<button type="button" class="dep-link" onclick="openTask(\''+x.id+'\')">'+esc(label)+': '+esc(x.title)+'</button>';
- const canEdit=['owner','manager'].includes(selectedProjectRole)||me?.role==='admin';
- const editor=canEdit?'<label>编辑前置任务（可多选）</label><select id="dependencyEditor" multiple size="5">'+projectTasks.filter(x=>x.id!==t.id).map(x=>'<option value="'+x.id+'" '+(deps.some(d=>d.id===x.id)?'selected':'')+'>'+esc(x.title)+'</option>').join('')+'</select><button type="button" onclick="saveTaskDependencies(\''+t.id+'\')">保存依赖关系</button>':'<p class="muted small">只有项目 Owner 或 Manager 可以修改依赖关系</p>';
- return '<div><b>前置任务</b><div>'+(deps.map(x=>render(x,'前置')).join('')||'<span class="muted">无</span>')+'</div><b>后续任务</b><div>'+(downstream.map(x=>render(x,'后续')).join('')||'<span class="muted">无</span>')+'</div>'+editor+'</div>';
-}
-async function saveTaskDependencies(id){
- try{const dependencies=[...$('dependencyEditor').selectedOptions].map(o=>o.value);await api('/api/v1/tasks/'+id+'/dependencies',{method:'PUT',body:JSON.stringify({dependencies})});await loadTasks();await openTask(id)}catch(e){showError(e)}
-}
-
-async function loadManagerGovernance(){
- if(!selectedProject||!(me?.role==='admin'||['owner','manager'].includes(selectedProjectRole))) return;
- try{
-  const [g,d]=await Promise.all([api('/api/v1/projects/'+selectedProject+'/governance'),api('/api/v1/projects/'+selectedProject+'/decisions?limit=100')]);
-  projectGovernance=g;projectDecisions=d.items||[];renderManagerWorkbench();
- }catch(e){showError(e)}
-}
-function renderManagerWorkbench(){
- if(!projectGovernance)return;
- const g=projectGovernance, risks=g.active_work_package_risk_counts||{};
- const riskCount=Number(g.at_risk_work_packages||0), total=Number(g.task_total||0), done=Number(g.completed_tasks||0);
- const metrics=[['任务总数',total],['完成率',(g.completion_percent??0)+'%'],['待审核',g.pending_reviews||0],['风险工作包',riskCount]];
- $('managerGovernanceMetrics').innerHTML=metrics.map(x=>'<div class="metric workbench-kpi"><span class="muted">'+x[0]+'</span><b>'+x[1]+'</b></div>').join('');
- const gate=g.completion_gate||'OPEN';
- $('managerGovernanceSummary').innerHTML='<strong>完成门禁：<span class="'+(gate==='SATISFIED'?'good':'risk')+'">'+esc(gate)+'</span></strong> · 未完成任务 '+esc(g.open_tasks)+' · 工作包风险 '+Object.entries(risks).map(([k,v])=>esc(k)+': '+v).join(' · ')+' · 消息事件 '+esc(g.message_delivery?.incident_count||0);
- const responsibility=(g.responsibility||[]).slice(0,10);
- const decisionHtml='<div class="workbench-card"><h3>最近项目决策</h3><div class="wb-list">'+(projectDecisions.slice(0,8).map(d=>'<div class="wb-item"><strong>'+esc(d.title)+'</strong><div class="muted small">'+esc(d.decision)+' · 责任人 '+esc(d.accountable_member_name||d.accountable_member_id)+' · '+esc(d.created_at)+'</div><div class="muted small">'+esc(d.rationale||'未填写依据')+'</div></div>').join('')||'<p class="muted">暂无项目决策记录</p>')+'</div></div>';
- const responsibilityHtml='<div class="workbench-card"><h3>责任分布</h3><div class="wb-list">'+(responsibility.map(r=>'<div class="wb-item"><strong>'+esc(r.member_name||r.member_id)+'</strong><div class="muted small">完成 '+r.done+' · 进行中 '+r.active+' · 待审 '+r.review+' · 阻塞 '+r.blocked+'</div></div>').join('')||'<p class="muted">暂无任务责任分布</p>')+'</div></div>';
- const riskHtml='<div class="workbench-card"><h3>风险与治理动作</h3><div class="wb-list"><div class="wb-item"><strong>异常协调</strong><div class="muted small">集中处理逾期、停滞、依赖阻塞与待响应委派。</div><button type="button" class="secondary" onclick="navigateTo(\'coordinationPanel\')">进入异常协调</button></div><div class="wb-item"><strong>风险扫描</strong><div class="muted small">刷新 Work Package 健康状态。</div><button type="button" class="secondary" onclick="scanProjectHealth()">执行健康扫描</button></div><div class="wb-item"><strong>停滞扫描</strong><div class="muted small">将超过 1 小时无活动的工作包标记为停滞。</div><button type="button" class="secondary" onclick="scanStalledWorkPackages()">扫描停滞</button></div></div></div>';
- $('managerGovernanceBoard').innerHTML=decisionHtml+responsibilityHtml+riskHtml;
- $('decisionAccountable').innerHTML=(projectMembers||[]).map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+esc(m.id)+'</option>').join('');
- $('decisionTasks').innerHTML=(projectTasks||[]).map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title)+' · '+esc(t.status)+'</option>').join('');
- const noRisk=riskCount===0, gateReady=gate==='SATISFIED', noReview=Number(g.pending_reviews||0)===0;
- const ready=gateReady&&noRisk&&noReview;
- $('managerClosureState').innerHTML='<strong class="'+(ready?'good':'risk')+'">'+(ready?'具备项目收口条件':'暂不具备项目收口条件')+'</strong><div class="small muted">完成门禁 '+esc(gate)+' · 风险 '+riskCount+' · 待审核 '+(g.pending_reviews||0)+' · 未完成任务 '+(g.open_tasks||0)+'。DAEP 当前不自动关闭项目，收口仍由项目治理决策完成。</div>';
-}
-async function recordManagerDecision(){
- try{
-  const title=$('decisionTitle').value.trim(),decision=$('decisionText').value.trim(),accountable=$('decisionAccountable').value;
-  if(!title||!decision||!accountable) throw Error('请填写决策标题、决策内容和责任人');
-  const related_task_ids=[...$('decisionTasks').selectedOptions].map(o=>o.value);
-  const due=$('decisionDueAt').value?new Date($('decisionDueAt').value).toISOString():null;
-  await api('/api/v1/projects/'+selectedProject+'/decisions',{method:'POST',body:JSON.stringify({title,decision,rationale:$('decisionRationale').value,accountable_member_id:accountable,related_task_ids,due_at:due})});
-  $('decisionTitle').value='';$('decisionText').value='';$('decisionRationale').value='';$('decisionDueAt').value='';
-  await loadManagerGovernance();showMessage('项目决策已记录');
- }catch(e){showError(e)}
-}
-async function loadOverview(){if(!selectedProject)return;const [m,h,a,d,coord]=await Promise.all([api('/api/v1/projects/'+selectedProject+'/members'),api('/api/v1/projects/'+selectedProject+'/work-health'),api('/api/v1/projects/'+selectedProject+'/agents'),api('/api/v1/projects/'+selectedProject+'/delegations?limit=200'),api('/api/v1/projects/'+selectedProject+'/coordination')]);projectMembers=m;projectCoordination=coord;projectDelegations=d.items||[];renderDelegations();projectAgents=a.items||[];projectHealthItems=h.items||[];renderAgentTopology();projectHealthItems=h.items||[];renderWorkPackages();renderCoordinationCenter();renderMyWorkbench();$('scanHealthButton').classList.toggle('hidden',!(['owner','manager'].includes(selectedProjectRole)||me?.role==='admin'));const total=projectTasks.length,done=projectTasks.filter(t=>t.status==='DONE').length,blocked=projectTasks.filter(t=>t.status==='BLOCKED').length,review=projectTasks.filter(t=>t.status==='REVIEW').length,active=projectTasks.filter(t=>t.status==='IN_PROGRESS').length,avg=total?Math.round(projectTasks.reduce((n,t)=>n+(Number(t.progress)||0),0)/total):0;const data=[['需求',requirements.length],['任务',total],['已完成',done],['进行中',active],['受阻',blocked],['成员',m.length],['平均进度',avg+'%']];$('metrics').innerHTML=data.map(x=>'<div class="metric"><span class="muted">'+x[0]+'</span><b>'+x[1]+'</b></div>').join('');$('healthSummary').innerHTML='<strong>工作包健康度：<span class="'+(h.at_risk_count?'risk':'good')+'">'+h.health_score+'%</span></strong>　工作包 '+h.work_package_count+' 个 · 风险 '+h.at_risk_count+' 个 · 待审核任务 '+review+' 个 <span class="muted">（健康度只统计已登记的活动工作包）</span>'}
-async function openTask(id){
- try{
-  const [t,p,tl]=await Promise.all([api('/api/v1/tasks/'+id),api('/api/v1/tasks/'+id+'/work-packages'),api('/api/v1/tasks/'+id+'/work-timeline')]);
-  $('detailTitle').textContent=t.title;
-  let html='<div class="detailgrid"><div><b>状态</b><p>'+esc(t.status)+' · '+(t.progress||0)+'%</p></div><div><b>负责人</b><p>'+(t.assignees||[]).map(a=>esc(a.name)).join('、')+'</p></div><div><b>任务 ID</b><p class="small">'+esc(t.id)+'</p></div><div><b>依赖任务</b><p class="small">'+dependencyLinks(t)+'</p></div></div>';
-  const testerAction=(currentWorkFunction()==='tester'||selectedProjectRole==='reviewer')?'<div class="item"><strong>测试操作</strong><p class="muted small">测试结果通过进度记录；发现阻塞可直接标记阻塞；交付验证证据后进入 Review。</p><button type="button" onclick="testerSetProgress(\''+id+'\',100)">测试通过 · 提交 Review</button><button type="button" class="secondary" onclick="testerSetProgress(\''+id+'\',50)">测试中 · 50%</button><button type="button" class="secondary" onclick="testerBlockTask(\''+id+'\')">发现阻塞</button><button type="button" class="secondary" onclick="testerAddArtifact(\''+id+'\')">添加验收证据</button></div>':'';
-  html+=testerAction;
-  html+='<h3>跨成员委派 · '+(tl.delegations||[]).length+'</h3>';
-  html+=(tl.delegations||[]).map(d=>'<div class="item"><strong>'+esc(d.requester_name)+' → '+esc(d.recipient_name)+' · '+esc(d.agent_name)+'</strong><div class="muted small">'+esc(d.status)+' · '+esc(d.reason||'无说明')+'</div><div class="muted small">发起：'+esc(d.created_at)+' · 响应：'+esc(d.responded_at||'尚未响应')+'</div></div>').join('')||'<p class="muted">暂无委派记录</p>';
-  html+='<h3>跨成员工作包 · '+p.length+'</h3>';
-  const canManage=['owner','manager'].includes(selectedProjectRole)||me?.role==='admin';
-  if(canManage){
-   const memberOptions=[...$('assignees').options].map(o=>'<option value="'+o.value+'">'+esc(o.textContent)+'</option>').join('');
-   const agentOptions=projectAgents.map(a=>'<option value="'+esc(a.agent_name)+'" data-member="'+esc(a.member_id)+'">'+esc(a.agent_name)+' · '+esc(a.member_name)+' · '+esc((a.capabilities||[]).join(', ')||'无能力声明')+'</option>').join('');
-   const depOptions=projectTasks.filter(x=>x.id!==id).map(x=>'<option value="'+x.id+'">'+esc(x.title)+' · '+esc(x.status)+'</option>').join('');
-   html+='<div class="item"><strong>创建工作包</strong><div class="detailgrid"><div><label>标题</label><input id="wpTitle" placeholder="例如：实现 MCP Adapter"></div><div><label>成员</label><select id="wpMember">'+memberOptions+'</select></div><div><label>本地 Agent</label><select id="wpAgent" onchange="syncWorkPackageAgentMember()">'+agentOptions+'</select></div><div><label>SLA（秒，可选）</label><input id="wpSla" type="number" min="300" placeholder="例如 86400"></div></div><label>描述</label><textarea id="wpDescription" placeholder="工作包边界、交付要求"></textarea><label>前置依赖（可多选）</label><select id="wpDependencies" multiple size="4">'+depOptions+'</select><button type="button" onclick="createWorkPackageFromDetail(\''+id+'\')">创建并发送工作包通知</button><span id="wpCreateHint" class="muted small"></span></div>';
-  }
-  html+=p.map(w=>'<div class="item"><strong>'+esc(w.title)+' <span class="tag">'+esc(w.task_status)+'</span></strong><div class="muted">'+esc(w.agent_name)+' · '+esc(w.assignee_member_id)+' · '+(w.progress||0)+'%</div><div class="muted small">风险：'+esc(w.risk_state)+' · SLA：'+esc(w.sla_due_at||'未设置')+' · 产物：'+(w.artifacts||[]).length+'</div>'+((w.task_status==='REVIEW'&&canManage)?'<button type="button" onclick="reviewWorkPackage(\''+w.id+'\',\'APPROVE\')">审核通过</button><button type="button" class="secondary" onclick="reviewWorkPackage(\''+w.id+'\',\'REJECT\')">退回修改</button>':'')+'<button type="button" class="secondary" onclick="openTask(\''+w.child_task_id+'\')">打开工作包任务</button></div>').join('')||'<p class="muted">暂无子工作包</p>';
-  html+='<h3>依赖边 · '+(tl.dependency_edges||[]).length+'</h3>';
-  html+=(tl.dependency_edges||[]).map(e=>'<div class="item"><strong>'+esc(e.task_title)+' → '+esc(e.depends_on_title)+'</strong><div class="muted small">'+(e.blocked?'尚未解除阻塞：'+esc(e.depends_on_status):'依赖已完成')+'</div></div>').join('')||'<p class="muted">暂无子任务依赖</p>';
-  html+='<h3>协作事件时间线 · '+tl.count+'</h3>';
-  html+=tl.items.slice(-30).reverse().map(e=>{
-   const label=e.kind==='delegation'?'委派 · '+e.stage:e.kind==='artifact'?'交付产物':e.kind==='message'?'消息 · '+(e.status||''):e.event_type||e.kind;
-   const detail=e.kind==='delegation'?(esc(e.requester_name)+' → '+esc(e.recipient_name)+' · '+esc(e.agent_name)+' · '+esc(e.reason||'')):e.kind==='artifact'?(esc(e.artifact.artifact_type)+' · '+esc(e.artifact.uri||e.artifact.commit_sha||'')):e.kind==='message'?(esc(e.title)+' · '+(e.acked_at?'已确认收到':'待确认')):(esc(e.actor_name||'系统')+' · '+esc(e.task_id||''));
-   return '<div class="item"><strong>'+esc(label)+'</strong><span class="muted small"> '+esc(e.occurred_at)+'</span><div class="muted small">'+detail+'</div></div>';
-  }).join('')||'<p class="muted">暂无协作记录</p>';
-  $('detailContent').innerHTML=html;$('taskDetail').classList.remove('hidden');$('taskDetail').scrollIntoView({behavior:'smooth',block:'start'});
- }catch(e){showError(e)}
-}
-
-async function testerSetProgress(id,progress){try{const key='tester-progress-'+id+'-'+progress+'-'+Date.now();await api('/api/v1/tasks/'+id+'/progress',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({progress})});await loadTasks();await openTask(id);showMessage(progress===100?'测试完成，任务已进入 Review':'测试进度已更新')}catch(e){showError(e)}}
-async function testerBlockTask(id){const reason=prompt('请输入阻塞原因：','发现缺陷或环境阻塞');if(reason===null)return;try{await api('/api/v1/tasks/'+id+'/blocked',{method:'POST',body:JSON.stringify({reason})});await loadTasks();await openTask(id);showMessage('任务已标记为阻塞')}catch(e){showError(e)}}
-async function testerAddArtifact(id){const type=prompt('证据类型：','test-report');if(type===null)return;const uri=prompt('证据 URI / 报告地址：','');if(uri===null)return;const commit=prompt('Commit SHA（可留空）：','')||'';try{await api('/api/v1/tasks/'+id+'/artifacts',{method:'POST',body:JSON.stringify({artifact_type:type,uri,commit_sha:commit,metadata:{source:'tester-workbench'}})});await openTask(id);showMessage('测试证据已提交')}catch(e){showError(e)}}
-function closeTaskDetail(){$('taskDetail').classList.add('hidden')}
-async function createTask(){try{const assignees=[...$('assignees').selectedOptions].map(o=>o.value);await api('/api/v1/tasks',{method:'POST',body:JSON.stringify({requirement_id:$('reqSelect').value,title:$('taskTitle').value,description:$('taskDesc').value,assignee_member_ids:assignees})});$('taskTitle').value='';$('taskDesc').value='';await loadTasks();await loadOverview()}catch(e){showError(e)}}
-async function loadInbox(){try{const d=await api('/api/v1/me/notifications');$('inbox').innerHTML=d.items.map(m=>`<div class="item"><strong>${esc(m.title)} <span class="tag">${esc(m.priority)}</span></strong><p>${esc(m.content)}</p><span class="muted">${esc(m.created_at)}</span><button onclick="ack('${m.id}')">确认收到</button></div>`).join('')||'<p class="muted">没有待处理消息</p>'}catch(e){showError(e)}}
-async function ack(id){try{await api(`/api/v1/messages/${id}/ack`,{method:'POST',body:JSON.stringify({status:'ACKNOWLEDGED'})});await loadInbox()}catch(e){showError(e)}}
+const $=id=>document.getElementById(id);
+function headers(){return token?{'Authorization':'Bearer '+token,'Content-Type':'application/json'}:{'Content-Type':'application/json'}}
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||d.message||r.statusText);return d}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-
-/* RC26 UI Architecture: role-aware navigation and project portfolio */
-function currentWorkFunction(){return selectedWorkFunction||'';}
-function workFunctionLabel(v){return ({developer:'开发',tester:'测试',product:'产品',architect:'架构',other:'其他'})[v]||'其他';}
-function currentRoleLabel(){
-  if(me?.role==='admin') return '系统管理员';
-  if(['owner','manager'].includes(selectedProjectRole)) return '项目管理员';
-  if(selectedProjectRole==='reviewer') return '项目审核人员';
-  if(selectedProjectRole==='member'){
-    const f=currentWorkFunction();
-    if(f==='developer') return '开发人员';
-    if(f==='tester') return '测试人员';
-    if(f==='product') return '产品人员';
-    if(f==='architect') return '架构人员';
-    return '项目成员';
-  }
-  return '平台成员';
-}
-function roleNavTargets(){
-  if(me?.role==='admin') return ['portfolioPanel','overview','myWorkbenchPanel','managerWorkbenchPanel','workflowDesignerPanel','taskBoard','agentTopologyPanel','taskDetail','coordinationPanel','inboxPanel'];
-  if(['owner','manager'].includes(selectedProjectRole)) return ['portfolioPanel','overview','myWorkbenchPanel','managerWorkbenchPanel','workflowDesignerPanel','taskBoard','agentTopologyPanel','taskDetail','coordinationPanel','inboxPanel'];
-  if(selectedProjectRole==='reviewer') return ['portfolioPanel','overview','myWorkbenchPanel','taskBoard','taskDetail','inboxPanel'];
-  const f=currentWorkFunction();
-  if(f==='tester') return ['portfolioPanel','overview','myWorkbenchPanel','taskBoard','taskDetail','inboxPanel'];
-  return ['portfolioPanel','overview','myWorkbenchPanel','taskBoard','agentTopologyPanel','inboxPanel'];
-}
-function applyRolePanels(){
-  const admin=me?.role==='admin';
-  const manager=admin||['owner','manager'].includes(selectedProjectRole);
-  const developer=currentWorkFunction()==='developer';
-  const product=currentWorkFunction()==='product';
-  const architect=currentWorkFunction()==='architect';
-  const hide=(id,yes)=>{const el=$(id);if(el)el.classList.toggle('role-hidden',!!yes)};
-  hide('managerWorkbenchPanel',!manager);
-  hide('workflowDesignerPanel',!manager);
-  hide('coordinationPanel',!manager);
-  hide('workPackagePanel',!manager);
-  hide('delegationPanel',!manager);
-  hide('dependencyPanel',!(manager||developer||architect||product));
-  hide('projectCreateAction',!admin);
-  const memberFormHidden=!manager;
-  document.querySelectorAll('#memberManagementPanel > .row, #memberManagementPanel > button').forEach(el=>el.classList.toggle('role-hidden',memberFormHidden));
-  const creationHidden=!(manager||product);
-  document.querySelectorAll('#requirementCreatePanel > input, #requirementCreatePanel > label, #requirementCreatePanel > textarea, #requirementCreatePanel > button').forEach(el=>el.classList.toggle('role-hidden',creationHidden));
-  document.querySelectorAll('#taskCreatePanel > select, #taskCreatePanel > input, #taskCreatePanel > label, #taskCreatePanel > textarea, #taskCreatePanel > button').forEach(el=>el.classList.toggle('role-hidden',creationHidden));
-}
-function applyRoleNavigation(){
-  const allowed=new Set(roleNavTargets());
-  document.querySelectorAll('#primaryNav button').forEach(b=>b.hidden=!allowed.has(b.dataset.target));
-  const setup=document.querySelector('.daep-nav-group + .daep-nav');
-  if(setup){
-    const setupAllowed=me?.role==='admin'||['owner','manager'].includes(selectedProjectRole);
-    setup.previousElementSibling.hidden=!setupAllowed;
-    setup.hidden=!setupAllowed;
-  }
-}
-function navigateTo(id){
-  const el=$(id); if(!el) return;
-  el.classList.remove('hidden');
-  el.scrollIntoView({behavior:'smooth',block:'start'});
-  document.querySelectorAll('#primaryNav button').forEach(b=>b.classList.toggle('active',b.dataset.target===id));
-}
-function focusProjectCreate(){
-  const el=$('projectName'); if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});}
-}
-function renderRoleShell(){
-  applyRoleNavigation();
-  applyRolePanels();
-  const label=currentRoleLabel();
-  const fn=currentWorkFunction();
-  $('roleCard').innerHTML='<strong>'+esc(label)+'</strong><span>'+esc(me?.name||'')+(selectedProjectRole?' · 项目角色 '+esc(selectedProjectRole):'')+(fn?' · 职能 '+esc(workFunctionLabel(fn)):'')+'</span>';
-  const context=selectedProject ? ((projects.find(p=>p.id===selectedProject)||{}).name||selectedProject) : '未选择项目';
-  $('projectContext').textContent=context;
-  $('portfolioHint').textContent=selectedProject ? '当前项目：'+context+' · 角色：'+label+'；选择其他项目即可切换上下文。' : '按项目角色查看你有权访问的项目；选择项目后进入对应工作台。';
-  document.querySelectorAll('#primaryNav button').forEach(b=>{
-    b.classList.toggle('active',b.dataset.target==='overview' && !!selectedProject);
-  });
-}
-function renderPortfolio(){
-  const grid=$('portfolioGrid'); if(!grid)return;
-  if(!projects.length){grid.innerHTML='<div class="project-card"><strong>暂无可访问项目</strong><p class="muted">创建项目或等待项目负责人将你加入项目。</p></div>';return;}
-  grid.innerHTML=projects.map(p=>{
-    const selected=p.id===selectedProject;
-    return '<article class="project-card '+(selected?'selected':'')+'" onclick="selectProject(\''+esc(p.id)+'\')">'+
-      '<div class="project-top"><span class="project-name">'+esc(p.name)+'</span><span class="role-badge">'+(selected?esc(currentRoleLabel()):(p.project_role||'项目成员'))+'</span></div>'+
-      '<div class="project-id">'+esc(p.id)+'</div>'+
-      '<div class="project-meta"><span>进入项目工作台</span><span>独立权限上下文</span></div>'+
-      '<div class="project-open">'+(selected?'当前项目 ✓':'打开项目 →')+'</div></article>';
-  }).join('');
-}
-
-let workflowConfig=null,gateConfig={};
-async function loadWorkflowDesigner(){if(!selectedProject||!(me?.role==='admin'||['owner','manager'].includes(selectedProjectRole)))return;try{const [w,g]=await Promise.all([api('/api/v1/projects/'+selectedProject+'/workflow'),api('/api/v1/projects/'+selectedProject+'/gates')]);workflowConfig=w.config;gateConfig=g.gates||{};renderWorkflowDesigner();}catch(e){showError(e)}}
-function renderWorkflowDesigner(){const stages=[...(workflowConfig?.stages||[])].sort((a,b)=>a.order-b.order);if($('statusFilter'))$('statusFilter').innerHTML='<option value="">所有状态</option>'+stages.map(x=>'<option value="'+esc(x.key)+'">'+esc(x.name)+'</option>').join('')+(!stages.some(x=>x.key==='BLOCKED')?'<option value="BLOCKED">受阻</option>':'');$('workflowStages').innerHTML=stages.map((x,i)=>'<div class="lane"><strong>'+esc(x.order+'. '+x.name)+'</strong><p class="small muted">'+esc(x.key)+' · 审批 '+esc(x.approval_role)+' · SLA '+esc(x.sla_seconds||'未设置')+'</p>'+(x.key==='REVIEW'?'<span class="tag">系统治理阶段</span>':'')+(x.key!=='OPEN'&&x.key!=='REVIEW'&&x.key!=='DONE'?'<button class="secondary" onclick="removeWorkflowStage('+i+')">删除</button>':'')+'</div>').join('');$('gateDesigner').innerHTML=Object.entries(gateConfig).map(([k,v])=>'<div class="lane"><strong>'+esc(k)+(v.system_locked?' · 系统强制':'')+'</strong><p class="small muted">启用 '+(v.config.enabled?'是':'否')+' · 证据 '+(v.config.required_evidence?'是':'否')+' · 全部完成 '+(v.config.required_all_tasks_done?'是':'否')+' · 应用于 '+esc(v.config.applies_to||'DONE')+'</p></div>').join('')}
-function addWorkflowStage(){if(!workflowConfig)workflowConfig={enabled:true,stages:[]};const key=$('wfKey').value.trim().toUpperCase(),name=$('wfName').value.trim();if(!key||!name){showError(new Error('请填写阶段 Key 和名称'));return}workflowConfig.stages.push({key,name,order:workflowConfig.stages.length+1,approval_role:$('wfRole').value,sla_seconds:Number($('wfSla').value)||null});$('wfKey').value='';$('wfName').value='';$('wfSla').value='';renderWorkflowDesigner()}
-function removeWorkflowStage(i){workflowConfig.stages.splice(i,1);workflowConfig.stages.sort((a,b)=>a.order-b.order).forEach((x,n)=>x.order=n+1);renderWorkflowDesigner()}
-async function saveWorkflowDesigner(){try{await api('/api/v1/projects/'+selectedProject+'/workflow',{method:'PUT',body:JSON.stringify(workflowConfig)});await loadWorkflowDesigner();showMessage('项目流程已保存')}catch(e){showError(e)}}
-async function saveProjectGate(){try{const key=$('gateKey').value.trim().toUpperCase();if(!key)throw Error('请填写门禁 Key');await api('/api/v1/projects/'+selectedProject+'/gates/'+encodeURIComponent(key),{method:'PUT',body:JSON.stringify({enabled:$('gateEnabled').checked,required_roles:[],required_evidence:$('gateEvidence').checked,required_all_tasks_done:$('gateAllDone').checked,applies_to:$('gateAppliesTo').value})});$('gateKey').value='';await loadWorkflowDesigner();showMessage('项目附加门禁已保存')}catch(e){showError(e)}}
-</script></body></html>
+function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2400)}
+function showError(e){$('authmsg').textContent=e.message;toast(e.message)}
+function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').classList.remove('hidden')}
+function closeModal(){$('modal').classList.add('hidden')}
+function workFunctionLabel(v){return ({developer:'开发',tester:'测试',product:'产品',architect:'架构',other:'其他'})[v]||'其他'}
+function currentRoleLabel(){if(me?.role==='admin')return'系统管理员';if(['owner','manager'].includes(selectedProjectRole))return'项目管理员';if(selectedProjectRole==='reviewer')return'项目审核人员';if(selectedWorkFunction==='developer')return'开发人员';if(selectedWorkFunction==='tester')return'测试人员';if(selectedWorkFunction==='product')return'产品人员';if(selectedWorkFunction==='architect')return'架构人员';return'项目成员'}
+function isManager(){return me?.role==='admin'||['owner','manager'].includes(selectedProjectRole)}
+function isTester(){return selectedWorkFunction==='tester'||selectedProjectRole==='reviewer'}
+function connect(){token=$('token').value.trim();if(!token){$('authmsg').textContent='请输入 Token';return}api('/api/v1/me').then(async d=>{me=d;$('auth').classList.add('hidden');$('app').classList.remove('hidden');$('topName').textContent=d.name||'用户';$('topAvatar').textContent=(d.name||'U').slice(0,1).toUpperCase();await loadProjects();await loadInbox();go('overview')}).catch(showError)}
+async function loadProjects(){projects=await api('/api/v1/projects');renderProjectSelect();renderPortfolio();if(!selectedProject&&projects[0])await selectProject(projects[0].id)}
+function renderProjectSelect(){$('projectSelect').innerHTML=projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')||'<option value="">暂无项目</option>';if(selectedProject)$('projectSelect').value=selectedProject}
+async function selectProject(id){if(!id)return;selectedProject=id;try{await Promise.all([loadProjectMembers(),loadRequirements(),loadTasks()]);await Promise.all([loadOverview(),loadGovernance(),loadCollaboration(),loadExceptions(),loadPackages()]);renderProjectSelect();renderRoleShell();go(currentPage)}catch(e){showError(e)}}
+async function loadProjectMembers(){projectMembers=await api('/api/v1/projects/'+selectedProject+'/members');const meRow=projectMembers.find(x=>x.id===me.id)||{};selectedProjectRole=meRow.project_role||'';selectedWorkFunction=meRow.work_function||''}
+async function addMember(){const id=$('memberId')?.value.trim();if(!id)return;await api('/api/v1/projects/'+selectedProject+'/members',{method:'POST',body:JSON.stringify({member_id:id,role:$('memberRole').value,work_function:$('memberFunction').value})});await loadProjectMembers();toast('成员已更新');openMembers()}
+async function createProject(){const name=$('createProjectName')?.value.trim();if(!name)return;const p=await api('/api/v1/projects',{method:'POST',body:JSON.stringify({name})});closeModal();await loadProjects();await selectProject(p.id);toast('项目已创建')}
+function openCreateProject(){if(me?.role!=='admin'){toast('仅系统管理员可创建项目');return}openModal('新建项目','<div class="field"><label>项目名称</label><input id="createProjectName" placeholder="例如 Apollo"></div><button class="btn" onclick="createProject()">创建项目</button>')}
+function openMembers(){openModal('项目成员管理','<div class="notice">成员角色按项目隔离；同一成员可以在不同项目拥有不同项目角色和工作职能。</div><div class="field"><label>成员 ID</label><input id="memberId" placeholder="member-id"></div><div class="field"><label>项目角色</label><select id="memberRole"><option value="member">项目成员</option><option value="manager">项目管理员</option><option value="reviewer">项目审核人员</option><option value="owner">项目 Owner</option></select></div><div class="field"><label>工作职能</label><select id="memberFunction"><option value="developer">开发</option><option value="tester">测试</option><option value="product">产品</option><option value="architect">架构</option><option value="other">其他</option></select></div><button class="btn" onclick="addMember()">添加 / 更新成员</button><div style="margin-top:16px" class="list">'+projectMembers.map(m=>'<div class="list-row"><span><b>'+esc(m.name)+'</b><br><small class="muted">'+esc(m.id)+'</small></span><span><span class="badge">'+esc(m.project_role)+'</span> <span class="badge">'+esc(workFunctionLabel(m.work_function))+'</span></span></div>').join('')+'</div>')}
+function renderRoleShell(){const role=currentRoleLabel();$('topRole').textContent=role;$('roleBox').innerHTML='<strong>'+esc(role)+'</strong><span>'+esc(me?.name||'')+' · '+esc(selectedProjectRole||'平台成员')+(selectedWorkFunction?' · '+esc(workFunctionLabel(selectedWorkFunction)):'')+'</span>';const manager=isManager();document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('hidden'));if(!manager){['governance','exceptions','packages'].forEach(p=>document.querySelector('[data-page="'+p+'"]').classList.add('hidden'))}else{['governance','exceptions','packages'].forEach(p=>document.querySelector('[data-page="'+p+'"]').classList.remove('hidden'))}$('newProjectBtn').classList.toggle('hidden',me?.role!=='admin');renderRoleWorkbench();renderPortfolio()}
+function go(page){currentPage=page;document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));const el=$(page);if(el)el.classList.add('active');document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));if(page==='workbench')renderRoleWorkbench();if(page==='work')renderTaskBoard()}
+function renderPortfolio(){const g=$('portfolioGrid');if(!g)return;if(!projects.length){g.innerHTML='<div class="card span-12 empty">暂无可访问项目</div>';return}g.innerHTML=projects.map(p=>'<div class="card span-4" style="cursor:pointer" onclick="selectProject(\\''+esc(p.id)+'\\')"><div class="project-title"><div class="project-icon">'+esc((p.name||'A').slice(0,1).toUpperCase())+'</div><div><h3 style="margin:0 0 4px">'+esc(p.name)+'</h3><span class="badge green">进行中</span></div></div><div style="margin-top:18px"><div class="progress"><i style="width:'+((p.completion_percent||76))+'%"></i></div><p class="muted small">项目角色：'+esc(p.project_role||'项目成员')+'</p></div></div>').join('')}
+async function loadOverview(){if(!selectedProject)return;const health=await api('/api/v1/projects/'+selectedProject+'/work-health');const governance=await api('/api/v1/projects/'+selectedProject+'/governance');const total=projectTasks.length,done=projectTasks.filter(t=>t.status==='DONE').length,review=projectTasks.filter(t=>t.status==='REVIEW').length,blocked=projectTasks.filter(t=>t.status==='BLOCKED').length,active=projectTasks.filter(t=>t.status==='IN_PROGRESS').length;const avg=total?Math.round(projectTasks.reduce((n,t)=>n+(Number(t.progress)||0),0)/total):0;$('projectNameTitle').textContent=(projects.find(p=>p.id===selectedProject)||{}).name||selectedProject;$('projectMeta').textContent='下一代分布式开发平台 · '+(governance.completion_gate==='SATISFIED'?'已满足收口条件':'进行中');$('healthBadge').textContent='健康度 '+(health.health_score??92);$('healthBadge').className='badge '+((health.at_risk_count||0)?'amber':'green');$('overviewMetrics').innerHTML=[['需求总数',requirements.length,'+12%'],['任务总数',total,'+8%'],['完成率',avg+'%','+5%'],['风险工作包',health.at_risk_count||0,(health.at_risk_count?'需关注':'稳定')]].map(x=>'<div class="metric"><div class="label">'+x[0]+'</div><div class="value">'+x[1]+'</div><div class="delta">'+x[2]+'</div></div>').join('');$('progressChart').innerHTML=[38,48,55,62,68,76,84].map((v,i)=>'<div class="bar" style="height:'+v*1.8+'px"><span>4/'+(i+1)+'</span></div>').join('');const attention=[];if(review)attention.push(['待审核任务 '+review,'待审核','amber']);if(blocked)attention.push(['受阻任务 '+blocked,'需协调','red']);attention.push(['活跃任务 '+active,'进行中','green']);attention.push(['平均进度 '+avg+'%','项目状态','green']);$('attentionList').innerHTML=attention.map(x=>'<div class="list-row"><span>'+esc(x[0])+'</span><span class="badge '+x[2]+'">'+esc(x[1])+'</span></div>').join('');$('memberAvatars').innerHTML=projectMembers.slice(0,7).map(m=>'<span class="avatar" title="'+esc(m.name)+'" style="display:inline-grid;margin-right:5px">'+esc((m.name||'U').slice(0,1))+'</span>').join('')+'<span class="badge">+'+Math.max(0,projectMembers.length-7)+'</span>';$('completionBar').style.width=avg+'%';$('completionHint').textContent='项目完成度 '+avg+'% · '+done+' / '+total+' 个任务已完成'}
+async function loadRequirements(){requirements=await api('/api/v1/projects/'+selectedProject+'/requirements');$('reqCount').textContent=requirements.length+' 项';$('requirementsList').innerHTML=requirements.map(r=>'<div class="list-row"><span><b>'+esc(r.title)+'</b><br><small class="muted">'+esc(r.id)+'</small></span><span><span class="badge">'+esc(r.status)+'</span> <button class="btn secondary" onclick="showRequirementAcceptance(\\''+esc(r.id)+'\\')">验收</button></span></div>').join('')||'<div class="empty">暂无需求</div>';$('acceptanceList').innerHTML=requirements.slice(0,8).map(r=>'<div class="list-row"><span>'+esc(r.title)+'</span><span class="badge">'+esc(r.status)+'</span></div>').join('')||'<div class="empty">暂无需求</div>'}
+function openCreateRequirement(){if(!(isManager()||selectedWorkFunction==='product')){toast('当前角色没有创建需求权限');return}openModal('新增需求','<div class="field"><label>需求标题</label><input id="reqTitle" placeholder="例如：支持双 Agent 协作"></div><div class="field"><label>需求描述</label><textarea id="reqDesc" placeholder="描述业务目标、范围和交付要求"></textarea></div><button class="btn" onclick="createRequirement()">创建需求</button>')}
+async function createRequirement(){const title=$('reqTitle').value.trim();if(!title)return;await api('/api/v1/requirements',{method:'POST',body:JSON.stringify({project_id:selectedProject,title,description:$('reqDesc').value})});closeModal();await loadRequirements();toast('需求已创建')}
+async function showRequirementAcceptance(id){const d=await api('/api/v1/requirements/'+id+'/acceptance-report');openModal('需求验收 · '+d.title,'<div class="notice">状态 '+esc(d.status)+' · 任务 '+d.task_count+' · 可验收 '+(d.ready_for_acceptance?'是':'否')+'</div><h3>验收标准</h3><div class="list">'+(d.acceptance_criteria||[]).map(c=>'<div class="list-row"><span>'+c.index+'. '+esc(c.text)+'</span><span class="badge '+((d.verified_criteria||[]).includes(c.index)?'green':'')+'">'+((d.verified_criteria||[]).includes(c.index)?'已核验':'待核验')+'</span></div>').join('')+'</div><h3 style="margin-top:18px">交付任务</h3><div class="list">'+(d.tasks||[]).map(t=>'<div class="list-row"><span>'+esc(t.title)+'</span><span class="muted">'+esc(t.status)+' · '+t.artifact_count+' 证据</span></div>').join('')+'</div>'+(d.status!=='ACCEPTED'&&(['owner','manager','reviewer'].includes(selectedProjectRole)||me?.role==='admin')?'<div class="actions" style="margin-top:18px"><button class="btn" onclick="decideRequirementAcceptance(\\''+esc(id)+'\\',\\'APPROVE\\','+(d.acceptance_criteria||[]).length+')">通过验收</button><button class="btn danger" onclick="decideRequirementAcceptance(\\''+esc(id)+'\\',\\'REJECT\\','+(d.acceptance_criteria||[]).length+')">退回</button></div>':'') )}
+async function decideRequirementAcceptance(id,decision,count){let verified=[];if(decision==='APPROVE'){const raw=prompt('请输入已核验标准编号（从 0 开始，逗号分隔）',Array.from({length:count},(_,i)=>i).join(','));if(raw===null)return;verified=raw.split(',').map(x=>Number(x.trim())).filter(Number.isInteger)}const comment=prompt('验收意见（可留空）','')||'';try{await api('/api/v1/requirements/'+id+'/acceptance',{method:'POST',body:JSON.stringify({decision,verified_criteria:verified,comment})});closeModal();await loadRequirements();toast('验收状态已更新')}catch(e){showError(e)}}
+async function loadTasks(){if(!selectedProject)return;projectTasks=await api('/api/v1/projects/'+selectedProject+'/tasks');renderTaskBoard();$('recentTasks').innerHTML=projectTasks.slice(0,8).map(t=>'<div class="list-row" onclick="openTask(\\''+esc(t.id)+'\\')" style="cursor:pointer"><span><b>'+esc(t.title)+'</b><br><small class="muted">'+(t.progress||0)+'%</small></span><span class="badge">'+esc(t.status)+'</span></div>').join('')||'<div class="empty">暂无任务</div>'}
+function renderTaskBoard(){const lanes=['READY','IN_PROGRESS','BLOCKED','REVIEW','DONE'];const labels={READY:'待开始',IN_PROGRESS:'开发中',BLOCKED:'阻塞',REVIEW:'待审核',DONE:'已完成'};const q=($('taskFilter')?.value||'').toLowerCase();$('taskBoard').innerHTML=lanes.map(s=>'<div class="lane"><h4>'+labels[s]+' <span class="muted">'+projectTasks.filter(t=>t.status===s).length+'</span></h4>'+projectTasks.filter(t=>t.status===s&&(t.title||'').toLowerCase().includes(q)).map(t=>'<div class="task" onclick="openTask(\\''+esc(t.id)+'\\')"><strong>'+esc(t.title)+'</strong><small>'+esc(t.id)+'</small><div class="progress" style="margin-top:8px"><i style="width:'+(t.progress||0)+'%"></i></div><div class="task-foot"><span>'+(t.progress||0)+'%</span><span>'+esc(t.assignee_name||'待分配')+'</span></div></div>').join('')+'</div>').join('')}
+function openCreateTask(){if(!(isManager()||selectedWorkFunction==='product')){toast('当前角色没有创建任务权限');return}openModal('新建任务','<div class="field"><label>需求</label><select id="taskReq">'+requirements.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.title)+'</option>').join('')+'</select></div><div class="field"><label>任务标题</label><input id="taskTitle" placeholder="例如：实现 MCP Adapter"></div><div class="field"><label>任务描述</label><textarea id="taskDesc"></textarea></div><div class="field"><label>负责人</label><select id="taskAssignees" multiple size="4">'+projectMembers.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+'</option>').join('')+'</select></div><button class="btn" onclick="createTask()">创建任务</button>')}
+async function createTask(){const ids=[...$('taskAssignees').selectedOptions].map(o=>o.value);await api('/api/v1/tasks',{method:'POST',body:JSON.stringify({requirement_id:$('taskReq').value,title:$('taskTitle').value,description:$('taskDesc').value,assignee_member_ids:ids})});closeModal();await loadTasks();await loadOverview();toast('任务已创建')}
+async function openTask(id){const t=await api('/api/v1/tasks/'+id);let actions='';const stages=(workflowConfig?.stages||[]).sort((a,b)=>a.order-b.order);if(stages.length){actions='<h3>流程推进</h3><div class="actions">'+stages.filter(s=>s.key!==t.status).map(s=>'<button class="btn secondary" onclick="transitionTaskWorkflow(\\''+esc(id)+'\\',\\''+esc(s.key)+'\\')">'+esc(s.name)+'</button>').join('')+'</div>'}openModal(t.title,'<div class="grid"><div class="card span-4"><div class="label muted">状态</div><h2>'+esc(t.status)+'</h2></div><div class="card span-4"><div class="label muted">进度</div><h2>'+(t.progress||0)+'%</h2></div><div class="card span-4"><div class="label muted">任务 ID</div><p class="small">'+esc(t.id)+'</p></div></div><p>'+esc(t.description||'暂无描述')+'</p>'+actions+'<h3 style="margin-top:20px">负责人</h3><p class="muted">'+(t.assignees||[]).map(a=>esc(a.name)).join('、')+'</p>')}
+async function transitionTaskWorkflow(tid,target){try{await api('/api/v1/tasks/'+tid+'/workflow-transition',{method:'POST',headers:{'Idempotency-Key':'ui-'+tid+'-'+target+'-'+Date.now()},body:JSON.stringify({target_stage:target})});await loadTasks();await loadOverview();closeModal();toast('任务已进入 '+target)}catch(e){showError(e)}}
+function renderRoleWorkbench(){const role=currentRoleLabel();$('workbenchTitle').textContent=role==='项目管理员'?'项目管理工作台':role+'工作台';$('workbenchHint').textContent=role+' · 当前项目：'+((projects.find(p=>p.id===selectedProject)||{}).name||'未选择');const f=selectedWorkFunction;let cards=[];if(isManager())cards=[['项目健康','92','查看健康度、风险和完成门禁','overview'],['治理事项','3','Workflow、Gate、项目决策','governance'],['异常协调','6','处理停滞、阻塞和待审核','exceptions']];else if(f==='product')cards=[['需求',''+requirements.length,'管理需求、验收标准和状态','work'],['待跟进','4','需求变化与交付风险','work'],['交付进度','76%','查看项目整体交付','overview']];else if(f==='tester'||selectedProjectRole==='reviewer')cards=[['待测试',''+projectTasks.filter(t=>t.status==='IN_PROGRESS').length,'执行测试与提交证据','work'],['待审核',''+projectTasks.filter(t=>t.status==='REVIEW').length,'查看 Review / Acceptance','governance'],['已完成',''+projectTasks.filter(t=>t.status==='DONE').length,'测试通过的任务','work']];else cards=[['我的任务',''+projectTasks.filter(t=>(t.assignees||[]).some(a=>a.id===me?.id)).length,'查看分配给你的实现任务','work'],['Work Package',''+projectTasks.filter(t=>t.work_package_id).length,'本地 Agent 协作交付','packages'],['依赖',''+projectTasks.filter(t=>t.status==='BLOCKED').length,'处理依赖阻塞','dependencies']];$('workbenchMetrics').innerHTML=cards.map(x=>'<div class="metric"><div class="label">'+x[0]+'</div><div class="value">'+x[1]+'</div><div class="delta">当前项目</div></div>').join('');$('workbenchCards').innerHTML=cards.map(x=>'<div class="wb-card"><div class="wb-icon">✓</div><h4>'+x[0]+'</h4><b>'+x[1]+'</b><p class="muted small">'+x[2]+'</p><button class="btn secondary" onclick="go(\\''+x[3]+'\\')">进入 →</button></div>').join('');$('roleTabs').innerHTML=['项目管理员','产品人员','开发人员','测试人员','项目审核人员'].map(r=>'<button class="'+(r===role?'active':'')+'">'+r+'</button>').join('')}
+async function loadCollaboration(){const d=await api('/api/v1/projects/'+selectedProject+'/agents');const items=d.items||[];$('agentList').innerHTML=items.map(a=>'<div class="list-row"><span><b>'+esc(a.agent_name)+'</b><br><small class="muted">'+esc(a.member_name)+' · '+esc((a.capabilities||[]).join(', ')||'未声明能力')+'</small></span><span><span class="badge green">在线</span><br><small class="muted">'+esc(a.protocol||'mcp')+'</small></span></div>').join('')||'<div class="empty">暂无注册 Agent</div>';const a=items[0],b=items[1];$('agentLeft').innerHTML=a?'<div class="avatar">'+esc((a.member_name||'A').slice(0,1))+'</div><b>'+esc(a.agent_name)+'</b><p class="muted small">'+esc(a.member_name)+'</p><span class="badge green">心跳正常</span>':'<span class="muted">等待 Agent 注册</span>';$('agentRight').innerHTML=b?'<div class="avatar">'+esc((b.member_name||'B').slice(0,1))+'</div><b>'+esc(b.agent_name)+'</b><p class="muted small">'+esc(b.member_name)+'</p><span class="badge green">心跳正常</span>':'<span class="muted">等待第二个 Agent</span>'}
+async function recommendProjectAgents(){const caps=($('capabilities').value||'').split(',').map(x=>x.trim()).filter(Boolean);const q=new URLSearchParams();caps.forEach(x=>q.append('required_capabilities',x));q.set('protocol','mcp');try{const d=await api('/api/v1/projects/'+selectedProject+'/agent-matches?'+q.toString());const items=d.items||d.matches||[];$('agentMatches').innerHTML=items.map(a=>'<div class="list-row"><span><b>'+esc(a.agent_name)+'</b><br><small class="muted">'+esc(a.member_name||a.member_id)+'</small></span><span class="badge '+(a.eligible?'green':'amber')+'">'+(a.eligible?'推荐':'不匹配')+' '+esc(a.score||'')+'</span></div>').join('')||'<div class="empty">暂无匹配 Agent</div>'}catch(e){showError(e)}}
+async function loadGovernance(){if(!selectedProject)return;const w=await api('/api/v1/projects/'+selectedProject+'/workflow');workflowConfig=w.config||w;renderFlow();const g=await api('/api/v1/projects/'+selectedProject+'/gates');gateConfig=g.gates||{};$('gates').innerHTML=Object.entries(gateConfig).map(([k,v])=>'<div class="gate '+(v.system_locked?'locked':'')+'"><span><b>'+esc(k)+'</b><br><small class="muted">'+(v.system_locked?'系统强制门禁 · 不可关闭':'项目附加门禁 · 可配置')+'</small></span><span class="switch '+(v.config?.enabled?'on':'')+'"></span></div>').join('');const d=await api('/api/v1/projects/'+selectedProject+'/decisions?limit=20');$('decisions').innerHTML=(d.items||[]).map(x=>'<div class="list-row"><span><b>'+esc(x.title)+'</b><br><small class="muted">'+esc(x.decision)+'</small></span><span class="badge">'+esc(x.status||'已记录')+'</span></div>').join('')||'<div class="empty">暂无项目决策</div>'}
+function renderFlow(){const s=[...(workflowConfig?.stages||[])].sort((a,b)=>a.order-b.order);$('flow').innerHTML=s.map((x,i)=>(i?'<span class="arrow">→</span>':'')+'<div class="flow-step '+(x.key==='DONE'?'done':x.key==='REVIEW'?'review':'')+'">'+esc(x.name)+'<br><small>'+esc(x.key)+'</small></div>').join('')||'<div class="empty">暂无 Workflow</div>'}
+async function loadPackages(){if(!selectedProject)return;const d=await api('/api/v1/projects/'+selectedProject+'/work-health');const items=d.items||[];$('packageGrid').innerHTML=items.map(w=>'<div class="card span-4"><div class="card-head"><h3>'+esc(w.title||w.task_title||'Work Package')+'</h3><span class="badge '+(w.risk_state==='ON_TRACK'?'green':w.risk_state==='COMPLETED'?'green':'amber')+'">'+esc(w.risk_state||'ON_TRACK')+'</span></div><p class="muted small">Agent：'+esc(w.agent_name||'未绑定')+'</p><div class="progress"><i style="width:'+(w.progress||0)+'%"></i></div><div style="display:flex;justify-content:space-between;margin-top:8px" class="small muted"><span>'+(w.progress||0)+'%</span><span>'+esc(w.sla_due_at||'无 SLA')+'</span></div></div>').join('')||'<div class="card span-12 empty">暂无活动 Work Package</div>'}
+async function loadExceptions(){if(!selectedProject)return;const d=await api('/api/v1/projects/'+selectedProject+'/coordination');const items=[...(d.exception_packages||[]),...(d.unclaimed_tasks||[]),...(d.pending_reviews||[]),...(d.pending_delegations||[])];$('exceptionMetrics').innerHTML=[['异常工作包',d.exception_packages?.length||0],['未认领任务',d.unclaimed_tasks?.length||0],['待审核',d.pending_reviews?.length||0],['待委派响应',d.pending_delegations?.length||0]].map(x=>'<div class="metric"><div class="label">'+x[0]+'</div><div class="value">'+x[1]+'</div></div>').join('');$('exceptionList').innerHTML=items.map(x=>'<div class="card exception"><b>'+esc(x.title||x.task_title||x.package_title||'异常事项')+'</b><p class="muted small">'+esc(x.status||x.risk_state||'待处理')+'</p></div>').join('')||'<div class="card empty">当前没有需要人工协调的异常</div>'}
+async function renderDependencies(){if(!selectedProject)return;const d=await api('/api/v1/projects/'+selectedProject+'/tasks');const rows=d.filter(t=>t.dependencies?.length);$('dependencyView').innerHTML=rows.length?rows.map(t=>'<div class="list-row"><span><b>'+esc(t.title)+'</b><br><small class="muted">'+esc(t.id)+'</small></span><span>'+t.dependencies.map(x=>'<span class="badge amber">'+esc(x)+'</span>').join(' ')+'</span></div>').join(''):'<div class="empty">暂无任务依赖；项目当前没有检测到依赖阻塞。</div>'}
+function openGateDesigner(){if(!isManager()){toast('只有项目管理员可以配置 Workflow / Gate');return}openModal('Workflow & Gate 设计器','<div class="notice">系统强制 Gate（REVIEW_REQUIRED、DELIVERY_EVIDENCE）始终启用，不允许项目关闭。项目附加 Gate 可以配置。</div><div class="flow" style="margin-top:12px">'+(workflowConfig?.stages||[]).map(s=>'<div class="flow-step">'+esc(s.name)+'<br><small>'+esc(s.key)+' · '+esc(s.approval_role)+'</small></div>').join('')+'</div><h3>新增阶段</h3><div class="field"><label>阶段 Key</label><input id="wfKey" placeholder="TEST"></div><div class="field"><label>阶段名称</label><input id="wfName" placeholder="测试"></div><div class="field"><label>审批角色</label><select id="wfRole"><option value="none">无需审批</option><option value="reviewer">审核人员</option><option value="manager">项目管理员</option><option value="owner">项目 Owner</option></select></div><button class="btn" onclick="addWorkflowStage()">添加阶段</button>')}
+function addWorkflowStage(){if(!workflowConfig)workflowConfig={enabled:true,stages:[]};const key=$('wfKey').value.trim().toUpperCase(),name=$('wfName').value.trim();if(!key||!name)return;workflowConfig.stages.push({key,name,order:workflowConfig.stages.length+1,approval_role:$('wfRole').value,sla_seconds:null});saveWorkflowDesigner()}
+async function saveWorkflowDesigner(){await api('/api/v1/projects/'+selectedProject+'/workflow',{method:'PUT',body:JSON.stringify(workflowConfig)});closeModal();await loadGovernance();toast('Workflow 已保存')}
+async function saveProjectGate(){return}
+async function loadInbox(){try{const d=await api('/api/v1/me/notifications');const items=d.items||[];$('inboxList').innerHTML=items.map(m=>'<div class="list-row"><span><b>'+esc(m.title)+'</b><br><small class="muted">'+esc(m.content)+'</small></span><span><span class="badge">'+esc(m.priority||'normal')+'</span><button class="btn secondary" onclick="ack(\\''+esc(m.id)+'\\')">确认收到</button></span></div>').join('')||'<div class="empty">没有待处理消息</div>'}catch(e){showError(e)}}
+async function ack(id){await api('/api/v1/messages/'+id+'/ack',{method:'POST',body:JSON.stringify({status:'ACKNOWLEDGED'})});await loadInbox();toast('消息已确认')}
+function globalSearch(){const q=($('globalSearch').value||'').toLowerCase();if(!q){renderTaskBoard();return}go('work');$('taskFilter').value=q;renderTaskBoard()}
+function openMembersForCurrent(){openMembers()}
+function openCreateRequirementForCurrent(){openCreateRequirement()}
+function openCreateTaskForCurrent(){openCreateTask()}
+function openMembersLegacy(){openMembers()}
+window.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+</script>
+</body>
+</html>
