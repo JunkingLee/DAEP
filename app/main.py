@@ -114,6 +114,7 @@ _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
 _admin_ctx=contextvars.ContextVar('daep_platform_admin',default=False)
 _auth_lookup_ctx=contextvars.ContextVar('daep_auth_lookup',default=False)
 _service_ctx=contextvars.ContextVar('daep_internal_service',default=False)
+_member_ctx=contextvars.ContextVar('daep_member_id',default='')
 
 class _PGCursor:
     def __init__(self, cur): self.cur=cur
@@ -133,7 +134,7 @@ class _PGConn:
         import psycopg
         from psycopg.rows import dict_row
         self.c=psycopg.connect(url,row_factory=dict_row)
-        self.c.execute("SELECT set_config('app.tenant_id', %s, false), set_config('app.platform_admin', %s, false), set_config('app.internal_service', %s, false), set_config('app.auth_lookup', %s, false)",(
+        self.c.execute("SELECT set_config('app.tenant_id', %s, false), set_config('app.member_id', %s, false), set_config('app.platform_admin', %s, false), set_config('app.internal_service', %s, false), set_config('app.auth_lookup', %s, false)",(
             _tenant_ctx.get() or '', 'true' if _admin_ctx.get() else 'false', 'true' if _service_ctx.get() else 'false', 'true' if _auth_lookup_ctx.get() else 'false'))
     def __enter__(self): return self
     def __exit__(self,typ,val,tb):
@@ -357,6 +358,7 @@ def actor(authorization):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r)
     _tenant_ctx.set(data.get('tenant_id',''))
+    _member_ctx.set(data.get('id',''))
     _admin_ctx.set(is_admin(data))
     return data
 
