@@ -32,8 +32,7 @@ def upgrade():
       $func$""")
     op.execute("DROP POLICY IF EXISTS daep_projects_tenant ON projects")
     op.execute("""CREATE POLICY daep_projects_tenant ON projects
-      USING (daep_tenant_visible(tenant_id))
-      WITH CHECK (
+      USING (
         daep_tenant_visible(tenant_id)
         AND (
           status='ACTIVE'
@@ -42,6 +41,13 @@ def upgrade():
             AND current_setting('app.lifecycle_action', true)='REOPEN'
             AND daep_project_owner(id)
           )
+        )
+      )
+      WITH CHECK (
+        daep_tenant_visible(tenant_id)
+        AND (
+          status='ACTIVE'
+          OR (status='CLOSED' AND daep_project_owner(id))
         )
       )""")
 
