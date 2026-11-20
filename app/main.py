@@ -4084,36 +4084,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(digest).decode().rstrip('=')
-
-def verify_password(password,encoded):
-    try:
-        scheme,iters,salt_b64,digest_b64=encoded.split('$',3)
-        if scheme!='pbkdf2_sha256': return False
-        salt=base64.urlsafe_b64decode(salt_b64+'===')
-        expected=base64.urlsafe_b64decode(digest_b64+'===')
-        actual=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,int(iters))
-        return secrets.compare_digest(actual,expected)
-    except Exception:
-        return False
-
-def issue_member_token(member_id):
-    raw=secrets.token_urlsafe(48); digest=hashlib.sha256(raw.encode()).hexdigest(); created=now()
-    with conn() as c:
-        c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-    return raw
-
-def actor(authorization):
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
@@ -7840,17 +7810,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(salt).decode().rstrip('=')+'
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
@@ -9656,21 +9615,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(digest).decode().rstrip('=')
-
-def verify_password(password,encoded):
-    try:
-        scheme,iters,salt_b64,digest_b64=encoded.split('
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
@@ -15228,17 +15172,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(salt).decode().rstrip('=')+'
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
@@ -17044,21 +16977,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(digest).decode().rstrip('=')
-
-def verify_password(password,encoded):
-    try:
-        scheme,iters,salt_b64,digest_b64=encoded.split('
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
