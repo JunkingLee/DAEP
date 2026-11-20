@@ -421,6 +421,13 @@ def require_task_access(c, tid, a, assigned_only=False):
     if project and project['status']=='CLOSED':
         raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        # An Agent is not its owner. It must be explicitly bound to this project;
+        # member-only assignment checks must never be satisfied by owner identity.
+        require_project_access(c,pid,a)
+        if assigned_only:
+            raise HTTPException(403,'Agent task assignment is not enabled for this operation')
+        return
     if assigned_only:
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
