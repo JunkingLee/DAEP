@@ -4,6 +4,8 @@
 
 本 Drill 是 RC9 从 API-level two-member E2E 进入真实双 Agent 实机互操作验收的正式执行手册。
 
+边界声明：DAEP 不托管、不启动、不强制唤醒成员本地 Agent Runtime。
+
 目标：
 - 两名真实项目成员分别在两台独立工作站运行各自的本地 MCP-compatible Agent/MCP Host。
 - 两个 Agent 使用不同成员 Token、不同 Agent 名称，并分别注册和发送 heartbeat。
