@@ -1059,7 +1059,7 @@ def test_rc26_full_role_delivery_to_project_closure_e2e():
         'decision':'APPROVE','verified_criteria':[0,1],'comment':'All acceptance evidence verified'})
     assert accepted.status_code==200,accepted.text
     governance=client.get(f'/api/v1/projects/{pid}/governance',headers=manager_h)
-    assert governance.status_code==200 and governance.json()['completion']['completed']==1
+    assert governance.status_code==200 and governance.json()['completed_tasks']==1
     audit=client.get(f'/api/v1/projects/{pid}/audit',headers=manager_h)
     assert audit.status_code==200
     types={x['event_type'] for x in audit.json()['items']}
