@@ -2279,7 +2279,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -4084,7 +4083,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -5899,7 +5897,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -7810,7 +7807,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -9615,7 +9611,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -11429,7 +11424,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     except Exception:
         return False
 
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -13244,7 +13238,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -15155,7 +15148,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -16960,7 +16952,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -18774,7 +18765,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     except Exception:
         return False
 
-def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
