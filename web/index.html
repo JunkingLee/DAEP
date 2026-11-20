@@ -114,6 +114,56 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 @media(max-width:1100px){.shell{grid-template-columns:208px 1fr}.metrics{grid-template-columns:repeat(2,1fr)}.grid .span-8,.grid .span-6,.grid .span-4{grid-column:span 12}.workbench{grid-template-columns:1fr 1fr}.top-search{max-width:320px}}
 @media(max-width:760px){.topbar{padding:0 12px}.project-switch{margin-left:0}.top-user span{display:none}.shell{grid-template-columns:1fr}.sidebar{position:sticky;top:68px;height:auto;padding:8px;z-index:40}.sidebar .side-caption,.rolebox{display:none}.nav{display:flex;overflow:auto}.nav button{white-space:nowrap}.content{padding:16px 14px 28px}.page-head{display:block}.page-head .actions{margin-top:10px}.metrics{grid-template-columns:1fr 1fr}.login{grid-template-columns:1fr}.login-hero{display:none}.login-form{padding:34px}.mobile-only{display:block}.hero-line{align-items:flex-start;flex-direction:column}.workbench{grid-template-columns:1fr}.top-search{display:none}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+/* DAEP layout system v2: strict grid, hierarchy and density */
+:root{--container:1440px;--gutter:24px;--section-gap:24px;--card-gap:16px}
+.content{max-width:var(--container);padding:32px 32px 56px}
+.page-head{min-height:56px;margin-bottom:24px;align-items:center}
+.page-head>div:first-child{min-width:0}.page-head h1{font-size:26px;line-height:1.2}.page-head p{font-size:13px;line-height:1.5}
+.actions{justify-content:flex-end;align-items:center}
+.hero{margin-bottom:24px;padding:24px}
+.metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:0 0 24px}
+.metric{min-height:116px;padding:18px}
+.grid{gap:16px}
+.card{padding:18px;min-width:0}
+.card-head{min-height:28px;margin-bottom:14px}
+.list-row{min-height:52px}
+.section-title{margin:28px 0 12px;font-size:15px;font-weight:800}
+.workbench{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.wb-card{min-height:154px;padding:18px}
+.kanban{grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;padding-bottom:6px}
+.lane{min-height:360px;padding:12px}
+.task{min-height:92px}
+.flow{justify-content:flex-start;min-height:104px}
+.table-wrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.table{min-width:720px}
+.table th{background:#f8fafc;position:sticky;top:0}
+.modal-card{padding:24px}
+@media(max-width:1200px){
+ .content{padding:26px 24px 48px}
+ .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .workbench{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .grid .span-8{grid-column:span 7}.grid .span-4{grid-column:span 5}
+}
+@media(max-width:900px){
+ .shell{grid-template-columns:1fr}
+ .sidebar{position:sticky;top:68px;height:auto}
+ .content{padding:22px 18px 40px}
+ .grid .span-8,.grid .span-6,.grid .span-4{grid-column:span 12}
+ .kanban{grid-template-columns:repeat(5,minmax(205px,1fr))}
+}
+@media(max-width:640px){
+ .content{padding:18px 14px 32px}
+ .page-head{min-height:0;margin-bottom:18px}
+ .page-head h1{font-size:22px}
+ .metrics{grid-template-columns:1fr 1fr;gap:10px}
+ .metric{min-height:100px;padding:14px}.metric .value{font-size:23px}
+ .workbench{grid-template-columns:1fr;gap:12px}
+ .hero,.card{padding:15px}
+ .actions{justify-content:flex-start}
+ .kanban{grid-template-columns:repeat(5,minmax(190px,1fr))}
+}
+
 </style>
 </head>
 <body>
