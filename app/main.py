@@ -124,6 +124,7 @@ _auth_lookup_ctx=contextvars.ContextVar('daep_auth_lookup',default=False)
 _service_ctx=contextvars.ContextVar('daep_internal_service',default=False)
 _member_ctx=contextvars.ContextVar('daep_member_id',default='')
 _lifecycle_action_ctx=contextvars.ContextVar('daep_lifecycle_action',default='')
+_agent_ctx=contextvars.ContextVar('daep_agent_id',default='')
 
 class _PGCursor:
     def __init__(self, cur): self.cur=cur
@@ -364,11 +365,24 @@ def actor(authorization):
             r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
     finally:
         _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
+    if not r:
+        try:
+            from app.agent_identity import authenticate_agent_token
+            ident=authenticate_agent_token(conn, authorization[7:])
+            data={'id':ident['owner_member_id'],'tenant_id':ident['tenant_id'],'role':'developer','actor_type':'AGENT','agent_id':ident['agent_id'],'agent_status':ident['agent_status']}
+            _tenant_ctx.set(data['tenant_id'])
+            _member_ctx.set(data['id'])
+            _admin_ctx.set(False)
+            _agent_ctx.set(data['agent_id'])
+            return data
+        except HTTPException:
+            raise HTTPException(401,'Invalid token')
     data=dict(r)
+    data['actor_type']='MEMBER'
     _tenant_ctx.set(data.get('tenant_id',''))
     _member_ctx.set(data.get('id',''))
     _admin_ctx.set(is_admin(data))
+    _agent_ctx.set('')
     return data
 
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
@@ -418,7 +432,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
