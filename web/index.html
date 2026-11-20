@@ -452,5 +452,6 @@ function openChangePassword(){closeProfileMenu();openModal('修改密码','<div 
 async function savePassword(){const current=$('currentPassword')?.value||'',next=$('newPassword')?.value||'',confirm=$('confirmPassword')?.value||'';if(next.length<12){toast('新密码至少 12 位');return}if(next!==confirm){toast('两次输入的新密码不一致');return}try{await api('/api/v1/auth/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next})});closeModal();toast('密码修改成功')}catch(e){showError(e)}}
 document.addEventListener('click',e=>{if(!e.target.closest('.top-user'))closeProfileMenu()})
 </script>
+<script src="/agents.js"></script>
 </body>
 </html>
