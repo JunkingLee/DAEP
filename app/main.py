@@ -403,6 +403,11 @@ def require_project_access(c, project_id, a, write=False):
     if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        row=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(project_id,a['agent_id'])).fetchone()
+        if not row: raise HTTPException(403,'Agent project binding required')
+        if write and row['role'] not in ('manager',): raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
