@@ -187,6 +187,62 @@ body{font-size:14px;line-height:1.55}
 @media(max-width:1200px){.content{padding:28px 24px 52px}.topbar{padding:0 20px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.content{padding:24px 18px 44px}.page-head h1{font-size:25px}.sidebar{padding:8px}.nav button{min-height:38px}}
 @media(max-width:640px){.topbar{height:64px;padding:0 12px}.shell{min-height:calc(100vh - 64px)}.sidebar{top:64px}.content{padding:20px 14px 36px}.page-head{margin-bottom:20px}.page-head h1{font-size:22px}.hero{padding:17px}.metrics{gap:10px;margin-bottom:18px}.metric{min-height:104px;padding:14px}.metric .value{font-size:23px}.card{padding:15px}.wb-card{min-height:150px}.actions{width:100%}.actions .btn{flex:0 0 auto}.modal-card{padding:18px}}
+
+/* DAEP final UX acceptance pass v4: page rhythm, density, accessibility */
+:root{
+  --section-gap:28px;
+  --card-gap:16px;
+  --focus-ring:0 0 0 4px rgba(49,94,251,.16);
+}
+main.content{container-type:inline-size}
+.page{min-width:0}
+.page-head{padding-bottom:2px}
+.page-head .actions{flex-shrink:0}
+.page-head h1,.hero h1,.card h3,.wb-card h4{overflow-wrap:anywhere}
+.metric{display:flex;flex-direction:column;justify-content:center}
+.metric .delta{margin-top:auto}
+.card-head>h3{min-width:0}
+.list-row>span:first-child{min-width:0;overflow-wrap:anywhere}
+.list-row>span:last-child{flex-shrink:0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.btn:focus-visible,.nav button:focus-visible,.role-tabs button:focus-visible,.project-switch:focus-within,.top-search:focus-within{outline:3px solid rgba(49,94,251,.22);outline-offset:2px}
+.top-search input{min-height:40px}
+.project-switch select{min-height:38px}
+.task:focus-visible{outline:3px solid rgba(49,94,251,.22);outline-offset:2px}
+.graphnode:focus-visible{outline:3px solid rgba(49,94,251,.22);outline-offset:3px}
+.flow-step{flex:0 0 auto}
+.gate{min-height:56px}
+.notice{line-height:1.6}
+.table-wrap{margin-top:2px}
+.empty{min-height:96px;display:grid;place-items:center}
+@container (max-width: 980px){
+  .hero-line{align-items:flex-start}
+}
+@media(max-width:900px){
+  .page-head{gap:12px}
+  .page-head .actions{margin-top:2px}
+  .topbar{gap:10px}
+  .project-switch{max-width:42vw}
+  .project-switch select{max-width:24vw}
+}
+@media(max-width:640px){
+  .page-head .actions{width:100%}
+  .page-head .actions .btn{min-height:40px}
+  .hero-line{gap:14px}
+  .project-title{align-items:flex-start}
+  .project-icon{width:46px;height:46px;flex:0 0 46px}
+  .metric .label{font-size:11px}
+  .metric .value{margin:5px 0}
+  .list-row{align-items:flex-start}
+  .list-row>span:last-child{white-space:nowrap}
+  .modal{padding:10px}
+  .modal-card{width:100%;max-height:92vh}
+}
+@media(prefers-contrast:more){
+  .card,.metric,.list-row,.task,.lane,.project-switch,.field input,.field textarea,.field select{border-color:#667085}
+  .muted{color:#475467}
+}
+
 </style>
 </head>
 <body>
@@ -201,7 +257,7 @@ body{font-size:14px;line-height:1.55}
 <header class="topbar">
   <div class="top-brand"><span class="brandmark">A</span><span>DAEP</span></div>
   <div class="project-switch"><span>项目</span><select id="projectSelect" data-testid="project-switcher" onchange="selectProject(this.value)"></select></div>
-  <div class="top-search"><input id="globalSearch" placeholder="搜索需求、任务、成员或 Work Package" oninput="globalSearch()"></div>
+  <div class="top-search"><input id="globalSearch" aria-label="全局搜索" placeholder="搜索需求、任务、成员或 Work Package" oninput="globalSearch()"></div>
   <div class="top-user"><span id="topRole" class="badge">未连接</span><div id="topAvatar" class="avatar">U</div><span id="topName">用户</span></div>
 </header>
 <div class="shell">
@@ -249,14 +305,14 @@ body{font-size:14px;line-height:1.55}
 
 <section id="work" class="page" data-testid="page-work">
   <div class="page-head"><div><h1>工作</h1><p class="muted">需求、任务、流程状态和交付证据</p></div><div class="actions" id="workCreateActions"><button class="btn secondary" onclick="openCreateRequirement()">＋ 新增需求</button><button class="btn secondary" onclick="openCreateTask()">＋ 新建任务</button></div></div>
-  <div class="card" id="taskBoardCard"><div class="card-head"><h3>任务看板</h3><div class="actions"><input id="taskFilter" placeholder="搜索任务" oninput="renderTaskBoard()" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px"><button class="btn secondary" onclick="loadTasks()">刷新</button></div></div><div class="kanban" id="taskBoard"></div></div>
+  <div class="card" id="taskBoardCard"><div class="card-head"><h3>任务看板</h3><div class="actions"><input id="taskFilter" aria-label="搜索任务" oninput="renderTaskBoard()" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px"><button class="btn secondary" onclick="loadTasks()">刷新</button></div></div><div class="kanban" id="taskBoard"></div></div>
   <div class="grid" style="margin-top:14px"><div class="card span-6"><div class="card-head"><h3>需求列表</h3><span class="muted small" id="reqCount"></span></div><div id="requirementsList" class="list"></div></div><div class="card span-6"><div class="card-head"><h3>最近任务</h3></div><div id="recentTasks" class="list"></div></div></div>
 </section>
 
 <section id="collaboration" class="page" data-testid="page-collaboration"><div id="agentTopologyPanel">
   <div class="page-head"><div><h1>Agent 协作</h1><p class="muted">成员本地 Agent · MCP 协议 · 能力匹配 · 协作时间线</p></div><button class="btn secondary" onclick="loadCollaboration()">刷新状态</button></div>
   <div class="card"><div class="agent-map"><div id="agentLeft" class="agent"></div><div class="hub">DAEP</div><div id="agentRight" class="agent"></div></div></div>
-  <div class="grid" style="margin-top:14px"><div class="card span-8"><div class="card-head"><h3>Agent 在线拓扑</h3><span class="muted small">最近心跳 ≤ 120s</span></div><div id="agentTopology"><div id="agentList" class="list"></div></div></div><div class="card span-4"><h3>能力匹配</h3><div class="field"><label>所需能力</label><input id="agentRequiredCapabilities" placeholder="python, testing, architecture"><input id="agentRequiredProtocol" value="mcp" placeholder="协议"></div><button class="btn" onclick="recommendProjectAgents()">查找候选 Agent</button><div id="agentMatches" style="margin-top:12px"></div><div class="notice" style="margin-top:10px">能力匹配仅提供解释性候选，不会分配任务或唤醒 Agent。DAEP 不托管或唤醒 Agent Runtime。</div></div></div>
+  <div class="grid" style="margin-top:14px"><div class="card span-8"><div class="card-head"><h3>Agent 在线拓扑</h3><span class="muted small">最近心跳 ≤ 120s</span></div><div id="agentTopology"><div id="agentList" class="list"></div></div></div><div class="card span-4"><h3>能力匹配</h3><div class="field"><label>所需能力</label><input id="agentRequiredCapabilities" aria-label="所需 Agent 能力" placeholder="python, testing, architecture"><input id="agentRequiredProtocol" aria-label="Agent 协议" value="mcp" placeholder="协议"></div><button class="btn" onclick="recommendProjectAgents()">查找候选 Agent</button><div id="agentMatches" style="margin-top:12px"></div><div class="notice" style="margin-top:10px">能力匹配仅提供解释性候选，不会分配任务或唤醒 Agent。DAEP 不托管或唤醒 Agent Runtime。</div></div></div>
 <div class="card" id="delegationPanel" style="margin-top:14px"><div class="card-head"><h3>跨成员委派</h3><span class="muted small">PENDING · ACCEPTED · REJECTED</span></div><div id="delegationBoard" class="list"></div></div></div></section>
 
 <section id="governance" class="page" data-testid="page-governance">
@@ -290,8 +346,8 @@ body{font-size:14px;line-height:1.55}
 </div>
 </div>
 
-<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle">详情</h2><button class="btn ghost" type="button" onclick="closeModal()">关闭</button></div><div id="modalBody"></div></div></div>
-<div id="toast" class="toast hidden" role="status" aria-live="polite" data-testid="toast"></div>
+<div id="modal" class="modal hidden" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle">详情</h2><button class="btn ghost" type="button" onclick="closeModal()">关闭</button></div><div id="modalBody"></div></div></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true" data-testid="toast"></div>
 
 <script>
 let token='',me=null,projects=[],users=[],memberCandidates=[],selectedProject='',selectedProjectRole='',selectedWorkFunction='',requirements=[],projectTasks=[],projectMembers=[],workflowConfig=null,gateConfig={},currentPage='overview',projectHealthItems=[],projectAgents=[],projectDelegations=[];
