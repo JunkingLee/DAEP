@@ -2181,6 +2181,8 @@ def test_rc35_closure_blocks_real_pending_delegation():
         'member_id':manager['id'],'role':'manager'}).status_code==200
     assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
         'member_id':recipient['id'],'role':'member'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid}/agents/register',headers=rh,json={
+        'agent_name':'rc35-agent','capabilities':['python'],'protocols':['mcp'],'status':'AVAILABLE'}).status_code==200
     req=client.post('/api/v1/requirements',headers=mh,json={
         'project_id':pid,'title':'RC35 delegation requirement'}).json()
     task=client.post('/api/v1/tasks',headers=mh,json={
