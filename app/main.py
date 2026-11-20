@@ -249,6 +249,7 @@ def init():
         if 'lease_token' not in table_cols['outbox']:
             c.execute('ALTER TABLE outbox ADD COLUMN lease_token TEXT')
         c.execute("CREATE INDEX IF NOT EXISTS idx_members_tenant ON members(tenant_id)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_members_username ON members(username) WHERE username IS NOT NULL")
         c.execute("CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_events_tenant_created ON events(tenant_id,created_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_tenant ON artifacts(tenant_id,created_at)")
@@ -557,7 +558,7 @@ def password_login(body:dict):
         raise HTTPException(422,'Username and password are required')
     with conn() as c:
         row=c.execute("SELECT * FROM members WHERE lower(username)=? AND password_status='ACTIVE' AND token_status='ACTIVE'",(username,)).fetchone()
-    if not row or not row.get('password_hash') or not verify_password(password,row['password_hash']):
+    if not row or not row['password_hash'] or not verify_password(password,row['password_hash']):
         raise HTTPException(401,'Invalid username or password')
     raw=issue_member_token(row['id'])
     return {'access_token':raw,'token_type':'bearer','member_id':row['id'],'name':row['name']}
@@ -568,7 +569,7 @@ def change_password(body:dict,authorization:str=Header(None)):
     if len(new)<12 or len(new)>256 or not current: raise HTTPException(422,'Password must be 12-256 characters')
     with conn() as c:
         row=c.execute("SELECT password_hash FROM members WHERE id=?",(a['id'],)).fetchone()
-    if not row or not row.get('password_hash') or not verify_password(current,row['password_hash']):
+    if not row or not row['password_hash'] or not verify_password(current,row['password_hash']):
         raise HTTPException(401,'Current password is incorrect')
     with conn() as c: c.execute("UPDATE members SET password_hash=?,password_status='ACTIVE' WHERE id=?",(hash_password(new),a['id']))
     issue_member_token(a['id'])
@@ -576,7 +577,10 @@ def change_password(body:dict,authorization:str=Header(None)):
 
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
-    a=actor(authorization); return {k:a[k] for k in ('id','name','role','username')}
+    a=actor(authorization)
+    with conn() as c:
+        row=c.execute('SELECT username FROM members WHERE id=?',(a['id'],)).fetchone()
+    return {k:a[k] for k in ('id','name','role')} | {'username': row['username'] if row else None}
 @app.post('/api/v1/tenants')
 def create_tenant(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
