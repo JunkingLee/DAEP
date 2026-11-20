@@ -418,19 +418,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED':
-        raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
-        # Agent access requires both an active project binding and an Agent-specific assignment.
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -2526,17 +2528,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -4343,17 +4349,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -6170,17 +6180,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -8093,17 +8107,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
@@ -9910,17 +9928,21 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
+    closed=bool(project and project['status']=='CLOSED')
+    if is_admin(a):
+        if assigned_only and closed: raise HTTPException(409,'Project is closed')
+        return
     if a.get('actor_type')=='AGENT':
         require_project_access(c,pid,a)
         if assigned_only:
+            if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
                 WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
                 (tid,pid,a['agent_id'])).fetchone()
             if not assignment: raise HTTPException(403,'Active Agent task assignment required')
         return
     if assigned_only:
+        if closed: raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
