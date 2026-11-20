@@ -61,7 +61,6 @@ class ProjectMemberFunctionIn(BaseModel): work_function:str=Field(pattern='^(dev
 class RequirementIn(BaseModel): project_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); acceptance_criteria:list[str]=Field(default_factory=list)
 class TaskIn(BaseModel): requirement_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); assignee_member_ids:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list)
 class TaskDependenciesIn(BaseModel): dependencies:list[str]=Field(default_factory=list,max_length=100)
-class AgentTaskAssignmentIn(BaseModel): agent_id:str=Field(min_length=1,max_length=120)
 class ProgressIn(BaseModel): progress:int=Field(ge=0,le=100); note:str=Field(default='',max_length=2000)
 class MessageIn(BaseModel): recipient_member_id:str; project_id:Optional[str]=None; task_id:Optional[str]=None; message_type:str='COLLABORATION'; title:str=Field(min_length=1,max_length=200); content:str=Field(min_length=1,max_length=20000); priority:str=Field(default='NORMAL',pattern='^(LOW|NORMAL|HIGH|URGENT)$')
 class AckIn(BaseModel): status:str='ACKNOWLEDGED'
@@ -1468,79 +1467,10 @@ def update_task_dependencies(tid:str,b:TaskDependenciesIn,authorization:str=Head
 @app.get('/api/v1/me/tasks')
 def my_tasks(authorization:str=Header(None)):
     a=actor(authorization)
-    with conn() as c:
-        if a.get('actor_type')=='AGENT':
-            return [dict(x) for x in c.execute("""SELECT t.*, ata.id agent_assignment_id, ata.status agent_assignment_status,
-                ata.created_at agent_assigned_at, p.id project_id, p.name project_name
-                FROM agent_task_assignments ata JOIN tasks t ON t.id=ata.task_id
-                JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id
-                WHERE ata.agent_id=? AND ata.tenant_id=? AND ata.status IN ('ASSIGNED','ACCEPTED')
-                ORDER BY ata.created_at DESC""",(a['agent_id'],a.get('tenant_id','tenant-default')))]
-        return [dict(x) for x in c.execute('SELECT t.* FROM tasks t JOIN assignments s ON s.task_id=t.id JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE s.member_id=? AND p.tenant_id=? ORDER BY t.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))]
+    if a.get('actor_type')=='AGENT':
+        raise HTTPException(403,'Use /api/v1/agents/me/tasks for Agent assignments')
+    with conn() as c: return [dict(x) for x in c.execute('SELECT t.* FROM tasks t JOIN assignments s ON s.task_id=t.id JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE s.member_id=? AND p.tenant_id=? ORDER BY t.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))]
 
-@app.get('/api/v1/tasks/{tid}/agent-assignments')
-def list_agent_task_assignments(tid:str, authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        require_project_access(c,pid,a)
-        rows=c.execute("""SELECT ata.*, ag.name agent_name, ag.status agent_status
-            FROM agent_task_assignments ata JOIN agents ag ON ag.id=ata.agent_id
-            WHERE ata.task_id=? AND ata.project_id=? ORDER BY ata.created_at DESC""",(tid,pid)).fetchall()
-        return [dict(x) for x in rows]
-
-@app.post('/api/v1/tasks/{tid}/agent-assignments')
-def assign_task_to_agent(tid:str,b:AgentTaskAssignmentIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        require_project_access(c,pid,a,write=True)
-        project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(pid,)).fetchone()
-        if not project or project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-        agent=c.execute("SELECT id,status FROM agents WHERE id=? AND tenant_id=?",(b.agent_id,project['tenant_id'])).fetchone()
-        if not agent or agent['status']!='ACTIVE': raise HTTPException(404,'Active Agent not found')
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND tenant_id=? AND status='ACTIVE'",(pid,b.agent_id,project['tenant_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent must be actively bound to this project first')
-        active=c.execute("SELECT id FROM agent_task_assignments WHERE task_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')",(tid,b.agent_id)).fetchone()
-        if active: return {'assignment_id':active['id'],'task_id':tid,'agent_id':b.agent_id,'status':'EXISTING'}
-        aid='agta_'+uuid.uuid4().hex[:16]; ts=now()
-        c.execute("""INSERT INTO agent_task_assignments(id,task_id,project_id,agent_id,tenant_id,assigned_by_member_id,status,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?)""",(aid,tid,pid,b.agent_id,project['tenant_id'],a['id'],'ASSIGNED',ts,ts))
-        event(c,'task.agent.assigned',a['id'],tid,{'assignment_id':aid,'agent_id':b.agent_id,'project_id':pid})
-        return {'assignment_id':aid,'task_id':tid,'agent_id':b.agent_id,'status':'ASSIGNED'}
-
-@app.post('/api/v1/tasks/{tid}/agent-assignments/accept')
-def accept_agent_task_assignment(tid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if a.get('actor_type')!='AGENT': raise HTTPException(403,'Agent Token required')
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        require_project_access(c,pid,a)
-        row=c.execute("""SELECT id,status FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ASSIGNED'""",(tid,pid,a['agent_id'])).fetchone()
-        if not row: raise HTTPException(404,'Pending assignment not found')
-        ts=now()
-        c.execute("UPDATE agent_task_assignments SET status='ACCEPTED',accepted_at=?,updated_at=? WHERE id=?",(ts,ts,row['id']))
-        event(c,'task.agent.accepted',a['id'],tid,{'assignment_id':row['id'],'agent_id':a['agent_id']})
-        return {'assignment_id':row['id'],'task_id':tid,'status':'ACCEPTED'}
-
-@app.post('/api/v1/tasks/{tid}/agent-assignments/{assignment_id}/revoke')
-def revoke_agent_task_assignment(tid:str,assignment_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        require_project_access(c,pid,a,write=True)
-        row=c.execute("SELECT id,agent_id,status FROM agent_task_assignments WHERE id=? AND task_id=? AND project_id=?",(assignment_id,tid,pid)).fetchone()
-        if not row: raise HTTPException(404,'Assignment not found')
-        if row['status'] in ('COMPLETED','REVOKED'): return {'assignment_id':assignment_id,'status':row['status']}
-        ts=now()
-        c.execute("UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=? WHERE id=?",(ts,ts,assignment_id))
-        event(c,'task.agent.assignment.revoked',a['id'],tid,{'assignment_id':assignment_id,'agent_id':row['agent_id']})
-        return {'assignment_id':assignment_id,'status':'REVOKED'}
 @app.post('/api/v1/tasks/{tid}/progress')
 def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key:str=Header(None)):
     a=actor(authorization)
