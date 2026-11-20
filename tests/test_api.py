@@ -39,6 +39,8 @@ def setup_project_task():
     return pid,mid,token,t.json()['id']
 
 def test_agent_task_assignment_is_identity_scoped_and_revocable():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
     pid,_,_,tid=setup_project_task()
     created=client.post('/api/v1/agents',headers=ADMIN,json={
         'name':'Assigned Agent','description':'Agent assignment regression test'})
@@ -984,7 +986,7 @@ def test_rc26_stage7_requirement_acceptance_requires_all_criteria_tasks_and_arti
     task=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':req['id'],'title':'Implement checkout','assignee_member_ids':[m['id']]}).json()
     report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=ADMIN).json()
     assert report['ready_for_acceptance'] is False and report['task_count']==1
-    incomplete=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
+    incomplete=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0,1]})
     assert incomplete.status_code==409
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
     db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(task['id'],))
@@ -2028,7 +2030,7 @@ def test_rc33_release_decision_is_manager_scoped_and_project_bound():
     ready=client.get(f"/api/v1/requirements/{req.json()['id']}/acceptance-report",headers=rh)
     assert ready.status_code==200 and ready.json()['ready_for_acceptance'] is True
 
-    accepted=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=rh,json={
+    accepted=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",headers=rh,json={
         'decision':'APPROVE','verified_criteria':[0,1],
         'comment':'RC33 release evidence verified'})
     assert accepted.status_code==200,accepted.text
