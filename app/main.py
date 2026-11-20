@@ -2269,7 +2269,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-+base64.urlsafe_b64encode(salt).decode().rstrip('=')+'
     if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
     token=hashlib.sha256(authorization[7:].encode()).hexdigest()
     lookup_reset=_auth_lookup_ctx.set(True)
