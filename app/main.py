@@ -387,10 +387,11 @@ def task_project(c, tid):
 def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
+    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
+    if assigned_only and project and project['status']=='CLOSED':
+        raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if assigned_only:
-        project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-        if project and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
         ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
