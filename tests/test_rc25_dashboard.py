@@ -3,33 +3,41 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_rc25_dashboard_exposes_project_metrics_and_task_board():
+def test_rc26_dashboard_exposes_project_metrics_and_task_board():
     html = (ROOT / "web" / "index.html").read_text()
     for feature in (
-        'id="overview"', 'id="metrics"', 'id="taskBoard"', 'id="board"',
-        'function renderTaskBoard()', 'function loadOverview()', '/work-health',
+        'id="overview"',
+        'id="overviewMetrics"',
+        'id="taskBoard"',
+        'id="taskBoardCard"',
+        'function renderTaskBoard()',
+        'function loadOverview()',
+        '/work-health',
     ):
         assert feature in html
 
 
-def test_rc25_task_detail_uses_existing_authorized_collaboration_apis():
+def test_rc26_task_detail_uses_existing_authorized_collaboration_apis():
     html = (ROOT / "web" / "index.html").read_text()
-    assert "function openTask(id)" in html
-    assert "/work-packages" in html
-    assert "/work-timeline" in html
-    assert "function esc(v)" in html
+    for feature in (
+        "function openTask(id)",
+        "/work-packages",
+        "/work-timeline",
+        "function esc(v)",
+    ):
+        assert feature in html
     assert "localStorage" not in html
 
 
-def test_rc25_dependency_graph_is_interactive_and_accessible():
+def test_rc26_dependency_graph_is_interactive_and_accessible():
     html = (ROOT / "web" / "index.html").read_text()
     for feature in (
-        'id="dependencyGraph"',
-        'function renderDependencyGraph()',
-        'function dependencyLinks(t)',
+        'id="dependencyView"',
+        "function renderDependencyGraph()",
+        "function dependencyLinks(t)",
         'marker-end="url(#depArrow)"',
         'role="button"',
-        'onkeydown=',
+        "onkeydown=",
     ):
         assert feature in html
 
@@ -41,7 +49,7 @@ def test_project_task_listing_includes_dependency_ids():
     assert "depends_on_task_id" in endpoint
 
 
-def test_rc25_dependency_editor_is_manager_gated_and_calls_authorized_api():
+def test_rc26_dependency_editor_is_manager_gated_and_calls_authorized_api():
     html = (ROOT / "web" / "index.html").read_text()
     assert "selectedProjectRole" in html
     assert "function saveTaskDependencies(id)" in html
@@ -60,11 +68,14 @@ def test_dependency_update_endpoint_has_scope_and_cycle_guards():
     assert "task.dependencies.updated" in endpoint
 
 
-def test_rc25_project_work_package_board_uses_project_health_data():
+def test_rc26_project_work_package_board_uses_final_health_surface():
     html = (ROOT / "web" / "index.html").read_text()
-    assert 'id="workPackageBoard"' in html
-    assert 'id="workPackageRiskFilter"' in html
-    assert "function renderWorkPackages()" in html
-    assert "projectHealthItems=h.items||[]" in html
-    assert "function scanProjectHealth()" in html
-    assert "/work-packages/scan-health" in html
+    for feature in (
+        'id="workPackageBoard"',
+        "function renderWorkPackages()",
+        "projectHealthItems=h.items||[]",
+        "function scanProjectHealth()",
+        "/work-packages/scan-health",
+    ):
+        assert feature in html
+    assert 'id="workPackageRiskFilter"' not in html
