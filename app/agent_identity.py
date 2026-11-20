@@ -58,6 +58,26 @@ def ensure_agent_schema(conn):
             FOREIGN KEY(agent_id) REFERENCES agents(id)
         )""")
         c.execute("""CREATE INDEX IF NOT EXISTS idx_agent_project_bindings_agent ON agent_project_bindings(agent_id,status)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS agent_task_assignments(
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            assigned_by_member_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ASSIGNED',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            accepted_at TEXT,
+            completed_at TEXT,
+            revoked_at TEXT,
+            FOREIGN KEY(task_id) REFERENCES tasks(id),
+            FOREIGN KEY(project_id) REFERENCES projects(id),
+            FOREIGN KEY(agent_id) REFERENCES agents(id),
+            FOREIGN KEY(assigned_by_member_id) REFERENCES members(id)
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_agent_task_assignments_agent ON agent_task_assignments(agent_id,status,created_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_agent_task_assignments_task ON agent_task_assignments(task_id,status)")
 
 def _token():
     return 'daep_at_' + secrets.token_urlsafe(36)
