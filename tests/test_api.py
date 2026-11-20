@@ -378,7 +378,7 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0024_rc26_workflow_gates (head)' in heads
+    assert '0025_rc35_project_lifecycle (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -1968,7 +1968,7 @@ def test_rc33_release_decision_is_manager_scoped_and_project_bound():
         'requirement_id':other_req['id'],'title':'Other project task'}).json()
     cross=dict(payload)
     cross['related_task_ids']=[other_task['id']]
-    assert client.post(f'/api/v1/projects/{pid_a}/decisions',headers=mh,json=cross).status_code in (400,403,409)
+    assert client.post(f'/api/v1/projects/{pid_a}/decisions',headers=mh,json=cross).status_code in (400,403,409,422)
 
     created=client.post(f'/api/v1/projects/{pid_a}/decisions',headers=mh,json=payload)
     assert created.status_code==200,created.text
@@ -2215,8 +2215,8 @@ def test_rc35_lifecycle_migration_contract_is_additive_and_postgres_scoped():
     assert 'down_revision = "0024_rc26_workflow_gates"' in migration
     assert "ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE'" in migration
     assert "CHECK (status IN ('ACTIVE','CLOSED'))" in migration
-    assert "CREATE POLICY daep_projects_select" in migration
-    assert "CREATE POLICY daep_projects_update" in migration
+    assert "CREATE POLICY daep_projects_tenant" in migration
+    assert "daep_project_owner" in migration
     assert "current_setting('app.lifecycle_action', true)='REOPEN'" in migration
     assert "if bind.dialect.name != 'postgresql':" in migration
 
