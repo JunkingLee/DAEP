@@ -27,6 +27,21 @@ def call(method, path, payload=None):
         raise RuntimeError(f'Cannot reach DAEP API at {API}: {e}') from e
 
 @mcp.tool()
+def get_agent_context() -> dict:
+    """Identify the connected Agent, its owner and its explicitly bound projects."""
+    return call('GET','/api/v1/mcp/context')
+
+@mcp.tool()
+def list_my_agent_tasks() -> dict:
+    """List tasks explicitly assigned to this Agent identity."""
+    return call('GET','/api/v1/agents/me/tasks')
+
+@mcp.tool()
+def accept_agent_task(assignment_id: str) -> dict:
+    """Accept a task assignment addressed to this Agent identity."""
+    return call('POST',f'/api/v1/agent-assignments/{assignment_id}/accept',{})
+
+@mcp.tool()
 def get_my_tasks() -> list:
     """List engineering tasks available to the authenticated identity; Agent access is limited by project binding and assignment policy."""
     return call('GET','/api/v1/me/tasks')
