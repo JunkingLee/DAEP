@@ -154,3 +154,7 @@ RC9 已建立统一的最终证据包：`docs/RC9_FINAL_EVIDENCE_PACKAGE.md`。
 不因为代码“看起来完成”就宣布 GA。
 
 只有浏览器、生产恢复、双 Agent 实机互操作三类真实证据全部通过，才允许进入 GA 讨论。
+
+
+## RC27 authentication correction
+The Web login surface was corrected to account + password authentication. API/MCP bearer tokens remain machine credentials only. The browser acceptance evidence must therefore be rerun against the corrected login and User Management surface. See `docs/RC27_ACCOUNT_AUTH_AND_USER_MANAGEMENT.md`.
