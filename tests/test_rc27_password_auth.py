@@ -60,3 +60,21 @@ def test_rc27_project_member_directory_contract_is_preserved():
     assert "already_member" in block
     assert "password_status='ACTIVE'" in block
     assert "SELECT tenant_id FROM projects WHERE id=?" in block
+
+
+def test_rc28_project_creation_is_platform_admin_only():
+    block = MAIN.split("@app.post('/api/v1/projects')",1)[1].split("@app.get('/api/v1/projects')",1)[0]
+    assert "if not is_admin(a): raise HTTPException(403,'Platform administrator required')" in block
+
+
+def test_rc28_project_scope_write_access_requires_project_manager():
+    block = MAIN.split("def require_project_access",1)[1].split("def task_project",1)[0]
+    assert "Project membership required" in block
+    assert "Project manager role required" in block
+    assert "row['role'] not in ('owner','manager')" in block
+
+
+def test_rc28_requirement_acceptance_requires_reviewer_or_manager():
+    block = MAIN.split("@app.post('/api/v1/requirements/{rid}/acceptance')",1)[1]
+    assert "role['role'] not in ('owner','manager','reviewer')" in block
+    assert "Reviewer role required" in block
