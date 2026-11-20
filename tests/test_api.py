@@ -2037,3 +2037,101 @@ def test_rc33_acceptance_rejects_missing_delivery_evidence_and_cross_project_acc
     assert client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=outsider_h).status_code==403
     assert client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=outsider_h,json={
         'decision':'APPROVE','verified_criteria':[0]}).status_code==403
+
+def test_rc34_project_closure_blocks_incomplete_delivery_and_freezes_writes():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC34 Closure'}).json()
+    pid=project['id']
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC34 Closure Manager'}).json()
+    mh={'Authorization':'Bearer '+manager['token']}
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+
+    req=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid,'title':'RC34 closure requirement',
+        'acceptance_criteria':['Implemented']})
+    assert req.status_code==200,req.text
+
+    blocked=client.post(f'/api/v1/projects/{pid}/close',headers=mh,json={
+        'reason':'Attempted closure before acceptance'})
+    assert blocked.status_code==409
+    assert 'blockers' in blocked.json()['detail']
+    assert any(x['type']=='requirements' for x in blocked.json()['detail']['blockers'])
+
+    task=client.post('/api/v1/tasks',headers=mh,json={
+        'requirement_id':req.json()['id'],'title':'RC34 closure task',
+        'assignee_member_ids':[manager['id']]})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    db.execute(
+        "INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        ('rc34_closure_artifact',tid,'TEST_REPORT','https://example.invalid/rc34','rc34','{}',
+         '2026-01-01T00:00:00+00:00','tenant-default'))
+    db.commit(); db.close()
+
+    accepted=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",
+        headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0]})
+    assert accepted.status_code==200,accepted.text
+
+    closed=client.post(f'/api/v1/projects/{pid}/close',headers=mh,json={
+        'reason':'All requirements accepted and delivery evidence verified'})
+    assert closed.status_code==200,closed.text
+    assert closed.json()['status']=='CLOSED'
+
+    frozen=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid,'title':'Must be rejected after closure'})
+    assert frozen.status_code==409
+
+    reopened_by_manager=client.post(f'/api/v1/projects/{pid}/reopen',headers=mh,json={
+        'reason':'Manager attempts reopen without owner approval'})
+    assert reopened_by_manager.status_code==403
+
+    reopened=client.post(f'/api/v1/projects/{pid}/reopen',headers=ADMIN,json={
+        'reason':'Owner/platform approval restores active delivery'})
+    assert reopened.status_code==200, reopened.text
+    assert reopened.json()['status']=='ACTIVE'
+
+    writable=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid,'title':'Post-reopen requirement'})
+    assert writable.status_code==200, writable.text
+
+
+def test_rc34_closure_rejects_pending_delegations_and_exceptions():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC34 Closure Blockers'}).json()
+    pid=project['id']
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC34 Blocker Manager'}).json()
+    recipient=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC34 Blocker Recipient'}).json()
+    mh={'Authorization':'Bearer '+manager['token']}
+    rh={'Authorization':'Bearer '+recipient['token']}
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':recipient['id'],'role':'member'}).status_code==200
+
+    req=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid,'title':'RC34 blocker requirement',
+        'acceptance_criteria':['Done']})
+    assert req.status_code==200
+    task=client.post('/api/v1/tasks',headers=mh,json={
+        'requirement_id':req.json()['id'],'title':'RC34 blocker task',
+        'assignee_member_ids':[manager['id']]})
+    assert task.status_code==200
+    tid=task.json()['id']
+
+    # Simulate an active exception and pending delegation left by an interrupted runtime.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    db.execute("INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at,needs_attention,stall_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        ('wp_rc34',tid,tid,pid,'tenant-default',manager['id'],'closure-agent','ACTIVE',
+         '2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00',1,'stalled before closure'))
+    db.commit(); db.close()
+
+    closed=client.post(f'/api/v1/projects/{pid}/close',headers=mh,json={
+        'reason':'Attempt closure while runtime exception remains'})
+    assert closed.status_code==409,closed.text
+    blockers=closed.json()['detail']['blockers']
+    assert any(x['type']=='active_work_packages' for x in blockers)
+    assert any(x['type']=='exceptions' for x in blockers)
