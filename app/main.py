@@ -1139,7 +1139,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.created' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
@@ -2964,7 +2964,7 @@ def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header
         payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
             'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
             'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
-        event(c,'project.decision.recorded',a['id'],None,payload)
+        event(c,'project.decision.created',a['id'],None,payload)
     return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
 
 @app.get('/api/v1/projects/{pid}/decisions')
@@ -2972,7 +2972,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.created' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
@@ -4791,7 +4791,7 @@ def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header
         payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
             'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
             'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
-        event(c,'project.decision.recorded',a['id'],None,payload)
+        event(c,'project.decision.created',a['id'],None,payload)
     return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
 
 @app.get('/api/v1/projects/{pid}/decisions')
@@ -4799,7 +4799,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.created' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
@@ -6734,7 +6734,7 @@ def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header
         payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
             'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
             'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
-        event(c,'project.decision.recorded',a['id'],None,payload)
+        event(c,'project.decision.created',a['id'],None,payload)
     return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
 
 @app.get('/api/v1/projects/{pid}/decisions')
@@ -6742,7 +6742,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.created' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
@@ -8561,7 +8561,7 @@ def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header
         payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
             'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
             'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
-        event(c,'project.decision.recorded',a['id'],None,payload)
+        event(c,'project.decision.created',a['id'],None,payload)
     return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
 
 @app.get('/api/v1/projects/{pid}/decisions')
@@ -8569,7 +8569,7 @@ def list_project_decisions(pid:str,limit:int=100,authorization:str=Header(None))
     a=actor(authorization); limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.recorded' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
+        rows=c.execute("SELECT e.id,e.actor_member_id,e.payload,e.created_at,m.name AS actor_name FROM events e LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.event_type='project.decision.created' AND e.payload LIKE ? ORDER BY e.created_at DESC LIMIT ?",('%"project_id"%"'+pid+'"%',limit)).fetchall()
         items=[]
         for row in rows:
             payload=json.loads(row['payload'] or '{}')
