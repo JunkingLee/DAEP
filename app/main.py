@@ -599,6 +599,15 @@ def password_login(body:dict):
     raw=issue_member_token(row['id'])
     return {'access_token':raw,'token_type':'bearer','member_id':row['id'],'name':row['name']}
 
+@app.post('/api/v1/auth/logout')
+def logout(authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        stamp=now()
+        c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?",(stamp,a['id']))
+        event(c,'member.logout',a['id'],None,{'member_id':a['id']},tenant_override=a.get('tenant_id','tenant-default'))
+    return {'logged_out':True}
+
 @app.patch('/api/v1/me')
 def update_me(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
