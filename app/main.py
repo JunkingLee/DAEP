@@ -729,7 +729,9 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
 
 @app.post('/api/v1/projects')
 def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
+    a=actor(authorization)
+    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    pid='prj_'+uuid.uuid4().hex[:12]
     with conn() as c:
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
