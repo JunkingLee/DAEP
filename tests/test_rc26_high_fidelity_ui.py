@@ -30,10 +30,8 @@ def test_rc26_high_fidelity_shell_has_required_information_architecture():
         'id="exceptions"',
         'id="packages"',
         'id="inbox"',
-        'id="myWorkbenchPanel"',
-        'id="managerWorkbenchPanel"',
-        'id="workflowDesignerPanel"',
-        'id="agentTopologyPanel"',
+        'id="workbench"',
+        'id="collaboration"',
         'id="delegationPanel"',
         'id="coordinationPanel"',
         'id="workPackageBoard"',
@@ -55,7 +53,7 @@ def test_rc26_high_fidelity_shell_has_role_workbenches_and_governance_controls()
         "Gate",
         "项目收口",
         "需求验收",
-        "TEST_EVIDENCE",
+        "Gate 配置",
     ]:
         assert marker in HTML, f"missing role/governance UI contract: {marker}"
 
@@ -113,12 +111,13 @@ def test_rc26_high_fidelity_shell_has_role_visibility_and_core_api_wiring():
     for marker in [
         "function applyRolePanels()",
         "role-hidden",
+        "workCreateActions",
         "/api/v1/projects/'+selectedProject+'/workflow",
         "/api/v1/projects/'+selectedProject+'/gates/",
         "/api/v1/projects/'+selectedProject+'/governance",
         "/api/v1/projects/'+selectedProject+'/decisions",
         "/api/v1/requirements/'+id+'/acceptance",
-        "/api/v1/tasks/'+id+'/workflow-transition",
+        "/api/v1/tasks/'+tid+'/workflow-transition",
         "/api/v1/tasks/'+id+'/progress",
         "/api/v1/tasks/'+id+'/blocked",
         "/api/v1/tasks/'+id+'/artifacts",
