@@ -1990,7 +1990,7 @@ def test_rc33_release_decision_is_manager_scoped_and_project_bound():
     db.commit()
     db.close()
 
-    ready=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=rh)
+    ready=client.get(f"/api/v1/requirements/{req.json()['id']}/acceptance-report",headers=rh)
     assert ready.status_code==200 and ready.json()['ready_for_acceptance'] is True
 
     accepted=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=rh,json={
