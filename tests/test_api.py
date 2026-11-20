@@ -1922,3 +1922,118 @@ def test_rc32_gate_and_workflow_scope_cannot_cross_projects():
     assert client.put(f'/api/v1/projects/{pid_a}/workflow',headers=oh,json=payload).status_code==403
     assert client.put(f'/api/v1/projects/{pid_a}/gates/SECURITY_REVIEW',headers=oh,json={
         'enabled':False}).status_code==403
+
+
+def test_rc33_release_decision_is_manager_scoped_and_project_bound():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC33 Release A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC33 Release B'}).json()
+    pid_a,pid_b=project_a['id'],project_b['id']
+
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC33 Release Manager'}).json()
+    developer=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC33 Release Developer'}).json()
+    reviewer=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC33 Release Reviewer'}).json()
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':developer['id'],'role':'member','work_function':'developer'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':reviewer['id'],'role':'reviewer'}).status_code==200
+
+    mh={'Authorization':f"Bearer {manager['token']}"}
+    dh={'Authorization':f"Bearer {developer['token']}"}
+    rh={'Authorization':f"Bearer {reviewer['token']}"}
+
+    req=client.post('/api/v1/requirements',headers=mh,json={
+        'project_id':pid_a,'title':'RC33 release-bound requirement',
+        'acceptance_criteria':['Implemented','Validated']})
+    assert req.status_code==200,req.text
+    task=client.post('/api/v1/tasks',headers=mh,json={
+        'requirement_id':req.json()['id'],'title':'RC33 release-bound task',
+        'assignee_member_ids':[developer['id']]})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    # Release decisions are governance writes, not execution/review writes.
+    payload={
+        'title':'RC33 Release Decision','decision':'Release accepted',
+        'rationale':'Evidence and review completed',
+        'accountable_member_id':manager['id'],'related_task_ids':[tid]}
+    assert client.post(f'/api/v1/projects/{pid_a}/decisions',headers=dh,json=payload).status_code==403
+    assert client.post(f'/api/v1/projects/{pid_a}/decisions',headers=rh,json=payload).status_code==403
+
+    # A task from another project cannot be smuggled into this project's decision.
+    other_req=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_b,'title':'Other project requirement'}).json()
+    other_task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':other_req['id'],'title':'Other project task'}).json()
+    cross=dict(payload)
+    cross['related_task_ids']=[other_task['id']]
+    assert client.post(f'/api/v1/projects/{pid_a}/decisions',headers=mh,json=cross).status_code in (400,403,409)
+
+    created=client.post(f'/api/v1/projects/{pid_a}/decisions',headers=mh,json=payload)
+    assert created.status_code==200,created.text
+
+    # Acceptance remains independently governed by the acceptance contract.
+    report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=rh)
+    assert report.status_code==200,report.text
+    assert report.json()['ready_for_acceptance'] is False
+
+    # Finish the task with delivery evidence, then acceptance becomes eligible.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    db.execute(
+        "INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        ('rc33_release_artifact',tid,'TEST_REPORT',
+         'https://example.invalid/rc33-report','rc33-release','{}',
+         '2026-01-01T00:00:00+00:00','tenant-default'))
+    db.commit()
+    db.close()
+
+    ready=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=rh)
+    assert ready.status_code==200 and ready.json()['ready_for_acceptance'] is True
+
+    accepted=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=rh,json={
+        'decision':'APPROVE','verified_criteria':[0,1],
+        'comment':'RC33 release evidence verified'})
+    assert accepted.status_code==200,accepted.text
+    assert accepted.json()['status']=='ACCEPTED'
+
+    governance=client.get(f'/api/v1/projects/{pid_a}/governance',headers=mh)
+    assert governance.status_code==200,governance.text
+    assert governance.json()['completed_tasks']>=1
+
+    audit=client.get(f'/api/v1/projects/{pid_a}/audit',headers=mh)
+    assert audit.status_code==200
+    types={x['event_type'] for x in audit.json()['items']}
+    assert 'project.decision.created' in types
+    assert 'requirement.acceptance.approve' in types
+
+
+def test_rc33_acceptance_rejects_missing_delivery_evidence_and_cross_project_access():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC33 Acceptance A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC33 Acceptance B'}).json()
+    pid_a,pid_b=project_a['id'],project_b['id']
+
+    reviewer=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC33 Acceptance Reviewer'}).json()
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':reviewer['id'],'role':'reviewer'}).status_code==200
+    rh={'Authorization':f"Bearer {reviewer['token']}"}
+
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_a,'title':'RC33 evidence gate',
+        'acceptance_criteria':['Criterion A']}).json()
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req['id'],'title':'RC33 incomplete task'}).json()
+
+    incomplete=client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=rh,json={
+        'decision':'APPROVE','verified_criteria':[0]})
+    assert incomplete.status_code==409
+
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC33 Cross Project Reviewer'}).json()
+    assert client.post(f'/api/v1/projects/{pid_b}/members',headers=ADMIN,json={
+        'member_id':outsider['id'],'role':'reviewer'}).status_code==200
+    outsider_h={'Authorization':f"Bearer {outsider['token']}"}
+    assert client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=outsider_h).status_code==403
+    assert client.post(f"/api/v1/requirements/{req['id']}/acceptance",headers=outsider_h,json={
+        'decision':'APPROVE','verified_criteria':[0]}).status_code==403
