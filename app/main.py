@@ -68,7 +68,8 @@ def project_members(pid:str,authorization:str=Header(None)):
 def project_member_candidates(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        project=require_project_access(c,pid,a,write=True)
+        require_project_access(c,pid,a,write=True)
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         rows=c.execute("""
             SELECT m.id,m.name,m.username,m.role AS account_role,
                    CASE WHEN pm.member_id IS NULL THEN 0 ELSE 1 END AS already_member,
