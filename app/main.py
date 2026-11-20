@@ -51,7 +51,7 @@ async def security_headers(request, call_next):
     response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     return response
 
-class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=160); description:str=Field(default='',max_length=5000)
+class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=160); description:str=Field(default='',max_length=5000); tenant_id:Optional[str]=Field(default=None,min_length=1,max_length=120)
 class ProjectMemberFunctionIn(BaseModel): work_function:str=Field(pattern='^(developer|tester|product|architect|other)$')
 class RequirementIn(BaseModel): project_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); acceptance_criteria:list[str]=Field(default_factory=list)
 class TaskIn(BaseModel): requirement_id:str; title:str=Field(min_length=1,max_length=200); description:str=Field(default='',max_length=10000); assignee_member_ids:list[str]=Field(default_factory=list); dependencies:list[str]=Field(default_factory=list)
@@ -732,10 +732,16 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     pid='prj_'+uuid.uuid4().hex[:12]
+    target_tenant=b.tenant_id or a.get('tenant_id','tenant-default')
     with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
+        tenant=c.execute('SELECT id FROM tenants WHERE id=?',(target_tenant,)).fetchone()
+        if not tenant: raise HTTPException(404,'Tenant not found')
+        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),target_tenant))
+        # A platform administrator may create projects for another tenant, but must not
+        # become a cross-tenant project member. Tenant-scoped managers are added explicitly.
+        if target_tenant==a.get('tenant_id','tenant-default'):
+            c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
+    return {'id':pid,'name':b.name,'description':b.description,'tenant_id':target_tenant}
 @app.get('/api/v1/projects')
 def projects(authorization:str=Header(None)):
     a=actor(authorization)
