@@ -149,7 +149,7 @@ def test_rc26_high_fidelity_shell_has_no_duplicate_function_definitions_for_crit
 def test_rc26_high_fidelity_shell_has_deterministic_browser_acceptance_selectors():
     for marker in [
         'data-testid="login-screen"',
-        'data-testid="token-input"',
+        'data-testid="username-input"',
         'data-testid="login-submit"',
         'data-testid="app-shell"',
         'data-testid="project-switcher"',
@@ -168,3 +168,18 @@ def test_rc26_high_fidelity_shell_has_deterministic_browser_acceptance_selectors
         'role="status" aria-live="polite"',
     ]:
         assert marker in HTML, f"missing deterministic browser acceptance hook: {marker}"
+
+def test_rc27_auth_is_account_password_not_web_token():
+    assert 'id="username"' in HTML
+    assert 'id="password"' in HTML
+    assert 'data-testid="password-input"' in HTML
+    assert 'Bearer token（不含前缀）' not in HTML
+    assert "api('/api/v1/auth/login'" in HTML
+    assert 'API / MCP 使用独立 Token' in HTML
+
+def test_rc27_system_admin_has_user_management_surface():
+    assert 'data-page="users"' in HTML
+    assert 'data-testid="page-users"' in HTML
+    assert 'function openCreateUser()' in HTML
+    assert 'function loadUsers()' in HTML
+    assert "const visible={governance:manager||reviewer,exceptions:manager,packages:Boolean(me),users:admin}" in HTML
