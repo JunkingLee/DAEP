@@ -144,3 +144,27 @@ def test_rc26_high_fidelity_shell_has_role_navigation_contracts_and_accessibilit
 def test_rc26_high_fidelity_shell_has_no_duplicate_function_definitions_for_critical_actions():
     for name in ["saveProjectGate", "renderRoleWorkbench", "loadCollaboration", "loadGovernance"]:
         assert len(re.findall(r"function\s+" + re.escape(name) + r"\s*\(", HTML)) == 1, name
+
+
+def test_rc26_high_fidelity_shell_has_deterministic_browser_acceptance_selectors():
+    for marker in [
+        'data-testid="login-screen"',
+        'data-testid="token-input"',
+        'data-testid="login-submit"',
+        'data-testid="app-shell"',
+        'data-testid="project-switcher"',
+        'data-testid="primary-nav"',
+        'data-testid="current-role"',
+        'data-testid="page-portfolio"',
+        'data-testid="page-overview"',
+        'data-testid="page-workbench"',
+        'data-testid="page-work"',
+        'data-testid="page-collaboration"',
+        'data-testid="page-governance"',
+        'data-testid="page-dependencies"',
+        'data-testid="page-exceptions"',
+        'data-testid="page-packages"',
+        'data-testid="page-inbox"',
+        'role="status" aria-live="polite"',
+    ]:
+        assert marker in HTML, f"missing deterministic browser acceptance hook: {marker}"
