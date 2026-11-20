@@ -599,6 +599,20 @@ def password_login(body:dict):
     raw=issue_member_token(row['id'])
     return {'access_token':raw,'token_type':'bearer','member_id':row['id'],'name':row['name']}
 
+@app.patch('/api/v1/me')
+def update_me(body:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    name=str(body.get('name','')).strip()
+    username=str(body.get('username','')).strip().lower()
+    if not name or len(name)>120: raise HTTPException(422,'Name is required and must be at most 120 characters')
+    if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{1,119}',username): raise HTTPException(422,'Invalid username')
+    with conn() as c:
+        conflict=c.execute('SELECT id FROM members WHERE lower(username)=? AND id<>?',(username,a['id'])).fetchone()
+        if conflict: raise HTTPException(409,'Username already exists')
+        c.execute('UPDATE members SET name=?,username=? WHERE id=?',(name,username,a['id']))
+        event(c,'member.profile.updated',a['id'],None,{'member_id':a['id'],'name':name,'username':username},tenant_override=a.get('tenant_id','tenant-default'))
+    return {'id':a['id'],'name':name,'username':username,'role':a['role']}
+
 @app.post('/api/v1/auth/change-password')
 def change_password(body:dict,authorization:str=Header(None)):
     a=actor(authorization); current=str(body.get('current_password','')); new=str(body.get('new_password',''))
