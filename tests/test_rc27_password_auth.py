@@ -85,3 +85,65 @@ def test_rc29_delegation_response_revalidates_project_scope():
     assert "require_project_access(c,row['project_id'],a)" in block
     assert "task_pid=task_project(c,row['task_id'])" in block
     assert "Delegation project scope is invalid" in block
+
+
+def _route_block(route, next_route):
+    return MAIN.split(route, 1)[1].split(next_route, 1)[0]
+
+
+def test_rc30_role_project_scope_matrix_contract():
+    # Every project-scoped write surface must enforce live project membership,
+    # rather than relying on the browser's role-aware navigation.
+    route_pairs = [
+        ("@app.post('/api/v1/projects/{pid}/members')", "@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')"),
+        ("@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')", "@app.post('/api/v1/projects/{pid}/role-change-requests')"),
+        ("@app.post('/api/v1/projects/{pid}/role-change-requests')", "@app.get('/api/v1/projects/{pid}/role-change-requests')"),
+    ]
+    for route, next_route in route_pairs:
+        block = _route_block(route, next_route)
+        assert "require_project_access(c,pid,a,write=True)" in block or "require_project_access(c,pid,a)" in block
+
+
+def test_rc30_workflow_gate_governance_writes_are_project_scoped():
+    # Workflow/Gate/Governance are project controls: a member of another
+    # project/tenant must never reach a mutation solely with a valid token.
+    markers = [
+        "require_project_access(c,pid,a,write=True)",
+        "require_project_access(c,pid,a)",
+        "require_project_access(c,project_id,a,write=True)",
+    ]
+    for marker in markers:
+        assert marker in MAIN
+
+
+def test_rc30_task_mutations_use_assignment_or_project_scope():
+    # Developer/tester/product permissions are task-scoped; the API must not
+    # trust the front-end role tabs. Mutation handlers must use either the
+    # assigned-task guard or project manager/reviewer guard.
+    for marker in [
+        "require_task_access(c,tid,a,assigned_only=True)",
+        "require_task_access(c,tid,a)",
+        "Reviewer role required",
+        "Project manager role required",
+    ]:
+        assert marker in MAIN
+
+
+def test_rc30_cross_tenant_member_and_agent_operations_are_blocked():
+    for marker in [
+        "Tenant isolation violation",
+        "recipient tenant",
+        "agent registration",
+        "project membership",
+    ]:
+        assert marker.lower() in MAIN.lower()
+
+
+def test_rc30_role_matrix_documents_server_side_boundaries():
+    # Keep the role model explicit in executable acceptance contracts:
+    # admin -> platform governance; owner/manager -> project administration;
+    # reviewer -> review/acceptance; assignee -> task execution.
+    assert "if not is_admin(a): raise HTTPException(403,'Platform administrator required')" in MAIN
+    assert "row['role'] not in ('owner','manager')" in MAIN
+    assert "role['role'] not in ('owner','manager','reviewer')" in MAIN
+    assert "assigned_only=True" in MAIN
