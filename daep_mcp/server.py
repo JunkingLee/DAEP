@@ -47,12 +47,12 @@ def get_my_tasks() -> list:
     return call('GET','/api/v1/me/tasks')
 
 @mcp.tool()
-def accept_agent_task_assignment(task_id: str) -> dict:
-    """Accept a task explicitly assigned to this Agent identity."""
-    return call('POST',f'/api/v1/tasks/{task_id}/agent-assignments/accept',{})
+def accept_agent_task_assignment(assignment_id: str) -> dict:
+    """Accept an assignment explicitly addressed to this Agent identity."""
+    return call('POST',f'/api/v1/agent-assignments/{assignment_id}/accept',{})
 
 @mcp.tool()
-def list_agent_task_assignments(task_id: str) -> list:
+def list_agent_task_assignments(task_id: str) -> dict:
     """List Agent assignments for a task; requires project access."""
     return call('GET',f'/api/v1/tasks/{task_id}/agent-assignments')
 
