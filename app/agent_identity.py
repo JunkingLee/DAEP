@@ -94,7 +94,6 @@ def authenticate_agent_token(conn, raw_token):
         return dict(row)
 
 def register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now):
-    ensure_agent_schema(conn)
 
     @app.get('/api/v1/agents')
     def list_agents(authorization: str = Header(default='')):
