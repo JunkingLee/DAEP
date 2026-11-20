@@ -78,3 +78,10 @@ def test_rc28_requirement_acceptance_requires_reviewer_or_manager():
     block = MAIN.split("@app.post('/api/v1/requirements/{rid}/acceptance')",1)[1]
     assert "role['role'] not in ('owner','manager','reviewer')" in block
     assert "Reviewer role required" in block
+
+
+def test_rc29_delegation_response_revalidates_project_scope():
+    block = MAIN.split("@app.post('/api/v1/delegations/{did}/respond')",1)[1].split("@app.get('/api/v1/tasks/{tid}/delegations')",1)[0]
+    assert "require_project_access(c,row['project_id'],a)" in block
+    assert "task_pid=task_project(c,row['task_id'])" in block
+    assert "Delegation project scope is invalid" in block
