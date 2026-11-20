@@ -167,13 +167,16 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def bind_agent(agent_id: str, body: AgentProjectBindingIn, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            r=_agent_owner(c,agent_id,a)
+            project=c.execute("SELECT tenant_id,status FROM projects WHERE id=?",(body.project_id,)).fetchone()
+            if not project: raise HTTPException(404,'Project not found')
+            if project['tenant_id'] != a.get('tenant_id','tenant-default'): raise HTTPException(403,'Tenant isolation violation')
+            if project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
             if not is_admin(a):
-                # Only project owners/managers may bind an Agent they own.
                 prow=c.execute("SELECT role FROM project_members WHERE project_id=? AND member_id=?",(body.project_id,a['id'])).fetchone()
                 if not prow or prow['role'] not in ('owner','manager'):
                     raise HTTPException(403,'Project manager role required')
-            project=c.execute("SELECT tenant_id,status FROM projects WHERE id=?",(body.project_id,)).fetchone()
+            r=c.execute("SELECT * FROM agents WHERE id=? AND tenant_id=? AND status='ACTIVE'",(agent_id,project['tenant_id'])).fetchone()
+            if not r: raise HTTPException(404,'Agent not found or inactive')
             if not project: raise HTTPException(404,'Project not found')
             if project['tenant_id'] != a.get('tenant_id','tenant-default'): raise HTTPException(403,'Tenant isolation violation')
             if project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
