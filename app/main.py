@@ -788,17 +788,17 @@ def reopen_project(pid:str,b:dict,authorization:str=Header(None)):
     action_reset=_lifecycle_action_ctx.set('REOPEN')
     try:
         with conn() as c:
-        begin_serialized_write(c)
-        require_project_access(c,pid,a)
-        role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-        if not is_admin(a) and (not role or role['role']!='owner'):
-            raise HTTPException(403,'Project owner approval required')
-        project=c.execute('SELECT status,tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if project['status']!='CLOSED': raise HTTPException(409,'Project is not closed')
-        stamp=now()
-        c.execute("UPDATE projects SET status='ACTIVE' WHERE id=? AND status='CLOSED'",(pid,))
-        event(c,'project.reopened',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'status':'ACTIVE','reopened_at':stamp,'reason':reason}
+            begin_serialized_write(c)
+            require_project_access(c,pid,a)
+            role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+            if not is_admin(a) and (not role or role['role']!='owner'):
+                raise HTTPException(403,'Project owner approval required')
+            project=c.execute('SELECT status,tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+            if project['status']!='CLOSED': raise HTTPException(409,'Project is not closed')
+            stamp=now()
+            c.execute("UPDATE projects SET status='ACTIVE' WHERE id=? AND status='CLOSED'",(pid,))
+            event(c,'project.reopened',a['id'],None,{'project_id':pid,'reason':reason},tenant_override=project['tenant_id'])
+            return {'project_id':pid,'status':'ACTIVE','reopened_at':stamp,'reason':reason}
     finally:
         _lifecycle_action_ctx.reset(action_reset)
 
