@@ -100,16 +100,14 @@
 <section id="exceptions" class="page"><div id="coordinationPanel">
   <div class="page-head"><div><h1>异常协调中心</h1><p class="muted">逾期 · 依赖阻塞 · 停滞 · 待审核 · 未认领 · 待响应委派</p></div><button class="btn secondary" onclick="loadExceptions()">扫描异常</button></div>
   <div class="metrics" id="exceptionMetrics"></div><div id="exceptionList" class="list"></div>
-</section>
-
-<div class="hidden" id="coordinationPanelContract"></div></div></section>
+</div></section>
 
 <section id="packages" class="page">
   <div class="page-head"><div><h1>Work Package</h1><p class="muted">多 Agent 工作包 · SLA · 风险 · 交付产物</p></div><button class="btn secondary" onclick="loadPackages()">刷新健康度</button></div>
   <div class="grid" id="workPackageBoard"></div>
 </section>
 
-<section id="compatWorkbench" class="page hidden"><div id="myWorkbenchPanel"></div><div id="managerWorkbenchPanel"></div><div id="workflowDesignerPanel"></div><div id="metrics"></div><div id="board"></div><div id="dependencyGraph"></div><div id="workPackageBoard"></div><select id="workPackageRiskFilter"><option value="">所有风险状态</option></select><div id="myWorkbenchMetrics"></div><div id="managerGovernanceMetrics"></div></section><section id="inbox" class="page">
+<section id="compatWorkbench" class="page hidden"><div id="myWorkbenchPanel"></div><div id="managerWorkbenchPanel"></div><div id="workflowDesignerPanel"></div><div id="metrics"></div><div id="board"></div><div id="dependencyGraph"></div><select id="workPackageRiskFilter"><option value="">所有风险状态</option></select><div id="myWorkbenchMetrics"></div><div id="managerGovernanceMetrics"></div></section><section id="inbox" class="page">
   <div class="page-head"><div><h1>消息收件箱</h1><p class="muted">跨成员协作消息 · ACK · 可靠投递</p></div><button class="btn secondary" onclick="loadInbox()">刷新</button></div>
   <div class="card"><div id="inboxList" class="list"></div></div>
 </section>
