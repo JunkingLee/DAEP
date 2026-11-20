@@ -117,6 +117,10 @@ RC 阶段已有 Python 多版本、迁移、Production Compose、容器构建、
 
 DAEP 负责协作、消息、状态和治理，不托管、不启动、不强制唤醒成员本地 Agent Runtime。
 
+详细实机执行步骤、离线恢复场景、证据表和 Pass/Fail 标准见 docs/RC9_AGENT_INTEROPERABILITY_DRILL.md。
+
+当前状态仍为“待真实环境执行”，该文档只是验收执行基线，不构成实机通过证据。
+
 ## 发布门禁
 
 | 门禁 | 当前状态 | 是否阻塞 GA |
@@ -135,7 +139,7 @@ DAEP 负责协作、消息、状态和治理，不托管、不启动、不强制
 2. 修复浏览器验收中发现的真实交互/布局问题。
 3. 重新执行自动化 CI。
 4. 执行 Production PostgreSQL backup/restore。
-5. 执行双 Agent MCP 实机互操作。
+5. 按 docs/RC9_AGENT_INTEROPERABILITY_DRILL.md 执行双 Agent MCP 实机互操作与离线恢复。
 6. 汇总证据并形成 RC → GA 决策。
 7. 在明确授权后，再考虑合并到 main。
 
