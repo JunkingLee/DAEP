@@ -2552,7 +2552,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
@@ -4366,7 +4369,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
@@ -6190,7 +6196,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
@@ -8110,7 +8119,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
@@ -9924,7 +9936,10 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     elif member:
         rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
         if rr: tenant=rr['tenant_id']
-    payload_json=json.dumps(payload)
+    audit_payload=dict(payload or {})
+    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
+    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    payload_json=json.dumps(audit_payload)
     if key:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
