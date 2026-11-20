@@ -37,6 +37,7 @@ def upgrade():
               WHERE pm.project_id=projects.id
                 AND pm.member_id=current_setting('app.member_id', true)
                 AND pm.role='owner'
+                AND current_setting('app.lifecycle_action', true)='REOPEN'
             )
           )
         )
