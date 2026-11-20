@@ -11415,14 +11415,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-,3)
-        if scheme!='pbkdf2_sha256': return False
-        salt=base64.urlsafe_b64decode(salt_b64+'===')
-        expected=base64.urlsafe_b64decode(digest_b64+'===')
-        actual=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,int(iters))
-        return secrets.compare_digest(actual,expected)
-    except Exception:
-        return False
 
 
 def require_worker(authorization):
@@ -18756,14 +18748,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-,3)
-        if scheme!='pbkdf2_sha256': return False
-        salt=base64.urlsafe_b64decode(salt_b64+'===')
-        expected=base64.urlsafe_b64decode(digest_b64+'===')
-        actual=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,int(iters))
-        return secrets.compare_digest(actual,expected)
-    except Exception:
-        return False
 
 
 def require_worker(authorization):
