@@ -832,7 +832,7 @@ def project_member_candidates(pid:str,authorization:str=Header(None)):
 def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     mid=b.get('member_id') or b.get('member_username'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
+    if role not in ('member','reviewer','manager','owner'): raise HTTPException(422,'Invalid project role')
     if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
@@ -842,7 +842,7 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
+        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')  # recipient tenant is validated against the project tenant before membership mutation
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
