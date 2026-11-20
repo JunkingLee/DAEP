@@ -630,7 +630,8 @@ def create_member(body:dict,authorization:str=Header(None)):
     role=str(body.get('role','member')).strip()
     if not name: raise HTTPException(422,'Member name is required')
     if role=='admin': raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    if role not in ('member','manager','developer','reviewer'): raise HTTPException(422,'Invalid member role')
+    if role!='member' and role not in ('manager','developer','reviewer'): raise HTTPException(422,'Invalid member role')
+    explicit_username=bool(body.get('username'))
     username=str(body.get('username') or re.sub(r'[^a-z0-9]+','.',name.lower()).strip('.') or ('user.'+uuid.uuid4().hex[:8])).lower()
     password=body.get('password')
     if password is None or password=='': password=secrets.token_urlsafe(24)
@@ -639,7 +640,9 @@ def create_member(body:dict,authorization:str=Header(None)):
     tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
     with conn() as c:
         if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): raise HTTPException(409,'Username already exists')
+        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone():
+            if explicit_username: raise HTTPException(409,'Username already exists')
+            username=f"{username}.{uuid.uuid4().hex[:6]}"
         c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
     return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id,'token':token}
 @app.get('/api/v1/members')
