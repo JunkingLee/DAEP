@@ -1811,3 +1811,114 @@ def test_rc26_workflow_runtime_enforces_custom_gate_and_stage_exit_approval():
     approved=client.post(f'/api/v1/tasks/{tid}/review',headers=rh,json={'decision':'APPROVE','comment':'workflow gate passed'})
     assert approved.status_code == 200, approved.text
     assert approved.json()['status']=='DONE'
+
+def test_rc32_workflow_gate_review_role_matrix_is_enforced_end_to_end():
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC32 Role Matrix'}).json()
+    pid=project['id']
+
+    def member(name, role='member', work_function='other'):
+        created=client.post('/api/v1/members',headers=ADMIN,json={'name':name})
+        assert created.status_code==200,created.text
+        body=created.json()
+        added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+            'member_id':body['id'],'role':role,'work_function':work_function})
+        assert added.status_code==200,added.text
+        return body['id'], {'Authorization':'Bearer '+body['token']}
+
+    manager_id,manager_h=member('RC32 Manager','manager')
+    developer_id,developer_h=member('RC32 Developer','member','developer')
+    tester_id,tester_h=member('RC32 Tester','member','tester')
+    product_id,product_h=member('RC32 Product','member','product')
+    reviewer_id,reviewer_h=member('RC32 Reviewer','reviewer')
+
+    workflow={
+        'enabled':True,
+        'stages':[
+            {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+            {'key':'IMPLEMENT','name':'开发','order':2,'approval_role':'none','sla_seconds':7200},
+            {'key':'TEST','name':'测试','order':3,'approval_role':'none','sla_seconds':7200},
+            {'key':'REVIEW','name':'审核','order':4,'approval_role':'reviewer','sla_seconds':7200},
+            {'key':'DONE','name':'完成','order':5,'approval_role':'none','sla_seconds':None},
+        ],
+    }
+    assert client.put(f'/api/v1/projects/{pid}/workflow',headers=manager_h,json=workflow).status_code==200
+
+    gate={'enabled':True,'required_roles':['tester'],'required_evidence':True,
+          'required_all_tasks_done':False,'applies_to':'REVIEW'}
+    assert client.put(f'/api/v1/projects/{pid}/gates/TEST_EVIDENCE',headers=manager_h,json=gate).status_code==200
+
+    # Project controls cannot be changed by execution/review roles.
+    for headers in (developer_h,tester_h,product_h,reviewer_h):
+        assert client.put(f'/api/v1/projects/{pid}/workflow',headers=headers,json=workflow).status_code==403
+        assert client.put(f'/api/v1/projects/{pid}/gates/TEST_EVIDENCE',headers=headers,json=gate).status_code==403
+
+    req=client.post('/api/v1/requirements',headers=manager_h,json={
+        'project_id':pid,'title':'RC32 gated requirement','acceptance_criteria':['Implemented','Tested']})
+    assert req.status_code==200,req.text
+    task=client.post('/api/v1/tasks',headers=manager_h,json={
+        'requirement_id':req.json()['id'],'title':'RC32 gated task',
+        'assignee_member_ids':[developer_id,tester_id]})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=developer_h,
+                       json={'target_stage':'IMPLEMENT'}).status_code==200
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=developer_h,
+                       json={'target_stage':'TEST'}).status_code==200
+
+    # The developer cannot bypass the REVIEW gate or impersonate a reviewer.
+    bypass=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=developer_h,
+                       json={'target_stage':'REVIEW'})
+    assert bypass.status_code in (403,409),bypass.text
+    assert client.post(f'/api/v1/tasks/{tid}/review',headers=developer_h,
+                       json={'decision':'APPROVE'}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/review',headers=product_h,
+                       json={'decision':'APPROVE'}).status_code==403
+
+    # A gate requiring evidence remains closed until the designated execution
+    # role submits evidence; the project reviewer then owns the approval step.
+    evidence=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=tester_h,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/rc32-report',
+        'commit_sha':'rc32-test','metadata':{'passed':8}})
+    assert evidence.status_code==200,evidence.text
+    moved=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=tester_h,
+                      json={'target_stage':'REVIEW'})
+    assert moved.status_code==200,moved.text
+    approved=client.post(f'/api/v1/tasks/{tid}/review',headers=reviewer_h,json={
+        'decision':'APPROVE','comment':'RC32 evidence verified'})
+    assert approved.status_code==200,approved.text
+    assert approved.json()['status']=='DONE'
+
+    # Completion is not a substitute for requirement acceptance.
+    acceptance=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",
+                           headers=developer_h,json={'decision':'APPROVE','verified_criteria':[0,1]})
+    assert acceptance.status_code==403
+
+
+def test_rc32_gate_and_workflow_scope_cannot_cross_projects():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC32 Scope A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC32 Scope B'}).json()
+    pid_a,pid_b=project_a['id'],project_b['id']
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC32 Scope Manager'}).json()
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC32 Scope Outsider'}).json()
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid_b}/members',headers=ADMIN,json={
+        'member_id':outsider['id'],'role':'member'}).status_code==200
+    mh={'Authorization':'Bearer '+manager['token']}
+    oh={'Authorization':'Bearer '+outsider['token']}
+
+    payload={'enabled':True,'stages':[
+        {'key':'OPEN','name':'需求','order':1,'approval_role':'none','sla_seconds':None},
+        {'key':'REVIEW','name':'审核','order':2,'approval_role':'reviewer','sla_seconds':3600},
+        {'key':'DONE','name':'完成','order':3,'approval_role':'none','sla_seconds':None}]}
+    assert client.put(f'/api/v1/projects/{pid_a}/workflow',headers=mh,json=payload).status_code==200
+    assert client.put(f'/api/v1/projects/{pid_a}/gates/SECURITY_REVIEW',headers=mh,json={
+        'enabled':True,'required_roles':['reviewer'],'required_evidence':True,
+        'required_all_tasks_done':False,'applies_to':'REVIEW'}).status_code==200
+
+    assert client.get(f'/api/v1/projects/{pid_a}/workflow',headers=oh).status_code==403
+    assert client.get(f'/api/v1/projects/{pid_a}/gates',headers=oh).status_code==403
+    assert client.put(f'/api/v1/projects/{pid_a}/workflow',headers=oh,json=payload).status_code==403
+    assert client.put(f'/api/v1/projects/{pid_a}/gates/SECURITY_REVIEW',headers=oh,json={
+        'enabled':False}).status_code==403
