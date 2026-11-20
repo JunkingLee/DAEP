@@ -393,7 +393,7 @@ def require_task_access(c, tid, a, assigned_only=False):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    if assigned_only and project and project['status']=='CLOSED':
+    if project and project['status']=='CLOSED':
         raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if assigned_only:
@@ -976,7 +976,7 @@ def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header
         payload={'project_id':pid,'decision_id':decision_id,'title':b.title,'decision':b.decision,
             'rationale':b.rationale,'accountable_member_id':b.accountable_member_id,
             'related_task_ids':task_ids,'due_at':b.due_at,'recorded_by':a['id']}
-        event(c,'project.decision.recorded',a['id'],None,payload)
+        event(c,'project.decision.created',a['id'],None,payload)
     return {'id':decision_id,'project_id':pid,'status':'RECORDED','created_at':now(),**payload}
 
 @app.get('/api/v1/projects/{pid}/decisions')
@@ -1239,7 +1239,9 @@ def project_tasks(pid:str,authorization:str=Header(None)):
 def create_requirement(b:RequirementIn,authorization:str=Header(None)):
     a=actor(authorization); rid='req_'+uuid.uuid4().hex[:12]
     with conn() as c:
-        if not c.execute('SELECT 1 FROM projects WHERE id=?',(b.project_id,)).fetchone(): raise HTTPException(404,'Project not found')
+        project=c.execute('SELECT status FROM projects WHERE id=?',(b.project_id,)).fetchone()
+        if not project: raise HTTPException(404,'Project not found')
+        if project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
         require_project_access(c,b.project_id,a,write=True)
         c.execute('INSERT INTO requirements VALUES(?,?,?,?,?,?,?)',(rid,b.project_id,b.title,b.description,json.dumps(b.acceptance_criteria),'OPEN',now()))
     return {'id':rid,'project_id':b.project_id,'title':b.title,'status':'OPEN'}
