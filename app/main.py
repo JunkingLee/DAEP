@@ -12,6 +12,8 @@ ADMIN_TOKEN=os.getenv('DAEP_ADMIN_TOKEN','change-me-before-use')
 @asynccontextmanager
 async def lifespan(app):
     bootstrap()
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(conn)
     yield
 
 app=FastAPI(title='DAEP Enterprise Platform API',version='1.0.0-rc9',description='Task-centric distributed agent engineering platform',lifespan=lifespan)
@@ -110,6 +112,9 @@ class RequirementAcceptanceIn(BaseModel):
     verified_criteria:list[int]=Field(default_factory=list,max_length=100)
     comment:str=Field(default='',max_length=4000)
 def now(): return datetime.now(timezone.utc).isoformat()
+
+# First-class user-owned Agent identity / MCP token lifecycle.
+from app.agent_identity import register_agent_routes
 DATABASE_URL=os.getenv('DATABASE_URL','')
 PRIVILEGED_DATABASE_URL=os.getenv('DAEP_PRIVILEGED_DATABASE_URL','')
 _tenant_ctx=contextvars.ContextVar('daep_tenant_id',default='')
@@ -10088,3 +10093,5 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
         require_project_access(c,req['project_id'],a)
+
+register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now)
