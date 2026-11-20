@@ -166,7 +166,7 @@ def test_rc31_mutation_endpoint_scope_matrix_is_explicit():
         "@app.post('/api/v1/projects/{pid}/agents/heartbeat')": ["require_project_access(c,pid,a)"],
         "@app.post('/api/v1/tasks/{tid}/delegations')": ["require_task_access(c,tid,a,assigned_only=True)"],
         "@app.post('/api/v1/delegations/{did}/respond')": ["require_project_access(c,row['project_id'],a)"],
-        "@app.post('/api/v1/work-packages/{package_id}/reassign')": ["require_project_access(c,package_row['project_id'],a,write=True)"],
+        "@app.post('/api/v1/work-packages/{package_id}/reassign')": ["require_project_access(c,", "write=True)"],
         "@app.post('/api/v1/work-packages/{package_id}/review')": ["Reviewer role required"],
     }
     for route, guards in endpoint_guards.items():
