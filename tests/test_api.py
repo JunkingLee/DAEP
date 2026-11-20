@@ -38,6 +38,41 @@ def setup_project_task():
     t=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':r.json()['id'],'title':'Implement API','assignee_member_ids':[mid]}); assert t.status_code==200
     return pid,mid,token,t.json()['id']
 
+def test_agent_task_assignment_is_identity_scoped_and_revocable():
+    pid,_,_,tid=setup_project_task()
+    created=client.post('/api/v1/agents',headers=ADMIN,json={
+        'name':'Assigned Agent','description':'Agent assignment regression test'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; agent_token=created.json()['token']
+    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent['id']})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    ah={'Authorization':'Bearer '+agent_token}
+    inbox=client.get('/api/v1/agents/me/tasks',headers=ah)
+    assert inbox.status_code==200 and any(x['task_id']==tid for x in inbox.json()['items'])
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah,json={})
+    assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    progress=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':25,'note':'Agent execution'})
+    assert progress.status_code==200,progress.text
+
+    other=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Unassigned Agent'}).json()
+    assert client.post(f"/api/v1/agents/{other['agent']['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'}).status_code==200
+    oh={'Authorization':'Bearer '+other['token']}
+    denied=client.post(f'/api/v1/tasks/{tid}/progress',headers=oh,json={'progress':40})
+    assert denied.status_code==403
+
+    revoked=client.post(f'/api/v1/agent-assignments/{assignment_id}/revoke',headers=ADMIN,json={
+        'reason':'Reassigned by project manager'})
+    assert revoked.status_code==200 and revoked.json()['status']=='REVOKED'
+    denied_after_revoke=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':50})
+    assert denied_after_revoke.status_code==403
+
+
 def test_project_requirement_task_message_flow():
     _,mid,token,tid=setup_project_task()
     msg=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Start','content':'Please begin'}); assert msg.status_code==200
