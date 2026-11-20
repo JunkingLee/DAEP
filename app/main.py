@@ -427,9 +427,9 @@ def require_task_access(c, tid, a, assigned_only=False):
         if assigned_only:
             if closed: raise HTTPException(409,'Project is closed')
             assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-                WHERE task_id=? AND project_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
+                WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
                 (tid,pid,a['agent_id'])).fetchone()
-            if not assignment: raise HTTPException(403,'Active Agent task assignment required')
+            if not assignment: raise HTTPException(403,'Accepted Agent task assignment required')
         return
     if assigned_only:
         if closed: raise HTTPException(409,'Project is closed')
@@ -1476,6 +1476,9 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT' and b.progress==100:
+            if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(tid,)).fetchone() is None:
+                raise HTTPException(409,'Agent must submit at least one artifact before requesting review')
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
@@ -1567,6 +1570,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent identities cannot review or approve work')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -1591,12 +1595,16 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         status='DONE' if decision=='APPROVE' else 'IN_PROGRESS'
         updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,now(),tid,'REVIEW'))
         if updated.rowcount != 1: raise HTTPException(409,'Task is no longer awaiting review')
+        if decision=='APPROVE':
+            stamp=now()
+            c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,tid))
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
 
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent identities cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
@@ -1624,6 +1632,8 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             status='IN_PROGRESS'; progress=90
         updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
         if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
+        if decision=='APPROVE':
+            c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,package['child_task_id']))
         eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
         return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
 
@@ -2523,10 +2533,16 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
     if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager': raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
