@@ -133,6 +133,12 @@ DAEP 负责协作、消息、状态和治理，不托管、不启动、不强制
 | 双 Agent 实机互操作 | 待执行 | 是 |
 | GA 发布签署 | 待上述全部完成 | 是 |
 
+## 最终证据汇总
+
+RC9 已建立统一的最终证据包：`docs/RC9_FINAL_EVIDENCE_PACKAGE.md`。
+
+该证据包用于汇总真实浏览器、Production Backup/Restore、双 Agent 实机互操作三类阻塞门禁，并明确“未执行不等于通过”。结构检查脚本为 `scripts/rc9_evidence_preflight.sh`，只验证证据材料结构，不会伪造真实环境 PASS。
+
 ## 下一执行顺序
 
 1. 获得真实浏览器环境，执行 docs/RC9_BROWSER_ACCEPTANCE_RUNBOOK.md。
