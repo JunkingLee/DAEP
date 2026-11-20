@@ -34,6 +34,7 @@ def ensure_agent_schema(conn):
         c.execute("""CREATE TABLE IF NOT EXISTS agent_tokens(
             id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
             token_hash TEXT UNIQUE NOT NULL,
             status TEXT NOT NULL DEFAULT 'ACTIVE',
             created_at TEXT NOT NULL,
@@ -71,11 +72,11 @@ def _agent_owner(c, agent_id, a):
         raise HTTPException(403,'Agent owner permission required')
     return row
 
-def _issue(c, agent_id, timestamp):
+def _issue(c, agent_id, timestamp, tenant_id):
     raw=_token()
     c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",(timestamp,agent_id))
     tid='agtok_'+uuid.uuid4().hex
-    c.execute("INSERT INTO agent_tokens(id,agent_id,token_hash,status,created_at) VALUES(?,?,?,?,?)",(tid,agent_id,_hash(raw),'ACTIVE',timestamp))
+    c.execute("INSERT INTO agent_tokens(id,agent_id,tenant_id,token_hash,status,created_at) VALUES(?,?,?,?,?,?)",(tid,agent_id,tenant_id,_hash(raw),'ACTIVE',timestamp))
     return raw,tid
 
 def authenticate_agent_token(conn, raw_token):
@@ -119,7 +120,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
         with conn() as c:
             c.execute("INSERT INTO agents(id,owner_member_id,tenant_id,name,description,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                       (aid,a['id'],a.get('tenant_id','tenant-default'),body.name,body.description,'ACTIVE',ts,ts))
-            raw,token_id=_issue(c,aid,ts)
+            raw,token_id=_issue(c,aid,ts,a.get('tenant_id','tenant-default'))
             event(c,'agent.created',a['id'],None,{'agent_id':aid,'name':body.name})
             event(c,'agent.token.issued',a['id'],None,{'agent_id':aid,'token_id':token_id})
             return {'agent':dict(c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE id=?",(aid,)).fetchone()),'token':raw,'token_id':token_id,'token_once':True}
@@ -149,7 +150,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
         a=actor(authorization)
         with conn() as c:
             _agent_owner(c,agent_id,a)
-            raw,token_id=_issue(c,agent_id,now())
+            raw,token_id=_issue(c,agent_id,now(),r['tenant_id'])
             event(c,'agent.token.rotated',a['id'],None,{'agent_id':agent_id,'token_id':token_id})
             return {'agent_id':agent_id,'token':raw,'token_id':token_id,'token_once':True}
 
