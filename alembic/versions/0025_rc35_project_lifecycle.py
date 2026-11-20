@@ -16,24 +16,23 @@ def upgrade():
     op.execute("ALTER TABLE projects ALTER COLUMN status SET NOT NULL")
     op.execute("ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check")
     op.execute("ALTER TABLE projects ADD CONSTRAINT projects_status_check CHECK (status IN ('ACTIVE','CLOSED'))")
+    op.execute("""CREATE OR REPLACE FUNCTION daep_project_owner(project_id text)
+      RETURNS boolean
+      LANGUAGE sql
+      STABLE
+      SECURITY DEFINER
+      SET search_path = public
+      AS $
+        SELECT EXISTS (
+          SELECT 1 FROM project_members pm
+          WHERE pm.project_id = $1
+            AND pm.member_id = current_setting('app.member_id', true)
+            AND pm.role = 'owner'
+        )
+      $""")
     op.execute("DROP POLICY IF EXISTS daep_projects_tenant ON projects")
     op.execute("""CREATE POLICY daep_projects_tenant ON projects
-      USING (
-        daep_tenant_visible(tenant_id)
-        AND (
-          status='ACTIVE'
-          OR (
-            status='CLOSED'
-            AND EXISTS (
-              SELECT 1 FROM project_members pm
-              WHERE pm.project_id=projects.id
-                AND pm.member_id=current_setting('app.member_id', true)
-                AND pm.role='owner'
-                AND current_setting('app.lifecycle_action', true)='REOPEN'
-            )
-          )
-        )
-      )
+      USING (daep_tenant_visible(tenant_id))
       WITH CHECK (
         daep_tenant_visible(tenant_id)
         AND (
@@ -41,6 +40,7 @@ def upgrade():
           OR (
             status='CLOSED'
             AND current_setting('app.lifecycle_action', true)='REOPEN'
+            AND daep_project_owner(id)
           )
         )
       )""")
@@ -49,6 +49,7 @@ def downgrade():
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
+    op.execute("DROP FUNCTION IF EXISTS daep_project_owner(text)")
     op.execute("DROP POLICY IF EXISTS daep_projects_update ON projects")
     op.execute("DROP POLICY IF EXISTS daep_projects_insert ON projects")
     op.execute("DROP POLICY IF EXISTS daep_projects_select ON projects")
