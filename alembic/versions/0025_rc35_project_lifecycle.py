@@ -22,14 +22,14 @@ def upgrade():
       STABLE
       SECURITY DEFINER
       SET search_path = public
-      AS $
+      AS $func$
         SELECT EXISTS (
           SELECT 1 FROM project_members pm
           WHERE pm.project_id = $1
             AND pm.member_id = current_setting('app.member_id', true)
             AND pm.role = 'owner'
         )
-      $""")
+      $func$""")
     op.execute("DROP POLICY IF EXISTS daep_projects_tenant ON projects")
     op.execute("""CREATE POLICY daep_projects_tenant ON projects
       USING (daep_tenant_visible(tenant_id))
