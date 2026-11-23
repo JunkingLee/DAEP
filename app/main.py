@@ -2171,6 +2171,24 @@ def reassign_work_package(package_id:str,b:WorkPackageReassignIn,authorization:s
         if not agent: raise HTTPException(404,'New assignee Agent is not registered in this project')
         if agent['status']=='OFFLINE' or agent['last_seen']<cutoff: raise HTTPException(409,'New assignee Agent presence is offline or stale')
         stamp=now()
+        agent_assignment_sql="""SELECT id,agent_id,status FROM agent_task_assignments
+            WHERE task_id=? AND project_id=? AND status IN ('ASSIGNED','ACCEPTED')"""
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            agent_assignment_sql += ' FOR UPDATE'
+        active_agent_assignments=c.execute(agent_assignment_sql,
+            (package['child_task_id'],package['project_id'])).fetchall()
+        revoked_agent_assignment_count=0
+        for agent_assignment in active_agent_assignments:
+            changed=c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+                WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",
+                (stamp,stamp,agent_assignment['id'])).rowcount
+            if changed:
+                revoked_agent_assignment_count+=1
+                event(c,'task.agent_assignment_revoked',a['id'],package['parent_task_id'],{
+                    'assignment_id':agent_assignment['id'],'agent_id':agent_assignment['agent_id'],
+                    'task_id':package['child_task_id'],'work_package_id':package_id,
+                    'previous_status':agent_assignment['status'],'reason':'work_package_reassigned',
+                    'takeover_reason':b.reason})
         c.execute('DELETE FROM assignments WHERE task_id=? AND member_id=?',(package['child_task_id'],package['assignee_member_id']))
         c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(package['child_task_id'],b.assignee_member_id))
         c.execute('UPDATE task_work_packages SET assignee_member_id=?,agent_name=?,needs_attention=0,stalled_at=NULL,stall_reason=NULL,updated_at=? WHERE id=?',(b.assignee_member_id,agent_name,stamp,package_id))
@@ -2182,7 +2200,7 @@ def reassign_work_package(package_id:str,b:WorkPackageReassignIn,authorization:s
         payload={'message_id':mid,'recipient_member_id':b.assignee_member_id,'project_id':package['project_id'],'task_id':package['child_task_id'],'message_type':'WORK_PACKAGE_REASSIGNED','title':title,'content':content,'priority':'HIGH'}
         c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,stamp,stamp,project['tenant_id']))
         eid=event(c,'task.work_package.reassigned',a['id'],package['parent_task_id'],{'work_package_id':package_id,'correlation_id':package['correlation_id'],'child_task_id':package['child_task_id'],'previous_assignee_member_id':package['assignee_member_id'],'assignee_member_id':b.assignee_member_id,'previous_agent_name':package['agent_name'],'agent_name':agent_name,'reason':b.reason})
-    return {'work_package_id':package_id,'task_id':package['child_task_id'],'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'needs_attention':False,'message_id':mid,'event_id':eid}
+    return {'work_package_id':package_id,'task_id':package['child_task_id'],'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'needs_attention':False,'revoked_agent_assignment_count':revoked_agent_assignment_count,'message_id':mid,'event_id':eid}
 
 @app.post('/api/v1/projects/{pid}/agents/register')
 def register_project_agent(pid:str,b:AgentPresenceIn,authorization:str=Header(None)):
