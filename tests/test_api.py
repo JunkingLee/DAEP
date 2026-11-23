@@ -3135,6 +3135,6 @@ def test_agent_assignment_recovery_controls_are_visible_in_task_detail():
     assert 'renderAgentAssignments(agentAssignments.items||[],canManage,id)' in frontend
     assert '最近活动/心跳' in frontend
     assert 'recoverAgentAssignment' in frontend
-    assert '/api/v1/agent-assignments/'+assignmentId+'/recover' in frontend
+    assert "api('/api/v1/agent-assignments/'+assignmentId+'/recover'" in frontend
     assert 'task.agent_assignment_recovered' in frontend
 
