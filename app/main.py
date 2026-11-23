@@ -746,7 +746,7 @@ def password_login(body:dict):
     if not username or len(username)>120 or not password:
         raise HTTPException(422,'Username and password are required')
     with conn() as c:
-        row=c.execute("SELECT * FROM members WHERE lower(username)=? AND password_status='ACTIVE' AND token_status='ACTIVE'",(username,)).fetchone()
+        row=c.execute("SELECT * FROM members WHERE lower(username)=? AND password_status='ACTIVE'",(username,)).fetchone()
     if not row or not row['password_hash'] or not verify_password(password,row['password_hash']):
         raise HTTPException(401,'Invalid username or password')
     raw=issue_member_token(row['id'])
