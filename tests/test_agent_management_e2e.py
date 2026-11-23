@@ -126,10 +126,14 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             # populate the browser-side project collection.
             page.reload(wait_until="domcontentloaded")
             expect(page.get_by_test_id("app-shell")).to_be_visible(timeout=20000)
+            # app-shell becomes visible before async project bootstrap completes;
+            # wait for the initial overview navigation to settle before switching.
+            expect(page.locator("#overview.page.active")).to_be_visible(timeout=20000)
             expect(page.locator("#projectSelect option").filter(has_text="Browser E2E Agent Project")).to_have_count(1)
 
             page.locator('#nav button[data-page="agents"]').click()
-            expect(page.locator("#agents")).to_be_visible()
+            expect(page.locator("#agents.page.active")).to_be_visible()
+            expect(page.locator("#agents .page-head button")).to_be_visible()
             expect(page.locator("#agentGrid")).to_contain_text("还没有 Agent")
 
             page.locator("#agents .page-head button").click()
