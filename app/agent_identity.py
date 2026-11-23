@@ -183,8 +183,22 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
         a=actor(authorization)
         with conn() as c:
             r=_agent_owner(c,agent_id,a,is_admin)
-            c.execute("UPDATE agents SET name=?,description=?,status=?,updated_at=? WHERE id=?",(body.name,body.description,body.status,now(),agent_id))
-            event(c,'agent.updated',a['id'],None,{'agent_id':agent_id})
+            stamp=now()
+            c.execute("UPDATE agents SET name=?,description=?,status=?,updated_at=? WHERE id=?",(body.name,body.description,body.status,stamp,agent_id))
+            revoked_assignment_count=0
+            if body.status=='DISABLED':
+                c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",(stamp,agent_id))
+                assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
+                    WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
+                for assignment in assignments:
+                    c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+                        WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(stamp,stamp,assignment['id']))
+                    event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
+                        'assignment_id':assignment['id'],'agent_id':agent_id,
+                        'reason':'Agent identity disabled'})
+                revoked_assignment_count=len(assignments)
+            event(c,'agent.updated',a['id'],None,{'agent_id':agent_id,'status':body.status,
+                'revoked_assignment_count':revoked_assignment_count})
             return dict(c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE id=?",(agent_id,)).fetchone())
 
     @app.post('/api/v1/agents/{agent_id}/tokens/rotate')
