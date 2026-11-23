@@ -206,12 +206,24 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.post('/api/v1/agents/{agent_id}/tokens/revoke')
     def revoke_agent_token(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
+        from app.main import begin_serialized_write
         with conn() as c:
+            begin_serialized_write(c)
             _agent_owner(c,agent_id,a,is_admin)
             ts=now()
             c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",(ts,agent_id))
-            event(c,'agent.token.revoked',a['id'],None,{'agent_id':agent_id})
-            return {'agent_id':agent_id,'status':'REVOKED'}
+            assignments=c.execute("""SELECT id,task_id,project_id FROM agent_task_assignments
+                WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
+            for assignment in assignments:
+                c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+                    WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(ts,ts,assignment['id']))
+                event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
+                    'assignment_id':assignment['id'],'agent_id':agent_id,
+                    'reason':'Agent token explicitly revoked'})
+            event(c,'agent.token.revoked',a['id'],None,{'agent_id':agent_id,
+                'revoked_assignment_count':len(assignments)})
+            return {'agent_id':agent_id,'status':'REVOKED',
+                'revoked_assignment_count':len(assignments)}
 
     @app.post('/api/v1/agents/{agent_id}/projects')
     def bind_agent(agent_id: str, body: AgentProjectBindingIn, authorization: str = Header(default='')):
