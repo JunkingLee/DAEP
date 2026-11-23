@@ -15,7 +15,7 @@ docker compose -f docker-compose.rc8.yaml --profile broker up --build -d
 
 The default Compose run starts the API. The optional `broker` profile starts the separate delivery worker. Open `http://localhost:8000/` for the lightweight dashboard and `http://localhost:8000/docs` for the API. `/health` is the unauthenticated health endpoint. Business APIs require a member Bearer token; OIDC callbacks and the Git webhook use their own authentication flows, while outbox endpoints require the dedicated worker credential.
 
-The first administrator token is `DAEP_ADMIN_TOKEN`. Create individual members through `POST /api/v1/members`; the generated token is returned once. Deliver it over an approved secret channel. Do not share tokens or commit them to source control.
+The first bootstrap administrator credential is `DAEP_ADMIN_TOKEN`. For normal web use, sign in with a username and password. Create and manage platform accounts through the member administration interface/API. Agent integrations use separately issued, one-time `DAEP_AGENT_TOKEN` credentials; these are not web login credentials. Never share credentials or commit them to source control.
 
 ## Core workflow
 
@@ -28,12 +28,12 @@ The first administrator token is `DAEP_ADMIN_TOKEN`. Create individual members t
 
 ## Local MCP adapter
 
-Install dependencies on the developer's own workstation and configure the Host to launch `daep_mcp/server.py` using that member's token. See `daep_mcp/README.md`. The adapter does not start an Agent Runtime and cannot force an idle MCP Host to wake its model. Platform messages remain in the durable inbox and can be polled after reconnecting. Message creation also writes a durable transactional outbox record; a separate worker can claim, retry and complete those records through the internal API. The separate broker worker uses its own `DAEP_WORKER_TOKEN`; do not reuse the platform admin token. Its HTTP gateway also requires an independent `DAEP_BROKER_WEBHOOK_TOKEN`. Outbox claims include a per-lease capability token, and gateway requests include the stable outbox ID for deduplication.
+Install dependencies on the developer's own workstation and configure the Host to launch `daep_mcp/server.py` using the Agent's `DAEP_AGENT_TOKEN` and `DAEP_API_URL` environment variables. See `daep_mcp/README.md`. The adapter does not start an Agent Runtime and cannot force an idle MCP Host to wake its model. Platform messages remain in the durable inbox and can be polled after reconnecting. Message creation also writes a durable transactional outbox record; a separate worker can claim, retry and complete those records through the internal API. The separate broker worker uses its own `DAEP_WORKER_TOKEN`; do not reuse the platform admin token. Its HTTP gateway also requires an independent `DAEP_BROKER_WEBHOOK_TOKEN`. Outbox claims include a per-lease capability token, and gateway requests include the stable outbox ID for deduplication.
 
 ## Verification
 
-- Python 3.11/3.12/3.13 CI tests: 45 passed on each version.
-- PostgreSQL 17 migrations and RLS isolation: passed in CI.
+- Python 3.11/3.12/3.13 CI tests: see the latest workflow run for exact counts.
+- PostgreSQL 17 migrations complete; the restricted-role RLS smoke test is currently failing and must pass before release.
 - Production Compose rendering: passed in CI with required secret interpolation.
 - Production container build and non-root runtime check: passed in CI.
 - Cross-member Agent collaboration end-to-end acceptance: passed in CI.
@@ -41,7 +41,7 @@ Install dependencies on the developer's own workstation and configure the Host t
 
 ## Release boundary
 
-This is a release candidate, not a production-certified GA release. The current release supports tenant-scoped accounts/resources, a PostgreSQL compatibility path via `DATABASE_URL`, optional OIDC with state/nonce/PKCE protections, member token lifecycle, a standalone broker worker with a separate least-privilege credential and provider-neutral Git webhook ingestion. It is still a release candidate: no live PostgreSQL, external IdP, broker, Git provider, Docker build, load, disaster-recovery or independent security certification was performed in this offline build environment. PostgreSQL RLS and Alembic are implemented in RC8, but live PostgreSQL integration and RLS isolation testing remain required. See `docs/OUTBOX_WORKER.md` for downstream delivery semantics and `docs/SECURITY_AND_GAPS.md` before deployment. Do not use this baseline for regulated or sensitive workloads or expose it to the public internet without additional controls.
+This is a release candidate, not a production-certified GA release. The current release supports tenant-scoped accounts/resources, a PostgreSQL compatibility path via `DATABASE_URL`, optional OIDC with state/nonce/PKCE protections, member token lifecycle, a standalone broker worker with a separate least-privilege credential and provider-neutral Git webhook ingestion. It is still a release candidate: no live PostgreSQL, external IdP, broker, Git provider, Docker build, load, disaster-recovery or independent security certification was performed in this offline build environment. PostgreSQL RLS and Alembic are implemented, but the current CI RLS isolation smoke test is failing; release is blocked until corrected and revalidated. See `docs/OUTBOX_WORKER.md` for downstream delivery semantics and `docs/SECURITY_AND_GAPS.md` before deployment. Do not use this baseline for regulated or sensitive workloads or expose it to the public internet without additional controls.
 
 
 ## RC22 candidate acceptance
