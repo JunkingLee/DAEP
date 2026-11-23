@@ -3330,3 +3330,29 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert 'renderWorkSummaryVersions(workSummary)' in frontend
     assert '查看交付版本' in frontend
     assert 'reviewArtifactVersion' in frontend
+
+
+def test_artifact_quality_rules_validate_commit_and_test_evidence():
+    from app.artifact_quality import assess_artifact_quality
+
+    commit = assess_artifact_quality('git_commit', 'https://git.example/repo/commit/abc', 'a1b2c3d')
+    assert commit['status'] == 'PASS'
+    invalid_commit = assess_artifact_quality('git_commit', 'https://git.example/repo/commit/abc', 'not-a-sha')
+    assert invalid_commit['status'] == 'FAIL'
+    assert any(x['key'] == 'commit_sha' and x['status'] == 'FAIL' for x in invalid_commit['checks'])
+
+    report = assess_artifact_quality('test_report', 'https://ci.example/reports/123', metadata={
+        'test_summary': {'total': 20, 'passed': 18, 'failed': 2}, 'coverage_percent': 82.5})
+    assert report['status'] == 'NEEDS_REVIEW'
+    assert report['warnings'] == 1
+    broken = assess_artifact_quality('test_report', 'https://ci.example/reports/123', metadata={
+        'test_summary': {'total': 20, 'passed': 18, 'failed': 1}, 'coverage_percent': 120})
+    assert broken['status'] == 'FAIL'
+    assert broken['failed_checks'] == 2
+
+
+def test_artifact_quality_endpoint_is_registered():
+    from app.main import app
+    routes = [r for r in app.routes if getattr(r, 'path', '') == '/api/v1/tasks/{tid}/artifact-quality']
+    assert len(routes) == 1
+    assert 'GET' in routes[0].methods
