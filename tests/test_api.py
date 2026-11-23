@@ -3148,4 +3148,6 @@ def test_agent_assignment_recovery_controls_are_visible_in_task_detail():
     assert 'task.agent_assignment_recovered' in frontend
     assert 'assignTaskToAgent' in frontend
     assert '同一任务只允许一个活动 Agent 执行' in frontend
+    assert '当前任务没有 Agent 分配记录' in frontend
+    assert 'const rows=items.map' in frontend
 
