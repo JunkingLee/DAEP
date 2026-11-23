@@ -3301,5 +3301,8 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
 
     frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
     assert "api('/api/v1/tasks/'+id+'/artifact-versions')" in frontend
+    assert "api('/api/v1/tasks/'+id+'/work-summary')" in frontend
     assert 'renderArtifactVersions(artifactVersions,canReview)' in frontend
+    assert 'renderWorkSummaryVersions(workSummary)' in frontend
+    assert '查看交付版本' in frontend
     assert 'reviewArtifactVersion' in frontend
