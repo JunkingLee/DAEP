@@ -716,6 +716,75 @@ def accept_agent_task_assignment(assignment_id:str, authorization:str=Header(Non
         event(c,'task.agent_assignment_accepted',a['id'],row['task_id'],{'assignment_id':assignment_id,'agent_id':a['agent_id']})
         return {'id':assignment_id,'status':'ACCEPTED','accepted_at':stamp}
 
+@app.post('/api/v1/agent-assignments/{assignment_id}/heartbeat')
+def heartbeat_agent_task_assignment(assignment_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')!='AGENT': raise HTTPException(403,'Agent Token required')
+    with conn() as c:
+        begin_serialized_write(c)
+        row=c.execute("""SELECT * FROM agent_task_assignments
+            WHERE id=? AND agent_id=?""",(assignment_id,a['agent_id'])).fetchone()
+        if not row: raise HTTPException(404,'Assignment not found for this Agent')
+        if row['status']!='ACCEPTED': raise HTTPException(409,'Only an accepted assignment can send a heartbeat')
+        require_project_access(c,row['project_id'],a)
+        project=c.execute("SELECT status FROM projects WHERE id=?",(row['project_id'],)).fetchone()
+        if not project or project['status']!='ACTIVE':
+            raise HTTPException(409,'Project is closed or unavailable')
+        binding=c.execute("""SELECT 1 FROM agent_project_bindings
+            WHERE project_id=? AND agent_id=? AND status='ACTIVE'""",
+            (row['project_id'],a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Active project binding required')
+        stamp=now()
+        c.execute("""UPDATE agent_task_assignments SET updated_at=?
+            WHERE id=? AND agent_id=? AND status='ACCEPTED'""",(stamp,assignment_id,a['agent_id']))
+        return {'id':assignment_id,'status':'ACCEPTED','last_heartbeat_at':stamp}
+
+
+@app.post('/api/v1/agent-assignments/{assignment_id}/recover')
+def recover_stale_agent_task_assignment(assignment_id:str,body:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Only a project manager can recover an Agent assignment')
+    reason=str(body.get('reason','')).strip()
+    if not reason or len(reason)>1000:
+        raise HTTPException(422,'A recovery reason (1-1000 chars) is required')
+    try:
+        stale_after=int(body.get('stale_after_minutes',30))
+    except (TypeError,ValueError):
+        raise HTTPException(422,'stale_after_minutes must be an integer')
+    if stale_after<5 or stale_after>10080:
+        raise HTTPException(422,'stale_after_minutes must be between 5 and 10080')
+    with conn() as c:
+        begin_serialized_write(c)
+        row=c.execute('SELECT * FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()
+        if not row: raise HTTPException(404,'Agent task assignment not found')
+        require_project_access(c,row['project_id'],a,write=True)
+        if not is_admin(a):
+            role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',
+                (row['project_id'],a['id'])).fetchone()
+            if not role or role['role'] not in ('owner','manager'):
+                raise HTTPException(403,'Project manager role required')
+        if row['status'] not in ('ASSIGNED','ACCEPTED'):
+            raise HTTPException(409,'Only an active assignment can be recovered')
+        activity=row['updated_at'] or row['created_at']
+        try:
+            activity_dt=datetime.fromisoformat(activity.replace('Z','+00:00'))
+            if activity_dt.tzinfo is None: activity_dt=activity_dt.replace(tzinfo=timezone.utc)
+        except (TypeError,ValueError):
+            raise HTTPException(409,'Assignment activity timestamp is invalid')
+        age_seconds=(datetime.now(timezone.utc)-activity_dt.astimezone(timezone.utc)).total_seconds()
+        if age_seconds<stale_after*60:
+            raise HTTPException(409,'Agent assignment is not stale yet')
+        stamp=now()
+        c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+            WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(stamp,stamp,assignment_id))
+        event(c,'task.agent_assignment_recovered',a['id'],row['task_id'],{
+            'assignment_id':assignment_id,'agent_id':row['agent_id'],
+            'previous_status':row['status'],'stale_after_minutes':stale_after,
+            'inactive_seconds':int(age_seconds),'reason':reason})
+        return {'id':assignment_id,'status':'REVOKED','recovered':True,
+            'previous_status':row['status'],'inactive_seconds':int(age_seconds),'revoked_at':stamp}
+
+
 @app.get('/health')
 def health():
     service_reset=_service_ctx.set(True)
