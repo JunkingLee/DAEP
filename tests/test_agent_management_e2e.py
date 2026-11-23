@@ -214,3 +214,126 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             assert rotated_token not in serialized_detail
         finally:
             browser.close()
+
+
+
+def test_agent_security_negative_browser_flows(daep_server):
+    """Prove ownership, project-role and revoked-token checks in real sessions."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        admin = browser.new_page()
+        owner = browser.new_page()
+        attacker = browser.new_page()
+        try:
+            def login(page, username, password):
+                page.goto(daep_server, wait_until="domcontentloaded")
+                expect(page.get_by_test_id("login-screen")).to_be_visible()
+                page.get_by_test_id("username-input").fill(username)
+                page.get_by_test_id("password-input").fill(password)
+                page.get_by_test_id("login-submit").click()
+                expect(page.get_by_test_id("app-shell")).to_be_visible(timeout=20000)
+
+            def api(page, method, path, body=None, bearer=None):
+                return page.evaluate(
+                    """async ({method, path, body, bearer}) => {
+                        const token = bearer || localStorage.getItem('daep.web.access_token');
+                        const headers = token ? {'Authorization': 'Bearer ' + token} : {};
+                        if (body !== undefined) headers['Content-Type'] = 'application/json';
+                        const response = await fetch(path, {
+                            method, headers,
+                            body: body === undefined ? undefined : JSON.stringify(body)
+                        });
+                        let data = null;
+                        try { data = await response.json(); } catch (_) {}
+                        return {status: response.status, body: data};
+                    }""",
+                    {"method": method, "path": path, "body": body, "bearer": bearer},
+                )
+
+            login(admin, ADMIN_USERNAME, ADMIN_PASSWORD)
+            suffix = str(time.time_ns())
+            owner_username = "e2e.owner." + suffix
+            attacker_username = "e2e.attacker." + suffix
+            owner_password = "owner-e2e-password-2026"
+            attacker_password = "attacker-e2e-password-2026"
+
+            owner_result = api(admin, "POST", "/api/v1/members", {
+                "name": "Browser E2E Agent Owner",
+                "username": owner_username,
+                "password": owner_password,
+                "role": "member",
+            })
+            assert owner_result["status"] == 200, owner_result
+            attacker_result = api(admin, "POST", "/api/v1/members", {
+                "name": "Browser E2E Agent Attacker",
+                "username": attacker_username,
+                "password": attacker_password,
+                "role": "member",
+            })
+            assert attacker_result["status"] == 200, attacker_result
+
+            project_result = api(admin, "POST", "/api/v1/projects", {
+                "name": "Browser E2E Restricted Project " + suffix,
+                "description": "Isolated project for negative authorization checks",
+                "tenant_id": "tenant-default",
+            })
+            assert project_result["status"] == 200, project_result
+            project_id = project_result["body"]["id"]
+            membership = api(admin, "POST", f"/api/v1/projects/{project_id}/members", {
+                "member_id": attacker_result["body"]["id"],
+                "role": "member",
+                "work_function": "developer",
+            })
+            assert membership["status"] == 200, membership
+
+            login(owner, owner_username, owner_password)
+            owner_agent = api(owner, "POST", "/api/v1/agents", {
+                "name": "Private Owner Agent",
+                "description": "Must not be accessible by another member",
+            })
+            assert owner_agent["status"] == 200, owner_agent
+            owner_agent_id = owner_agent["body"]["agent"]["id"]
+            owner_agent_token = owner_agent["body"]["token"]
+
+            login(attacker, attacker_username, attacker_password)
+            attacker_agent = api(attacker, "POST", "/api/v1/agents", {
+                "name": "Member Agent Without Manager Role",
+                "description": "Cannot bind to a project as a regular member",
+            })
+            assert attacker_agent["status"] == 200, attacker_agent
+            attacker_agent_id = attacker_agent["body"]["agent"]["id"]
+
+            # Every ownership-sensitive operation must be rejected server-side.
+            detail = api(attacker, "GET", f"/api/v1/agents/{owner_agent_id}")
+            assert detail["status"] == 403, detail
+            update = api(attacker, "PATCH", f"/api/v1/agents/{owner_agent_id}", {
+                "name": "Unauthorized Rename",
+                "description": "must not persist",
+                "status": "ACTIVE",
+            })
+            assert update["status"] == 403, update
+            rotate = api(attacker, "POST", f"/api/v1/agents/{owner_agent_id}/tokens/rotate")
+            assert rotate["status"] == 403, rotate
+            revoke = api(attacker, "POST", f"/api/v1/agents/{owner_agent_id}/tokens/revoke")
+            assert revoke["status"] == 403, revoke
+
+            # Project membership alone is insufficient: only owner/manager can bind.
+            bind = api(attacker, "POST", f"/api/v1/agents/{attacker_agent_id}/projects", {
+                "project_id": project_id,
+                "work_function": "developer",
+                "role": "member",
+            })
+            assert bind["status"] == 403, bind
+
+            # The real owner revokes the credential; MCP authentication must fail.
+            revoke_own = api(owner, "POST", f"/api/v1/agents/{owner_agent_id}/tokens/revoke")
+            assert revoke_own["status"] == 200, revoke_own
+            mcp = api(owner, "GET", "/api/v1/mcp/context", bearer=owner_agent_token)
+            assert mcp["status"] == 401, mcp
+
+            # Ensure rejected cross-owner mutations did not rename the resource.
+            owner_detail = api(owner, "GET", f"/api/v1/agents/{owner_agent_id}")
+            assert owner_detail["status"] == 200, owner_detail
+            assert owner_detail["body"]["name"] == "Private Owner Agent"
+        finally:
+            browser.close()
