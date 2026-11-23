@@ -1042,6 +1042,9 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')  # recipient tenant is validated against the project tenant before membership mutation
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
+        if current and current['role']!=role:
+            raise HTTPException(409,'Use a project role-change request to change an existing member role')
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
@@ -2971,6 +2974,9 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
+        if current and current['role']!=role:
+            raise HTTPException(409,'Use a project role-change request to change an existing member role')
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
@@ -4816,6 +4822,9 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
+        if current and current['role']!=role:
+            raise HTTPException(409,'Use a project role-change request to change an existing member role')
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
@@ -6794,6 +6803,9 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
+        if current and current['role']!=role:
+            raise HTTPException(409,'Use a project role-change request to change an existing member role')
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
@@ -8637,6 +8649,9 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
         if not member_row: raise HTTPException(404,'Member not found')
         if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
+        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
+        if current and current['role']!=role:
+            raise HTTPException(409,'Use a project role-change request to change an existing member role')
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
