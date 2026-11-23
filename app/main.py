@@ -2062,7 +2062,9 @@ def evaluate_task_quality_for_stage(c, task_id, stage):
     rejected=[x['artifact_type'] for x in reports if x['review_status']=='REJECTED' and x['artifact_type'] in required]
     failed=[{'artifact_type':x['artifact_type'],'artifact_version_id':x['artifact_version_id'],'quality':x['quality']}
         for x in reports if x['quality']['status']=='FAIL']
-    failed_required=[x for x in failed if x['artifact_type'] in required]
+    policy_enforced=bool(required or policy.get('min_coverage_percent') is not None
+        or policy.get('max_failed_tests') is not None or policy.get('require_commit_sha'))
+    failed_required=failed if policy_enforced else []
     blocked=bool(missing or rejected or failed_required)
     return {'task_id':task_id,'stage':str(stage or '').upper(),'policy':policy,
         'artifact_count':len(reports),'missing_artifact_types':missing,
@@ -2090,6 +2092,41 @@ def get_project_artifact_quality_policy(pid:str,authorization:str=Header(None)):
         record=project_artifact_quality_policy(c,pid)
         return {'project_id':pid,'policy':record['policy'],'updated_by':record['updated_by'],
                 'updated_at':record['updated_at'],'source':record['source']}
+
+@app.get('/api/v1/projects/{pid}/quality-dashboard')
+def project_artifact_quality_dashboard(pid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,v.created_at,
+            a.artifact_type,a.uri,a.commit_sha,a.metadata,t.id AS task_id,t.title AS task_title
+            FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+            JOIN tasks t ON t.id=v.task_id JOIN requirements r ON r.id=t.requirement_id
+            WHERE r.project_id=? AND v.version_number=(
+                SELECT MAX(v2.version_number) FROM artifact_versions v2
+                JOIN artifacts a2 ON a2.id=v2.artifact_id
+                WHERE v2.task_id=v.task_id AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
+            ORDER BY v.created_at DESC""",(pid,)).fetchall()
+        totals={'PASS':0,'FAIL':0,'NEEDS_REVIEW':0}
+        trend={}
+        failures=[]; task_ids=set()
+        for raw in rows:
+            item=dict(raw); task_ids.add(item['task_id'])
+            report=artifact_version_quality(c,item['version_id']) or {'status':'NEEDS_REVIEW','score':0,'checks':[]}
+            status=report.get('status','NEEDS_REVIEW')
+            totals[status]=totals.get(status,0)+1
+            day=str(item.get('created_at') or '')[:10] or 'unknown'
+            trend.setdefault(day,{'date':day,'pass':0,'fail':0,'needs_review':0})
+            trend[day][{'PASS':'pass','FAIL':'fail','NEEDS_REVIEW':'needs_review'}.get(status,'needs_review')]+=1
+            if status=='FAIL':
+                failures.append({'task_id':item['task_id'],'task_title':item['task_title'],
+                    'artifact_version_id':item['version_id'],'artifact_type':item['artifact_type'],
+                    'version_number':item['version_number'],'failed_checks':report.get('failed_checks',0)})
+        return {'project_id':pid,'task_count':len(task_ids),'artifact_version_count':len(rows),
+            'quality_totals':totals,'pass_rate':round(100*totals['PASS']/len(rows),1) if rows else None,
+            'daily_trend':sorted(trend.values(),key=lambda x:x['date'])[-30:],
+            'recent_failures':failures[:20]}
+
 
 @app.put('/api/v1/projects/{pid}/quality-policy')
 def set_project_artifact_quality_policy(pid:str,b:dict,authorization:str=Header(None)):
