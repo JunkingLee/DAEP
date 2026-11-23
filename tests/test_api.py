@@ -3727,3 +3727,15 @@ def test_project_quality_risk_api_enforces_project_scope_and_manager_permissions
     assert client.get(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=outsider).status_code==403
     assert client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=headers,json={
         'status':'IN_PROGRESS'}).status_code==403
+
+
+def test_project_quality_risk_ui_is_connected_to_project_governance():
+    from pathlib import Path
+    source=Path('web/index.html').read_text(encoding='utf-8')
+    assert 'qualityRiskList' in source
+    assert "'/risks?limit=100'" in source
+    assert 'function renderProjectQualityRisks(data)' in source
+    assert 'function openProjectQualityRisk(id)' in source
+    assert 'function saveProjectQualityRisk(id)' in source
+    assert '项目审计时间线' in source
+    assert 'qualityRiskResolutionNote' in source
