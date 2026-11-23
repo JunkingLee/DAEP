@@ -2073,8 +2073,24 @@ def work_package_summary(parent_id:str,authorization:str=Header(None)):
         progress=round(sum(int(x['progress'] or 0) for x in rows)/total) if total else 0
         artifacts=c.execute('SELECT COUNT(*) AS n FROM artifacts a JOIN task_work_packages w ON w.child_task_id=a.task_id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\'',(parent_id,)).fetchone()['n']
         blocked=c.execute("SELECT t.id,t.title,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE' AND t.status='BLOCKED'",(parent_id,)).fetchall()
-        artifact_rows=c.execute('SELECT w.child_task_id,a.id,a.artifact_type,a.uri,a.commit_sha,a.created_at FROM task_work_packages w JOIN artifacts a ON a.task_id=w.child_task_id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\' ORDER BY a.created_at',(parent_id,)).fetchall()
-        return {'parent_task_id':parent_id,'work_package_count':total,'progress':progress,'status_counts':counts,'blocked_tasks':[dict(x) for x in blocked],'artifact_count':artifacts,'artifacts':[dict(x) for x in artifact_rows],'all_done':bool(total and counts['DONE']==total)}
+        artifact_rows=c.execute('SELECT w.child_task_id,a.id,a.artifact_type,a.uri,a.commit_sha,a.created_at,v.id AS artifact_version_id,v.version_number,v.review_status FROM task_work_packages w JOIN artifacts a ON a.task_id=w.child_task_id JOIN artifact_versions v ON v.artifact_id=a.id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\' ORDER BY a.created_at',(parent_id,)).fetchall()
+        latest_versions=c.execute("""SELECT w.child_task_id,v.id AS artifact_version_id,v.version_number,v.review_status,
+            v.review_comment,v.reviewed_at,v.reviewed_by_member_id,a.id AS artifact_id,
+            a.artifact_type,a.uri,a.commit_sha,a.created_at
+            FROM task_work_packages w
+            LEFT JOIN artifact_versions v ON v.id=(
+                SELECT av.id FROM artifact_versions av WHERE av.task_id=w.child_task_id
+                ORDER BY av.version_number DESC LIMIT 1)
+            LEFT JOIN artifacts a ON a.id=v.artifact_id
+            WHERE w.parent_task_id=? AND w.status='ACTIVE' ORDER BY w.created_at""",(parent_id,)).fetchall()
+        latest_rows=[dict(x) for x in latest_versions]
+        return {'parent_task_id':parent_id,'work_package_count':total,'progress':progress,'status_counts':counts,
+            'blocked_tasks':[dict(x) for x in blocked],'artifact_count':artifacts,'artifacts':[dict(x) for x in artifact_rows],
+            'latest_artifact_versions':latest_rows,
+            'pending_latest_versions':sum(1 for x in latest_rows if x['review_status']=='PENDING'),
+            'approved_latest_versions':sum(1 for x in latest_rows if x['review_status']=='APPROVED'),
+            'rejected_latest_versions':sum(1 for x in latest_rows if x['review_status']=='REJECTED'),
+            'all_done':bool(total and counts['DONE']==total)}
 
 @app.get('/api/v1/tasks/{parent_id}/work-timeline')
 def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(None)):
