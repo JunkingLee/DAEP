@@ -138,8 +138,18 @@ BEGIN
     RAISE EXCEPTION 'RLS update isolation failed: modified % foreign rows', changed_count;
   END IF;
 
-  INSERT INTO projects (id, name, description, created_by, created_at, tenant_id, status)
-  VALUES ('rls-probe-a-write', 'Tenant A write', '', NULL, now()::text, 'tenant-a', 'ACTIVE');
+  IF NOT daep_tenant_visible('tenant-a') THEN
+    RAISE EXCEPTION 'RLS same-tenant insert precondition failed: tenant context is not visible';
+  END IF;
+  RAISE NOTICE 'RLS insert diagnostics: session_user=%, current_user=%, tenant=%, tenant_visible=%, active_status=%',
+    session_user, current_user, current_setting('app.tenant_id', true),
+    daep_tenant_visible('tenant-a'), 'ACTIVE';
+  BEGIN
+    INSERT INTO projects (id, name, description, created_by, created_at, tenant_id, status)
+    VALUES ('rls-probe-a-write', 'Tenant A write', '', NULL, now()::text, 'tenant-a', 'ACTIVE');
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'RLS same-tenant project insert failed: % [SQLSTATE %]', SQLERRM, SQLSTATE;
+  END;
 
   INSERT INTO project_members (project_id,member_id,role,joined_at)
   VALUES ('rls-probe-a','rls-member-a','member',now()::text)
