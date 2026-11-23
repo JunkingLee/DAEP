@@ -94,6 +94,14 @@ BEGIN
     RAISE EXCEPTION 'RLS lifecycle owner predicate failed: current member is not recognized as project owner';
   END IF;
 
+  RAISE NOTICE 'RLS lifecycle pre-update: tenant=%, member=%, platform_admin=%, internal_service=%, tenant_visible=%, owner=%, row_tenant=%, row_status=%, closed_check=%',
+    current_setting('app.tenant_id', true), current_setting('app.member_id', true),
+    current_setting('app.platform_admin', true), current_setting('app.internal_service', true),
+    daep_tenant_visible((SELECT tenant_id FROM projects WHERE id='rls-probe-a')),
+    daep_project_owner('rls-probe-a'),
+    (SELECT tenant_id FROM projects WHERE id='rls-probe-a'),
+    (SELECT status FROM projects WHERE id='rls-probe-a'),
+    (daep_tenant_visible((SELECT tenant_id FROM projects WHERE id='rls-probe-a')) AND daep_project_owner('rls-probe-a'));
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
   UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
