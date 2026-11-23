@@ -3379,7 +3379,9 @@ def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
     pid, owner_id, owner_token, tid = setup_project_task()
-    owner_headers={'Authorization':'Bearer '+owner_token}
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'Quality Policy Manager'}).json()
+    assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={'member_id':manager['id'],'role':'manager'}).status_code==200
+    owner_headers={'Authorization':'Bearer '+manager['token']}
     policy={
         'min_coverage_percent':80,
         'max_failed_tests':0,
