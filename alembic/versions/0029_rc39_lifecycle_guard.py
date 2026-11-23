@@ -17,8 +17,24 @@ def upgrade():
     if op.get_bind().dialect.name != "postgresql":
         return
 
-    # The trigger runs with the migration-owned function privileges and checks
-    # the authenticated member context against the project's real owner row.
+    # Project managers and owners may close; only owners may reopen.
+    op.execute("""CREATE OR REPLACE FUNCTION daep_project_manager_or_owner(project_id text)
+      RETURNS boolean
+      LANGUAGE sql
+      STABLE
+      SECURITY DEFINER
+      SET search_path = public
+      SET row_security = off
+      AS $func$
+        SELECT EXISTS (
+          SELECT 1 FROM project_members pm
+          WHERE pm.project_id = $1
+            AND pm.member_id = NULLIF(current_setting('app.member_id', true), '')
+            AND pm.role IN ('owner', 'manager')
+        )
+      $func$""")
+    op.execute("GRANT EXECUTE ON FUNCTION daep_project_manager_or_owner(text) TO PUBLIC")
+
     op.execute("""CREATE OR REPLACE FUNCTION daep_enforce_project_lifecycle_owner()
       RETURNS trigger
       LANGUAGE plpgsql
@@ -31,13 +47,14 @@ def upgrade():
           -- Closed projects are immutable except for an explicit owner reopen.
           IF NEW.status IS DISTINCT FROM 'ACTIVE'
              OR current_setting('app.lifecycle_action', true) IS DISTINCT FROM 'REOPEN'
-             OR NOT daep_project_owner(OLD.id) THEN
+             OR (NOT pg_has_role(session_user, 'daep_privileged', 'member') AND NOT daep_project_owner(OLD.id)) THEN
             RAISE EXCEPTION 'Closed project is immutable; owner reopen approval required'
               USING ERRCODE = '42501';
           END IF;
         ELSIF OLD.status = 'ACTIVE' AND NEW.status = 'CLOSED' THEN
-          IF NOT daep_project_owner(OLD.id) THEN
-            RAISE EXCEPTION 'Project owner approval required to close project'
+          IF NOT pg_has_role(session_user, 'daep_privileged', 'member')
+             AND NOT daep_project_manager_or_owner(OLD.id) THEN
+            RAISE EXCEPTION 'Project owner or manager approval required to close project'
               USING ERRCODE = '42501';
           END IF;
         END IF;
@@ -65,6 +82,7 @@ def downgrade():
 
     op.execute("DROP TRIGGER IF EXISTS daep_projects_lifecycle_owner_guard ON projects")
     op.execute("DROP FUNCTION IF EXISTS daep_enforce_project_lifecycle_owner()")
+    op.execute("DROP FUNCTION IF EXISTS daep_project_manager_or_owner(text)")
     op.execute("DROP POLICY IF EXISTS daep_projects_tenant ON projects")
     op.execute("""CREATE POLICY daep_projects_tenant ON projects
       USING (
