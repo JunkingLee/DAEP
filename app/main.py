@@ -1087,13 +1087,79 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
                 WHERE r.project_id=?
             )
         """,(member_id,pid)).rowcount
+
+        # Revoke every collaboration capability owned by the departing member
+        # within this project; removing project_members alone does not revoke
+        # first-class Agent identities or their active task grants.
+        stamp=now()
+        owned_agent_ids=[x['id'] for x in c.execute(
+            'SELECT id FROM agents WHERE owner_member_id=? AND tenant_id=?',
+            (member_id,project['tenant_id'])).fetchall()]
+        revoked_agent_assignments=0
+        if owned_agent_ids:
+            placeholders=','.join('?' for _ in owned_agent_ids)
+            revoked_agent_assignments=c.execute(f"""
+                UPDATE agent_task_assignments
+                SET status='REVOKED',revoked_at=?,updated_at=?
+                WHERE project_id=? AND agent_id IN ({placeholders})
+                  AND status IN ('ASSIGNED','ACCEPTED')
+            """,(stamp,stamp,pid,*owned_agent_ids)).rowcount
+            revoked_agent_bindings=c.execute(f"""
+                UPDATE agent_project_bindings
+                SET status='REVOKED',updated_at=?
+                WHERE project_id=? AND agent_id IN ({placeholders}) AND status='ACTIVE'
+            """,(stamp,pid,*owned_agent_ids)).rowcount
+        else:
+            revoked_agent_bindings=0
+
+        cancelled_work_packages=c.execute("""
+            UPDATE task_work_packages
+            SET status='CANCELLED',risk_state='CANCELLED',needs_attention=1,
+                stalled_at=?,stall_reason='Assignee removed from project',updated_at=?
+            WHERE project_id=? AND assignee_member_id=? AND status='ACTIVE'
+        """,(stamp,stamp,pid,member_id)).rowcount
+        cancelled_messages=c.execute("""
+            UPDATE messages SET status='CANCELLED'
+            WHERE recipient_member_id=? AND tenant_id=? AND status IN ('PENDING','SENT')
+              AND task_id IN (
+                SELECT t.id FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+                WHERE r.project_id=?
+              )
+        """,(member_id,project['tenant_id'],pid)).rowcount
+
+        pending_approvals=c.execute(
+            "SELECT id,requester_member_id,payload FROM project_approvals WHERE project_id=? AND status='PENDING'",
+            (pid,)).fetchall()
+        cancelled_approvals=0
+        for approval in pending_approvals:
+            try:
+                approval_payload=json.loads(approval['payload'])
+            except (TypeError,ValueError):
+                approval_payload={}
+            if approval['requester_member_id']==member_id or approval_payload.get('member_id')==member_id:
+                cancelled_approvals+=c.execute("""
+                    UPDATE project_approvals SET status='CANCELLED',decided_by=?,
+                        decision_reason='Related member removed from project',decided_at=?
+                    WHERE id=? AND status='PENDING'
+                """,(a['id'],stamp,approval['id'])).rowcount
+
         c.execute('DELETE FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id))
         event(c,'project.member.removed',a['id'],None,{
             'project_id':pid,'member_id':member_id,'previous_role':target['role'],
-            'removed_assignment_count':removed_assignments
+            'removed_assignment_count':removed_assignments,
+            'revoked_agent_binding_count':revoked_agent_bindings,
+            'revoked_agent_assignment_count':revoked_agent_assignments,
+            'cancelled_work_package_count':cancelled_work_packages,
+            'cancelled_message_count':cancelled_messages,
+            'cancelled_approval_count':cancelled_approvals
         },tenant_override=project['tenant_id'])
         return {'project_id':pid,'member_id':member_id,'removed':True,
-            'previous_role':target['role'],'removed_assignment_count':removed_assignments}
+            'previous_role':target['role'],'removed_assignment_count':removed_assignments,
+            'revoked_agent_binding_count':revoked_agent_bindings,
+            'revoked_agent_assignment_count':revoked_agent_assignments,
+            'cancelled_work_package_count':cancelled_work_packages,
+            'cancelled_message_count':cancelled_messages,
+            'cancelled_approval_count':cancelled_approvals}
 
 @app.post('/api/v1/projects/{pid}/role-change-requests')
 def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
