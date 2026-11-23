@@ -1729,6 +1729,7 @@ def sync_work_package_parent(c,child_task_id,actor_member_id,trigger):
     total=len(rows)
     done=sum(1 for status in statuses if status=='DONE')
     blocked=sum(1 for status in statuses if status=='BLOCKED')
+    ready_for_parent_review=all(status in ('REVIEW','DONE') for status in statuses)
     average=round(sum(int(x['progress'] or 0) for x in rows)/total)
     parent=c.execute('SELECT status,progress FROM tasks WHERE id=?',(package['parent_task_id'],)).fetchone()
     if not parent or parent['status']=='DONE':
@@ -1736,6 +1737,9 @@ def sync_work_package_parent(c,child_task_id,actor_member_id,trigger):
     if blocked:
         target='BLOCKED'
         progress=min(99,average)
+    elif parent['status']=='REVIEW' and ready_for_parent_review:
+        target='REVIEW'
+        progress=100
     elif done==total:
         target='REVIEW' if parent['status']=='REVIEW' else 'IN_PROGRESS'
         progress=100 if target=='REVIEW' else 90
@@ -1766,10 +1770,10 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
             enforce_task_review_request(c,tid,a)
             active_packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
             if active_packages:
-                pending=[x['child_task_id'] for x in active_packages if x['status']!='DONE']
+                pending=[x['child_task_id'] for x in active_packages if x['status'] not in ('REVIEW','DONE')]
                 missing=[x['child_task_id'] for x in active_packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
                 if pending or missing:
-                    raise HTTPException(409,detail={'message':'Parent task cannot request review until all active work packages are approved and have delivery evidence','pending_work_packages':pending,'missing_artifacts':missing})
+                    raise HTTPException(409,detail={'message':'Parent task cannot request review until all active work packages have submitted delivery evidence','pending_work_packages':pending,'missing_artifacts':missing})
         if a.get('actor_type')=='AGENT' and b.progress==100:
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(tid,)).fetchone() is None:
                 raise HTTPException(409,'Agent must submit at least one artifact before requesting review')
