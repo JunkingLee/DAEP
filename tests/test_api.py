@@ -1563,13 +1563,17 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     report=client.get(f"/api/v1/requirements/{requirement.json()['id']}/acceptance-report",
         headers=owner_h)
     assert report.status_code==200 and report.json()['ready_for_acceptance'] is True
+    assert report.json()['missing_artifact_version_task_ids']==[]
+    assert all(x['latest_artifact_review_status']=='APPROVED' for x in report.json()['tasks'])
     accepted=client.post(f"/api/v1/requirements/{requirement.json()['id']}/acceptance",
         headers=owner_h,json={'decision':'APPROVE','verified_criteria':[0,1],
                               'comment':'Verified both member deliverables and parent bundle'})
     assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    assert len(accepted.json()['artifact_versions'])==3
     audit=client.get(f'/api/v1/projects/{pid}/audit',headers=owner_h).json()['items']
-    assert any(x['event_type']=='requirement.acceptance.approve' and
-               x['payload']['requirement_id']==requirement.json()['id'] for x in audit)
+    acceptance_event=next(x for x in audit if x['event_type']=='requirement.acceptance.approve' and
+        x['payload']['requirement_id']==requirement.json()['id'])
+    assert len(acceptance_event['payload']['artifact_versions'])==3
 
 def test_rc26_stage7_acceptance_frontend_exposes_report_and_explicit_criteria_confirmation():
     frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
