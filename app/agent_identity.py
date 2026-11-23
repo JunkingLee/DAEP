@@ -324,12 +324,15 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
 
     @app.get('/api/v1/mcp/context')
     def mcp_context(authorization: str = Header(default='')):
-        raw=authorization[7:] if authorization.startswith('Bearer ') else ''
-        ident=authenticate_agent_token(conn,raw)
+        # Route through the common actor resolver so PostgreSQL tenant/member
+        # context is established after the definer-based credential lookup.
+        a=actor(authorization)
+        if a.get('actor_type')!='AGENT':
+            raise HTTPException(401,'Agent token required')
         with conn() as c:
             projects=c.execute("""SELECT b.project_id,p.name,b.role,b.work_function,p.status
                                   FROM agent_project_bindings b JOIN projects p ON p.id=b.project_id
-                                  WHERE b.agent_id=? AND b.status='ACTIVE'""",(ident['agent_id'],)).fetchall()
-            return {'actor_type':'AGENT','agent_id':ident['agent_id'],'owner_member_id':ident['owner_member_id'],'tenant_id':ident['tenant_id'],'projects':[dict(x) for x in projects]}
+                                  WHERE b.agent_id=? AND b.status='ACTIVE'""",(a['agent_id'],)).fetchall()
+            return {'actor_type':'AGENT','agent_id':a['agent_id'],'owner_member_id':a['id'],'tenant_id':a['tenant_id'],'projects':[dict(x) for x in projects]}
 
     return ensure_agent_schema
