@@ -160,8 +160,8 @@
 - 提交：
   - `9bb7d11a9c1e585cce09553292e77227622036a0` — `test: add Playwright Agent lifecycle browser E2E`
   - `d970bcee7c4a17b468f9f6a1f68217c62fc0a78e` — `ci: run Agent lifecycle Playwright browser E2E`
-- 当前分支 HEAD：`d970bcee7c4a17b468f9f6a1f68217c62fc0a78e`。
-- 验证状态：本环境未直接启动 Chromium；CI run `45143047580` 对应上述 HEAD，查询时仍在运行。常规测试矩阵、迁移和新增浏览器 job 均需以该 run 最终结论为准；当前不得宣称浏览器 E2E 已通过。
+- 当前分支 HEAD：`ec9d14b0fc25a91f447c60108e532cb72add157f`。
+- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143208826` 对应修复后的 HEAD，当前等待最终结果。首次失败属于测试环境兼容问题，不代表 Agent 功能 E2E 已执行或失败；当前不得宣称浏览器 E2E 已通过。
 - 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
 - 下一步唯一任务：检查 CI run `45143047580` 的 browser-e2e 和全矩阵结果；若失败，依据失败步骤修复测试 harness 或实际 UI/API 缺陷，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
 
