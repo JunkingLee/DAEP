@@ -83,6 +83,50 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
 
 
 
+
+def test_disabling_agent_owner_revokes_agent_identity_and_assignments_permanently():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    project_id,_,_,task_id=setup_project_task()
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'Agent Owner To Disable'})
+    assert owner.status_code==200,owner.text
+    owner_id=owner.json()['id']
+    owner_headers={'Authorization':'Bearer '+owner.json()['token']}
+
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Owner Controlled Agent','description':'Disabled with owner account'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; agent_token=created.json()['token']
+    agent_headers={'Authorization':'Bearer '+agent_token}
+    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':project_id,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{task_id}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent['id']})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    assert client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',
+        headers=agent_headers,json={}).status_code==200
+
+    disabled=client.post(f'/api/v1/members/{owner_id}/disable',headers=ADMIN)
+    assert disabled.status_code==200,disabled.text
+    assert disabled.json()['disabled_agent_count']==1
+    assert client.get('/api/v1/mcp/context',headers=agent_headers).status_code==401
+    with main_module.conn() as c:
+        agent_state=c.execute("SELECT status FROM agents WHERE id=?",(agent['id'],)).fetchone()
+        token_state=c.execute("SELECT status FROM agent_tokens WHERE agent_id=?",(agent['id'],)).fetchone()
+        assignment_state=c.execute("SELECT status FROM agent_task_assignments WHERE id=?",(assignment_id,)).fetchone()
+    assert agent_state['status']=='DISABLED'
+    assert token_state['status']=='REVOKED'
+    assert assignment_state['status']=='REVOKED'
+
+    enabled=client.post(f'/api/v1/members/{owner_id}/enable',headers=ADMIN)
+    assert enabled.status_code==200,enabled.text
+    assert client.get('/api/v1/mcp/context',headers=agent_headers).status_code==401
+    with main_module.conn() as c:
+        assert c.execute("SELECT status FROM agents WHERE id=?",(agent['id'],)).fetchone()['status']=='DISABLED'
+
+
 def test_agent_unbind_revokes_assignments_and_rebind_does_not_restore_access():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
