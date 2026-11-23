@@ -1543,7 +1543,7 @@ def get_project_gates(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_project_access(c,pid,a)
-        rows=c.execute('SELECT gate_key,config,updated_by,updated_at FROM project_gates WHERE project_id=? ORDER BY gate_key',(pid,)).fetchall()
+        rows=c.execute('SELECT gate_key,config,updated_by,updated_at FROM project_gates WHERE project_id=? AND gate_key<>'ARTIFACT_QUALITY' ORDER BY gate_key',(pid,)).fetchall()
         items={r['gate_key']:{'config':json.loads(r['config']),'updated_by':r['updated_by'],'updated_at':r['updated_at']} for r in rows}
         items.setdefault('REVIEW_REQUIRED',{'config':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False},'system_locked':True})
         items.setdefault('DELIVERY_EVIDENCE',{'config':{'enabled':True,'required_roles':['owner','manager','reviewer'],'required_evidence':True,'required_all_tasks_done':True},'system_locked':True})
@@ -1553,6 +1553,7 @@ def get_project_gates(pid:str,authorization:str=Header(None)):
 def set_project_gate(pid:str,gate_key:str,b:GateConfigIn,authorization:str=Header(None)):
     a=actor(authorization)
     if gate_key in ('REVIEW_REQUIRED','DELIVERY_EVIDENCE'): raise HTTPException(409,'System governance gate cannot be disabled or weakened')
+    if gate_key=='ARTIFACT_QUALITY': raise HTTPException(409,'Use the project quality-policy endpoint to change artifact quality rules')
     if not re.fullmatch(r'[A-Z0-9_]{2,60}',gate_key): raise HTTPException(422,'Invalid gate key')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
