@@ -330,6 +330,8 @@ def test_agent_security_negative_browser_flows(daep_server):
             assert revoke_own["status"] == 200, revoke_own
             mcp = api(owner, "GET", "/api/v1/mcp/context", bearer=owner_agent_token)
             assert mcp["status"] == 401, mcp
+            agent_tasks = api(owner, "GET", "/api/v1/agents/me/tasks", bearer=owner_agent_token)
+            assert agent_tasks["status"] == 401, agent_tasks
 
             # Ensure rejected cross-owner mutations did not rename the resource.
             owner_detail = api(owner, "GET", f"/api/v1/agents/{owner_agent_id}")
