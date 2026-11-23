@@ -640,8 +640,14 @@ def assign_task_to_agent(task_id:str, body:dict, authorization:str=Header(None))
         if not agent or agent['status']!='ACTIVE': raise HTTPException(404,'Active Agent not found in this tenant')
         binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(pid,agent_id)).fetchone()
         if not binding: raise HTTPException(409,'Agent must be actively bound to this project before assignment')
-        existing=c.execute("SELECT id,status FROM agent_task_assignments WHERE task_id=? AND agent_id=? AND status IN ('ASSIGNED','ACCEPTED')",(task_id,agent_id)).fetchone()
-        if existing: raise HTTPException(409,'Agent already has an active assignment for this task')
+        existing=c.execute("""SELECT id,agent_id,status FROM agent_task_assignments
+            WHERE task_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(task_id,)).fetchone()
+        if existing:
+            if existing['agent_id']==agent_id:
+                raise HTTPException(409,'Agent already has an active assignment for this task')
+            raise HTTPException(409,detail={'message':'Task already has an active Agent assignment',
+                'assignment_id':existing['id'],'agent_id':existing['agent_id'],
+                'status':existing['status']})
         assignment_id='agta_'+uuid.uuid4().hex[:16]; stamp=now()
         c.execute("""INSERT INTO agent_task_assignments
             (id,task_id,project_id,agent_id,tenant_id,assigned_by_member_id,status,created_at,updated_at)
@@ -10334,9 +10340,11 @@ def require_task_access(c, tid, a, assigned_only=False):
         require_project_access(c,pid,a)
         if assigned_only and closed:
             raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
+        assignment_sql="""SELECT id FROM agent_task_assignments
+            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'"""
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            assignment_sql += " FOR UPDATE"
+        assignment=c.execute(assignment_sql,(tid,pid,a['agent_id'])).fetchone()
         if not assignment:
             raise HTTPException(403,'Accepted Agent task assignment required')
         return
