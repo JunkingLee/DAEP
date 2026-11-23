@@ -3146,4 +3146,6 @@ def test_agent_assignment_recovery_controls_are_visible_in_task_detail():
     assert 'recoverAgentAssignment' in frontend
     assert "api('/api/v1/agent-assignments/'+assignmentId+'/recover'" in frontend
     assert 'task.agent_assignment_recovered' in frontend
+    assert 'assignTaskToAgent' in frontend
+    assert '同一任务只允许一个活动 Agent 执行' in frontend
 
