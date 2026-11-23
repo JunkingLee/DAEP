@@ -1062,15 +1062,38 @@ def test_rc26_stage4_work_package_review_reject_and_approve_gate():
     assert created.status_code==200
     package=created.json()
     child=package['task_id']
-    assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4','commit_sha':'stage4','metadata':{}}).status_code==200
+    first_artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4','commit_sha':'stage4','metadata':{}})
+    assert first_artifact.status_code==200,first_artifact.text
     assert client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={'outcome':'COMPLETE','summary':'ready','idempotency_key':'stage4-result'}).status_code==200
-    rejected=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={'decision':'REJECT','comment':'Please address review feedback'})
+    rejected=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={
+        'decision':'REJECT','comment':'Please address review feedback',
+        'artifact_version_id':first_artifact.json()['artifact_version_id']})
     assert rejected.status_code==200 and rejected.json()['status']=='IN_PROGRESS'
+    assert rejected.json()['artifact_version_id']==first_artifact.json()['artifact_version_id']
     assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='IN_PROGRESS'
+    second_artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4-v2',
+        'commit_sha':'stage4-v2','metadata':{'resubmission':True}})
+    assert second_artifact.status_code==200 and second_artifact.json()['version_number']==2
     assert client.post(f'/api/v1/tasks/{child}/progress',headers=mh,json={'progress':100,'note':'resubmitted'}).status_code==200
-    approved=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={'decision':'APPROVE','comment':'Accepted'})
+    stale_approval=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={
+        'decision':'APPROVE','comment':'Must not approve stale evidence',
+        'artifact_version_id':first_artifact.json()['artifact_version_id']})
+    assert stale_approval.status_code==409,stale_approval.text
+    approved=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={
+        'decision':'APPROVE','comment':'Accepted',
+        'artifact_version_id':second_artifact.json()['artifact_version_id']})
     assert approved.status_code==200 and approved.json()['status']=='DONE'
+    assert approved.json()['artifact_version_number']==2
     assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='DONE'
+    with main_module.conn() as c:
+        reviewed_versions=c.execute('SELECT version_number,review_status,review_comment FROM artifact_versions WHERE task_id=? ORDER BY version_number',(child,)).fetchall()
+    assert [(x['version_number'],x['review_status']) for x in reviewed_versions]==[(1,'REJECTED'),(2,'APPROVED')]
+    events=client.get(f'/api/v1/tasks/{child}/events',headers=ADMIN).json()
+    package_review=[x for x in events if x['event_type']=='task.work_package.reviewed'][-1]
+    review_payload=json.loads(package_review['payload'])
+    assert review_payload['artifact_version_id']==second_artifact.json()['artifact_version_id']
+    assert review_payload['artifact_version_number']==2
     outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Stage4 outsider'}).json()
     forbidden=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers={'Authorization':'Bearer '+outsider['token']},json={'decision':'APPROVE'})
     assert forbidden.status_code==403
