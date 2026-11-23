@@ -103,7 +103,7 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
     artifact = client.post(f"/api/v1/tasks/{child_id}/artifacts", headers=recipient_h, json={
         "artifact_type": "git_commit",
         "uri": "https://github.com/example/daep/commit/rc22",
-        "commit_sha": "rc22-e2e",
+        "commit_sha": "c220022",
         "metadata": {"suite": "rc22"},
     })
     assert artifact.status_code == 200
