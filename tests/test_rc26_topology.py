@@ -49,7 +49,7 @@ def test_rc26_stage3_task_detail_surfaces_delegation_dependency_and_delivery_tra
     html = (ROOT / "web" / "index.html").read_text()
     assert "跨成员委派" in html
     assert "跨成员工作包" in html
-    assert "依赖边" in html
+    assert "依赖关系" in html
     assert "协作事件时间线" in html
     assert "e.actor_name" in html
     assert "e.acked_at" in html
