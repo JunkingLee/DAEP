@@ -952,6 +952,19 @@ def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_ne
         'title':'Stalled implementation','assignee_member_id':old_member['id'],'agent_name':'old-agent'})
     assert created.status_code==200
     package_id=created.json()['id']; child=created.json()['task_id']
+    # The child task also has an identity-scoped Agent grant. Human takeover
+    # must revoke that grant before a replacement member/Agent is notified.
+    identity_agent=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Takeover Identity Agent'})
+    assert identity_agent.status_code==200,identity_agent.text
+    identity_agent_id=identity_agent.json()['agent']['id']
+    identity_agent_h={'Authorization':'Bearer '+identity_agent.json()['token']}
+    bound=client.post(f'/api/v1/agents/{identity_agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    grant=client.post(f'/api/v1/tasks/{child}/agent-assignments',headers=ADMIN,json={'agent_id':identity_agent_id})
+    assert grant.status_code==200,grant.text
+    assert client.post(f"/api/v1/agent-assignments/{grant.json()['id']}/accept",
+        headers=identity_agent_h).status_code==200
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
     db.execute("UPDATE tasks SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",(child,))
     db.commit(); db.close()
@@ -966,6 +979,15 @@ def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_ne
     reassigned=client.post(f'/api/v1/work-packages/{package_id}/reassign',headers=ADMIN,json={
         'assignee_member_id':new_member['id'],'agent_name':'replacement-agent','reason':'Original Agent has been inactive'})
     assert reassigned.status_code==200 and reassigned.json()['needs_attention'] is False
+    assert reassigned.json()['revoked_agent_assignment_count']==1
+    assert client.post(f'/api/v1/tasks/{child}/progress',headers=identity_agent_h,json={
+        'progress':50,'note':'Old Agent after human takeover'}).status_code==403
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    assert db.execute('SELECT status FROM agent_task_assignments WHERE id=?',
+        (grant.json()['id'],)).fetchone()[0]=='REVOKED'
+    assert db.execute("SELECT 1 FROM events WHERE event_type='task.agent_assignment_revoked' AND payload LIKE ?",
+        ('%'+grant.json()['id']+'%',)).fetchone() is not None
+    db.close()
     detail=client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()
     assert any(x['id']==new_member['id'] for x in detail['assignees'])
     assert not any(x['id']==old_member['id'] for x in detail['assignees'])
