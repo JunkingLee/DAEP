@@ -2922,10 +2922,45 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     owner_removal=client.delete(f'/api/v1/projects/{pid}/members/{owner_id}',headers=manager_headers)
     assert owner_removal.status_code==403,owner_removal.text
 
+    # Seed all project-scoped collaboration records owned by this member.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.row_factory=sqlite3.Row
+    tenant_id=db.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
+    requirement_id=db.execute('SELECT requirement_id FROM tasks WHERE id=?',(task_id,)).fetchone()['requirement_id']
+    child_id='tsk_member_exit_'+uuid.uuid4().hex[:8]
+    agent_id='agt_member_exit_'+uuid.uuid4().hex[:8]
+    package_id='wp_member_exit_'+uuid.uuid4().hex[:8]
+    assignment_id='ata_member_exit_'+uuid.uuid4().hex[:8]
+    stamp=datetime.now(timezone.utc).isoformat()
+    db.execute('INSERT INTO tasks(id,requirement_id,title,description,status,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+        (child_id,requirement_id,'Member-owned package','', 'IN_PROGRESS',20,stamp,stamp))
+    db.execute('INSERT INTO agents(id,owner_member_id,tenant_id,name,description,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+        (agent_id,member_id,tenant_id,'member-exit-agent','', 'ACTIVE',stamp,stamp))
+    db.execute('INSERT INTO agent_project_bindings(project_id,agent_id,tenant_id,role,work_function,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+        (pid,agent_id,tenant_id,'member','developer','ACTIVE',stamp,stamp))
+    db.execute('INSERT INTO agent_task_assignments(id,task_id,project_id,agent_id,tenant_id,assigned_by_member_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+        (assignment_id,child_id,pid,agent_id,tenant_id,manager.json()['id'],'ACCEPTED',stamp,stamp))
+    db.execute('INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (package_id,task_id,child_id,pid,tenant_id,member_id,'member-exit-agent','ACTIVE',stamp,stamp))
+    message_id='msg_member_exit_'+uuid.uuid4().hex[:8]
+    db.execute('INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (message_id,member_id,tenant_id,child_id,'WORK_PACKAGE_ASSIGNED','Exit package','{}','HIGH','PENDING',stamp))
+    db.commit()
+    db.close()
+
+    role_request=client.post(f'/api/v1/projects/{pid}/role-change-requests',headers=manager_headers,
+        json={'member_id':member_id,'new_role':'reviewer','reason':'Review access requested'})
+    assert role_request.status_code==200,role_request.text
+
     removed=client.delete(f'/api/v1/projects/{pid}/members/{member_id}',headers=manager_headers)
     assert removed.status_code==200,removed.text
     assert removed.json()['removed'] is True
     assert removed.json()['removed_assignment_count']==1
+    assert removed.json()['revoked_agent_binding_count']==1
+    assert removed.json()['revoked_agent_assignment_count']==1
+    assert removed.json()['cancelled_work_package_count']==1
+    assert removed.json()['cancelled_message_count']==1
+    assert removed.json()['cancelled_approval_count']==1
     assert client.get('/api/v1/projects',headers=member_headers).json()==[]
     assert client.get(f'/api/v1/tasks/{task_id}',headers=member_headers).status_code==403
     assert client.get('/api/v1/me/tasks',headers=member_headers).json()==[]
@@ -2935,6 +2970,11 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     assert last_owner.status_code==409,last_owner.text
 
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    assert db.execute('SELECT status FROM task_work_packages WHERE id=?',(package_id,)).fetchone()[0]=='CANCELLED'
+    assert db.execute('SELECT status FROM agent_project_bindings WHERE project_id=? AND agent_id=?',(pid,agent_id)).fetchone()[0]=='REVOKED'
+    assert db.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()[0]=='REVOKED'
+    assert db.execute('SELECT status FROM messages WHERE id=?',(message_id,)).fetchone()[0]=='CANCELLED'
+    assert db.execute('SELECT status FROM project_approvals WHERE id=?',(role_request.json()['approval_id'],)).fetchone()[0]=='CANCELLED'
     assert db.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',
         (task_id,member_id)).fetchone() is None
     assert db.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',
