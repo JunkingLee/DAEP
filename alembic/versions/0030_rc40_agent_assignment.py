@@ -32,3 +32,5 @@ def downgrade():
     if bind.dialect.name != "postgresql":
         return
     op.execute("DROP INDEX IF EXISTS uq_agent_task_assignments_active")
+    for table in ("agents", "agent_tokens", "agent_project_bindings", "agent_task_assignments"):
+        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
