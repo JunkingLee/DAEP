@@ -69,6 +69,9 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
         'project_id':pid,'role':'member','work_function':'developer'})
     assert bound.status_code==200,bound.text
+    forbidden_role=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'reviewer','work_function':'tester'})
+    assert forbidden_role.status_code==422,forbidden_role.text
     assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
         'agent_id':agent['id']})
     assert assigned.status_code==200,assigned.text
@@ -81,6 +84,9 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     assert progress_100.status_code==409,progress_100.text
     close=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=ah,json={'target_stage':'DONE'})
     assert close.status_code==403,close.text
+    governance_write=client.put(f'/api/v1/projects/{pid}/workflow',headers=ah,json={
+        'enabled':True,'stages':[{'key':'OPEN','name':'Open','order':1,'approval_role':'none','sla_seconds':None}]})
+    assert governance_write.status_code==403,governance_write.text
     artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
         'artifact_type':'test_report','uri':'https://example.invalid/governance-proof',
         'commit_sha':'governance-proof','metadata':{'verified':True}})
