@@ -12,7 +12,7 @@ def upgrade():
         return
 
     op.execute("""
-        CREATE TABLE artifact_versions (
+        CREATE TABLE IF NOT EXISTS artifact_versions (
             id TEXT PRIMARY KEY,
             artifact_id TEXT NOT NULL UNIQUE REFERENCES artifacts(id) ON DELETE CASCADE,
             task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -67,8 +67,8 @@ def upgrade():
         ) ev ON TRUE
         ON CONFLICT (artifact_id) DO NOTHING
     """)
-    op.execute("CREATE INDEX idx_artifact_versions_task ON artifact_versions(task_id, version_number DESC)")
-    op.execute("CREATE INDEX idx_artifact_versions_package ON artifact_versions(work_package_id, version_number DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_artifact_versions_task ON artifact_versions(task_id, version_number DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_artifact_versions_package ON artifact_versions(work_package_id, version_number DESC)")
     op.execute("ALTER TABLE artifact_versions ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE artifact_versions FORCE ROW LEVEL SECURITY")
     op.execute("""
