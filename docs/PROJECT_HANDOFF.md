@@ -15,7 +15,7 @@
 - 核实时间：2026-11-23
 - 分支：`release/1.0.0-rc9`
 - 当前代码 HEAD（最近核实）：`9fa767ae98701ed34a46a03ce2ef0eba7a414f67`。
-- 最新 UI 变更 CI：run `45140051428`，对应 HEAD `9fa767ae98701ed34a46a03ce2ef0eba7a414f67`，查询时状态 `pending`；前一个 UI 代码提交 run `45140044776` 仍显示 `in_progress`，尚无最终结论。
+- 最近 Agent 管理 UI 回归 CI：run `45142200504`，对应 HEAD `152cd2827d2bf07ffdc491ea0d7bf5dd0578e14d`，已成功；Python 3.11/3.12/3.13、Agent UI JS 语法、pytest、PostgreSQL migration/RLS、production compose 和容器构建均通过。
 - 最近一次完整 CI 成功：run `45139802325`，对应 HEAD `e88266fa27a684a7272af4e228c8b3f12129fbd6`，Python 3.11/3.12/3.13 均为 `194 passed`，PostgreSQL migration/RLS、production compose、容器构建均成功。该成功结果覆盖风险 API，不覆盖之后的前端 UI 修改。
 - 注意：本文件自身每次更新都会产生新 HEAD；新聊天必须实时查询分支 HEAD 和 CI，不能把这里记录的 SHA 当成永久最新值。
 - 最近质量治理实现提交：
@@ -57,8 +57,8 @@
 | 按任务/交付类型/Agent/成员统计 | 已实现，CI 已通过 | Agent 提交记录可归属 Agent 所有者成员 |
 | 质量失败自动生成风险事件 | 已实现，CI 已通过 | 交付提交路径执行质量评估；每个任务/交付类型/失败检查项归并一个风险 |
 | 重复失败归并与风险升级 | 已实现，CI 已通过 | 同一风险记录累计发生次数；第 1 次 LOW、第 2 次 MEDIUM、第 3 次及以上 HIGH；解决/忽略后再次失败会重新打开 |
-| 责任人/期限/状态整改闭环 | API 已实现并通过 CI | PATCH API 支持责任人、整改期限、状态和处理备注；权限限定项目 owner/manager/reviewer 或平台管理员；前端 UI 待实现 |
-| 风险关联审计时间线 | API 已实现；UI 已实现待 CI | 风险详情 API 返回 occurrence 历史及审计事件；前端详情弹窗展示两条时间线，最新 UI 变更尚待 CI 结论 |
+| 责任人/期限/状态整改闭环 | API 与 UI 已实现，CI 已通过 | PATCH API 支持责任人、整改期限、状态和处理备注；前端有整改表单，权限由服务端校验 |
+| 风险关联审计时间线 | API 与 UI 已实现，CI 已通过 | 风险详情 API 返回 occurrence 历史及审计事件；前端详情弹窗展示两条时间线 |
 
 ## 4. 下一步执行顺序
 
@@ -73,7 +73,8 @@
 7. 已完成：项目风险详情 API，返回关联任务、交付版本、每次失败 occurrence 和风险审计事件。
 8. 已完成：风险整改 PATCH API，支持责任人、整改期限、OPEN/IN_PROGRESS/RESOLVED/DISMISSED、处理备注；关闭/忽略必须保留非空处理备注；仅项目 owner/manager/reviewer 或平台管理员可修改。
 9. 已实现前端项目质量风险列表、详情弹窗和整改表单，展示严重等级、发生次数、责任人、截止时间、状态、失败 occurrence 历史和审计时间线；已接入风险 API。
-10. **下一项唯一任务：取得最新 UI 提交的 CI 最终结果**。如失败，按日志修复；如通过，进行一次前端页面布局/交互回归检查，并把最终验证结果更新到本文件。
+10. 已完成：风险 UI 代码的 CI 验证及静态集成检查；最新 Agent 管理 UI 回归覆盖亦已完成并通过 CI（详见第 10 节）。
+11. **下一项唯一任务：补充真实浏览器 E2E 验收**，覆盖登录后进入“我的 Agent”、列表加载、创建/查看/编辑 Agent、Token 轮换/撤销及项目绑定。当前已验证脚本语法和 UI/API 接线，但尚未在真实浏览器会话中执行端到端流程。
 
 ## 5. 跨聊天窗口恢复协议（每次新聊天必须执行）
 
@@ -131,4 +132,17 @@
   - `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` — `test: cover dashboard static asset serving`
 - 验证状态：新增回归测试已提交；静态资源代码与回归测试提交 HEAD `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` 的 CI run `45141300034` 已完成并通过：Python 3.11/3.12/3.13 测试、Compile、Dashboard JavaScript 检查、PostgreSQL migration/RLS、production compose 和容器构建全部成功。本环境本轮未直接运行 pytest。交接文档随后更新为提交 `c2ccba54bb64f3f5958867670afe6c090d4a7906`，该文档提交自身的 CI run `45141384928` 查询时仍在运行。
 - 之前 HEAD `1113e2c8c67dda026852f68667e644934c99cc69` 的 CI run `45140494166` 已成功，但不覆盖本轮静态资源修改。
-- 下一步唯一任务：等待并核实最新静态资源修复 HEAD 的 CI 最终结果；若失败，按 job 日志修复。
+- 静态资源修复代码 HEAD `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` 的 CI run `45141300034` 已成功；交接文档 HEAD `619fc25dfb8367cf1cf37a2985d125e994adbcce` 的 CI run `45141495590` 也已成功。静态资源修复验证完成。
+
+## 10. Agent 管理页面加载与交互接线回归（2026-11-23）
+
+- 核查范围：`web/agents.js` 初始化、导航按钮注入、Agent 页面动态创建、`go('agents')` 页面切换、Agent 列表加载、创建与一次性 Token 展示、详情/编辑、Token 轮换/撤销、项目绑定/解除绑定。
+- 核查结果：Agent 管理脚本通过 `/static/agents.js` 加载；`init()` 在 DOMContentLoaded 后挂接导航和页面；`go` 包装器在进入 agents 页面后触发 `loadAgents()`；`GET /api/v1/agents` 返回列表数组，与前端消费结构匹配；创建接口返回的 `token` 字段与一次性 Token 展示逻辑匹配；详情、PATCH、token rotate/revoke、项目绑定等 UI 操作与后端路由相匹配。
+- 新增 `tests/test_agent_management_ui.py`，覆盖页面脚本引用、导航/页面注入、列表空态/错误态、创建与一次性 Token/MCP 配置、详情编辑、Token 管理和项目绑定 UI/API 接线。
+- `.github/workflows/ci.yml` 增加 `node --check web/agents.js`，防止外部 Agent 管理脚本语法错误漏检。
+- 提交：
+  - `ce6521e4fffb578e8361121c5280f9786c5ddace` — `test: cover Agent management UI wiring`
+  - `152cd2827d2bf07ffdc491ea0d7bf5dd0578e14d` — `ci: validate Agent management script syntax`
+- 验证：CI run `45142200504` 对应 HEAD `152cd2827d2bf07ffdc491ea0d7bf5dd0578e14d` 已成功；Python 3.11/3.12/3.13、pytest、`node --check web/agents.js`、PostgreSQL migration/RLS、production compose、容器构建全部通过。
+- 验证边界：当前回归为静态 UI/API 接线合约检查和 JavaScript 语法检查，未在真实浏览器中完成登录后的点击级 E2E；不能将其表述为真实浏览器端到端已通过。
+- 下一步唯一任务：增加 Playwright 浏览器 E2E，覆盖真实登录会话下的 Agent 页面加载与关键交互。
