@@ -88,3 +88,29 @@ def test_requirement_creation_captures_acceptance_criteria():
     assert "验收标准（每行一条）" in html
     assert "acceptance_criteria" in html
     assert "map(x=>x.trim()).filter(Boolean)" in html
+
+
+
+def test_task_detail_renders_readable_collaboration_timeline():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "function renderWorkTimeline(items)" in html
+    assert "操作人：" in html
+    assert "消息状态：" in html
+    assert "已确认：" in html
+    assert "查看交付物" in html
+    assert "Commit：" in html
+    assert "timeline-item" in html
+    assert "timeline-head" in html
+
+
+def test_task_detail_actions_follow_project_roles_and_human_review_boundary():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "function canReviewWork()" in html
+    assert "function canOperateTask(t)" in html
+    assert "canReview&&t.status==='REVIEW'" in html
+    assert "只有项目管理员或审核人员可以审核任务" in html
+    assert "只有项目管理员可以创建工作包" in html
+    assert "t.status!=='REVIEW'" in html
+    assert "s.key!=='DONE'" in html
+    assert "任务完成必须经过人工审核" in html
+    assert "selectedWorkFunction==='tester'&&canOperate" in html
