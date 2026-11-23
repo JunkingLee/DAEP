@@ -2131,11 +2131,7 @@ def project_artifact_quality_dashboard(pid:str,days:int=30,authorization:str=Hea
             JOIN tasks t ON t.id=v.task_id JOIN requirements r ON r.id=t.requirement_id
             LEFT JOIN members m ON m.id=v.actor_member_id
             LEFT JOIN agents ag ON ag.id=v.agent_id
-            WHERE r.project_id=? AND v.created_at>=? AND v.version_number=(
-                SELECT MAX(v2.version_number) FROM artifact_versions v2
-                JOIN artifacts a2 ON a2.id=v2.artifact_id
-                WHERE v2.task_id=v.task_id
-                  AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
+            WHERE r.project_id=? AND v.created_at>=?
             ORDER BY v.created_at DESC""",(pid,cutoff)).fetchall()
         totals={'PASS':0,'FAIL':0,'NEEDS_REVIEW':0}
         trend={}; failures=[]; task_ids=set()
