@@ -2031,21 +2031,26 @@ def set_project_artifact_quality_policy(pid:str,b:dict,authorization:str=Header(
         return {'project_id':pid,'policy':policy,'updated_by':a['id'],'updated_at':stamp,'source':'project'}
 
 def artifact_version_quality(c, version_id):
-    row=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,
+    row=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,v.quality_policy_snapshot,
         a.artifact_type,a.uri,a.commit_sha,a.metadata
         FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=?""",(version_id,)).fetchone()
     if not row: return None
     item=dict(row)
     try: metadata=json.loads(item.get('metadata') or '{}')
     except Exception: metadata={}
-    try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')\n    except Exception: snapshot=None\n    report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,\n        policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))\n    if isinstance(snapshot,dict): report['policy_snapshot']=snapshot\n    return report
+    try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')
+    except Exception: snapshot=None
+    report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,
+        policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))
+    if isinstance(snapshot,dict): report['policy_snapshot']=snapshot
+    return report
 
 @app.get('/api/v1/tasks/{tid}/artifact-quality')
 def task_artifact_quality(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a)
-        rows=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,
+        rows=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,v.quality_policy_snapshot,
             a.id AS artifact_id,a.artifact_type,a.uri,a.commit_sha,a.metadata
             FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
             WHERE v.task_id=? ORDER BY v.version_number DESC""",(tid,)).fetchall()
@@ -2054,7 +2059,11 @@ def task_artifact_quality(tid:str,authorization:str=Header(None)):
             item=dict(raw)
             try: metadata=json.loads(item.get('metadata') or '{}')
             except Exception: metadata={}
-            try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')\n            except Exception: snapshot=None\n            report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,\n                policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))\n            if isinstance(snapshot,dict): report['policy_snapshot']=snapshot
+            try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')
+            except Exception: snapshot=None
+            report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,
+                policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))
+            if isinstance(snapshot,dict): report['policy_snapshot']=snapshot
             reports.append({'artifact_version_id':item['artifact_version_id'],'version_number':item['version_number'],
                 'review_status':item['review_status'],'artifact_type':item['artifact_type'],'quality':report})
         latest=reports[0] if reports else None
@@ -2070,7 +2079,9 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
         task_sql='SELECT id FROM tasks WHERE id=?'
         if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
         if not c.execute(task_sql,(tid,)).fetchone(): raise HTTPException(404,'Task not found')
-        tenant=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id']
+        project_row=c.execute('SELECT p.id AS project_id,p.tenant_id,t.status FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()
+        tenant=project_row['tenant_id']; project_id=project_row['project_id']
+        quality_snapshot=artifact_quality_policy_snapshot(c,project_id,project_row['status'])
         wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone()
         version_number=int(c.execute('SELECT COALESCE(MAX(version_number),0)+1 AS n FROM artifact_versions WHERE task_id=?',(tid,)).fetchone()['n'])
         version_id='av_'+uuid.uuid4().hex[:24]
@@ -2082,6 +2093,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
         c.execute('INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at,quality_policy_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(version_id,aid,tid,wp['id'] if wp else None,version_number,actor_type,actor_member_id,agent_id,tenant,'PENDING',submitted_at,json.dumps(quality_snapshot,sort_keys=True)))
         event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'artifact_version_id':version_id,'version_number':version_number,'actor_type':actor_type,'agent_id':agent_id,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid,'artifact_version_id':version_id,'version_number':version_number,'review_status':'PENDING'}
+
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
