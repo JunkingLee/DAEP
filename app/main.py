@@ -1853,6 +1853,7 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
                 return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
         enforce_workflow_stage(c,pid,target,a['id'],tid)
         eid=transition_task_workflow(c,tid,target,a['id'],comment)
+        sync_work_package_parent(c,tid,a['id'],'workflow_transition_'+target.lower())
         if scoped_key:
             # The transition event itself is the idempotent record; attach a unique companion event only when needed.
             c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
