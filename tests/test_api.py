@@ -2982,3 +2982,65 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     assert db.execute("SELECT 1 FROM events WHERE event_type='project.member.removed' AND payload LIKE ?",
         ('%'+member_id+'%',)).fetchone() is not None
     db.close()
+
+
+def test_rc42_agent_project_binding_requires_owner_consent_and_is_project_scoped():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC42 Agent Consent A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC42 Agent Consent B'}).json()
+    pid_a,pid_b=project_a['id'],project_b['id']
+
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC42 Project Manager'}).json()
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC42 Agent Owner'}).json()
+    manager_h={'Authorization':'Bearer '+manager['token']}
+    owner_h={'Authorization':'Bearer '+owner['token']}
+
+    for pid in (pid_a,pid_b):
+        assert client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+            'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f'/api/v1/projects/{pid_a}/members',headers=ADMIN,json={
+        'member_id':owner['id'],'role':'manager'}).status_code==200
+
+    req_a=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_a,'title':'RC42 project A requirement'}).json()
+    req_b=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_b,'title':'RC42 project B requirement'}).json()
+    task_a=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req_a['id'],'title':'RC42 project A task'}).json()
+    task_b=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req_b['id'],'title':'RC42 project B task'}).json()
+
+    created=client.post('/api/v1/agents',headers=owner_h,json={
+        'name':'RC42 privately owned Agent','description':'consent boundary'})
+    assert created.status_code==200,created.text
+    agent_id=created.json()['agent']['id']
+    agent_h={'Authorization':'Bearer '+created.json()['token']}
+
+    # Project manager authority alone must not expose another member's Agent.
+    denied=client.post(f'/api/v1/agents/{agent_id}/projects',headers=manager_h,json={
+        'project_id':pid_a,'role':'member','work_function':'developer'})
+    assert denied.status_code==403,denied.text
+    assert client.get(f'/api/v1/agents/{agent_id}',headers=manager_h).status_code==403
+    assert all(x['id']!=agent_id for x in client.get('/api/v1/agents',headers=manager_h).json())
+
+    # The Agent owner explicitly consents while holding project governance
+    # authority. Thereafter the project manager may allocate scoped work.
+    bound=client.post(f'/api/v1/agents/{agent_id}/projects',headers=owner_h,json={
+        'project_id':pid_a,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{task_a["id"]}/agent-assignments',headers=manager_h,json={
+        'agent_id':agent_id})
+    assert assigned.status_code==200,assigned.text
+    accepted=client.post(f'/api/v1/agent-assignments/{assigned.json()["id"]}/accept',headers=agent_h)
+    assert accepted.status_code==200,accepted.text
+
+    # A valid binding and accepted assignment in project A confer no rights
+    # to project B, even when the same human manager manages both projects.
+    cross=client.post(f'/api/v1/tasks/{task_b["id"]}/agent-assignments',headers=manager_h,json={
+        'agent_id':agent_id})
+    assert cross.status_code==409,cross.text
+    context=client.get('/api/v1/mcp/context',headers=agent_h)
+    assert context.status_code==200,context.text
+    assert [x['project_id'] for x in context.json()['projects']]==[pid_a]
+    mine=client.get('/api/v1/agents/me/tasks',headers=agent_h)
+    assert mine.status_code==200, mine.text
+    assert [x['task_id'] for x in mine.json()['items']]==[task_a['id']]
