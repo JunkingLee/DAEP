@@ -87,6 +87,9 @@ BEGIN
   PERFORM set_config('app.member_id', 'rls-member-a', true);
   PERFORM set_config('app.lifecycle_action', '', true);
 
+  IF (SELECT count(*) FROM project_members WHERE project_id='rls-probe-a' AND member_id='rls-member-a' AND role='owner') <> 1 THEN
+    RAISE EXCEPTION 'RLS lifecycle fixture failed: owner membership is not visible to the restricted role';
+  END IF;
   IF NOT daep_project_owner('rls-probe-a') THEN
     RAISE EXCEPTION 'RLS lifecycle owner predicate failed: current member is not recognized as project owner';
   END IF;
