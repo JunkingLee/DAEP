@@ -187,6 +187,8 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             page.get_by_role("button", name="解除绑定").click()
             expect(page.get_by_test_id("toast")).to_contain_text("项目绑定已解除")
             expect(agent_card).to_contain_text("尚未绑定项目")
+            # unbindAgentProject refreshes the detail modal after the DELETE.
+            page.locator("#modal .modal-head button").click()
 
             # Revoke the currently active rotated token and verify history.
             agent_card.get_by_role("button", name="管理").click()
