@@ -705,11 +705,15 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0031_rc41_member_auth_status (head)' in heads
+    assert '0032_rc42_artifact_versions (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
     assert 'WITH CHECK' in migration
+    artifact_migration=(root/'alembic/versions/0032_rc42_artifact_versions.py').read_text()
+    assert 'FORCE ROW LEVEL SECURITY' in artifact_migration
+    assert 'UNIQUE(task_id, version_number)' in artifact_migration
+    assert 'daep_artifact_versions_tenant' in artifact_migration
 
 
 def test_rc8_messages_have_explicit_tenant_ownership():
