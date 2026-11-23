@@ -221,6 +221,7 @@ def init():
         CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
+        CREATE TABLE IF NOT EXISTS artifact_versions(id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,task_id TEXT NOT NULL,work_package_id TEXT,version_number INTEGER NOT NULL CHECK(version_number>0),actor_type TEXT NOT NULL DEFAULT 'MEMBER' CHECK(actor_type IN ('MEMBER','AGENT')),actor_member_id TEXT,agent_id TEXT,tenant_id TEXT NOT NULL,review_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(review_status IN ('PENDING','APPROVED','REJECTED')),review_comment TEXT,reviewed_by_member_id TEXT,reviewed_at TEXT,created_at TEXT NOT NULL,UNIQUE(task_id,version_number),FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(work_package_id) REFERENCES task_work_packages(id),FOREIGN KEY(actor_member_id) REFERENCES members(id),FOREIGN KEY(reviewed_by_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
         CREATE TABLE IF NOT EXISTS project_workflows(project_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS project_gates(project_id TEXT NOT NULL,gate_key TEXT NOT NULL,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,gate_key),FOREIGN KEY(project_id) REFERENCES projects(id));
@@ -273,6 +274,30 @@ def init():
         c.execute("UPDATE events SET tenant_id=(SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=events.task_id) WHERE events.task_id IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=events.task_id)")
         c.execute("UPDATE events SET tenant_id=(SELECT tenant_id FROM members m WHERE m.id=events.actor_member_id) WHERE (tenant_id IS NULL OR tenant_id='tenant-default') AND actor_member_id IS NOT NULL")
         c.execute("UPDATE artifacts SET tenant_id=(SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=artifacts.task_id) WHERE tenant_id IS NULL OR tenant_id='tenant-default'")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_artifact_versions_task ON artifact_versions(task_id,version_number DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_artifact_versions_package ON artifact_versions(work_package_id,version_number DESC)")
+        # Backfill legacy artifacts as immutable versions while preserving artifact IDs.
+        missing_versions=c.execute("SELECT a.* FROM artifacts a LEFT JOIN artifact_versions v ON v.artifact_id=a.id WHERE v.id IS NULL ORDER BY a.task_id,a.created_at,a.id").fetchall()
+        for artifact_row in missing_versions:
+            task_id=artifact_row['task_id']
+            current=c.execute("SELECT COALESCE(MAX(version_number),0) AS n FROM artifact_versions WHERE task_id=?",(task_id,)).fetchone()['n']
+            package=c.execute("SELECT id FROM task_work_packages WHERE child_task_id=?",(task_id,)).fetchone()
+            actor_type='MEMBER'; actor_member_id=None; agent_id=None
+            for audit in c.execute("SELECT actor_member_id,payload FROM events WHERE event_type='artifact.submitted' AND task_id=? ORDER BY created_at DESC",(task_id,)).fetchall():
+                try: payload=json.loads(audit['payload'] or '{}')
+                except Exception: payload={}
+                if payload.get('artifact_id')==artifact_row['id']:
+                    actor_type=payload.get('actor_type') or 'MEMBER'
+                    actor_member_id=audit['actor_member_id']
+                    agent_id=payload.get('agent_id')
+                    break
+            if actor_type=='AGENT':
+                actor_member_id=None
+                if not agent_id: actor_type='MEMBER'
+            else:
+                agent_id=None
+            c.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                ('av_'+uuid.uuid4().hex,artifact_row['id'],task_id,package['id'] if package else None,int(current)+1,actor_type,actor_member_id,agent_id,artifact_row['tenant_id'] or 'tenant-default','PENDING',artifact_row['created_at'] or now()))
         c.execute("UPDATE outbox SET tenant_id='tenant-default' WHERE tenant_id IS NULL")
         # Correct ownership metadata on RC5 rows emitted by a platform administrator
         # for another tenant. Payloads are intentionally treated as data, not SQL.
