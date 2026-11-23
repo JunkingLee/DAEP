@@ -1527,7 +1527,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
                for item in timeline_items)
     closed=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={
         'decision':'APPROVE','comment':'Both member deliveries accepted'})
-    assert closed.status_code==200 and closed.json()['status']=='DONE'
+    assert closed.status_code==200 and closed.json()['status']=='DONE',closed.text
 
     report=client.get(f"/api/v1/requirements/{requirement.json()['id']}/acceptance-report",
         headers=owner_h)
