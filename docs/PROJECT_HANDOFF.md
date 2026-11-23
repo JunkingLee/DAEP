@@ -74,7 +74,7 @@
 8. 已完成：风险整改 PATCH API，支持责任人、整改期限、OPEN/IN_PROGRESS/RESOLVED/DISMISSED、处理备注；关闭/忽略必须保留非空处理备注；仅项目 owner/manager/reviewer 或平台管理员可修改。
 9. 已实现前端项目质量风险列表、详情弹窗和整改表单，展示严重等级、发生次数、责任人、截止时间、状态、失败 occurrence 历史和审计时间线；已接入风险 API。
 10. 已完成：风险 UI 代码的 CI 验证及静态集成检查；最新 Agent 管理 UI 回归覆盖亦已完成并通过 CI（详见第 10 节）。
-11. **下一项唯一任务：补充真实浏览器 E2E 验收**，覆盖登录后进入“我的 Agent”、列表加载、创建/查看/编辑 Agent、Token 轮换/撤销及项目绑定。当前已验证脚本语法和 UI/API 接线，但尚未在真实浏览器会话中执行端到端流程。
+11. 已完成：Playwright 真实浏览器 E2E，覆盖登录/刷新恢复、Agent 列表、创建和一次性 Token、详情编辑、Token 轮换/撤销、项目绑定/解绑；CI run `45144014967` 对应 HEAD `7758b62f87d6e3ebc84c966a74ee411b18a217aa` 全部成功。下一项唯一任务：补充 Agent 所有权、项目角色和撤销 Token 的负向安全 E2E。
 
 ## 5. 跨聊天窗口恢复协议（每次新聊天必须执行）
 
@@ -160,8 +160,8 @@
 - 提交：
   - `9bb7d11a9c1e585cce09553292e77227622036a0` — `test: add Playwright Agent lifecycle browser E2E`
   - `d970bcee7c4a17b468f9f6a1f68217c62fc0a78e` — `ci: run Agent lifecycle Playwright browser E2E`
-- 当前分支 HEAD：`4888c7e66b6bf2c0ded48dc78364946840c65479`。
-- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143257668` 已成功完成 Python 3.11/3.12/3.13、migration、production-compose、container-build，但浏览器测试在页面初始化竞态处失败：app-shell 刚显示时项目异步初始化尚未结束，测试过早切换到 Agent 页面，随后初始化完成又切回 overview，导致创建按钮不可见。已在 `7d3b939f28d2bb07994fc71ebf156db62984fb66` 中等待 `#overview.page.active` 后再切换，并明确等待 Agent 页面及创建按钮可见。第二次 CI run `45143609777` 的登录、项目初始化、创建/编辑、Token 轮换、绑定和解绑步骤已运行通过；随后在解绑后的 Token 撤销步骤失败。原因是前端 `unbindAgentProject()` 会在解绑后重新打开并刷新详情弹窗，测试没有关闭这个弹窗便尝试再次点击卡片上的“管理”，点击被弹窗遮挡。已在 `4888c7e66b6bf2c0ded48dc78364946840c65479` 中显式关闭刷新后的详情弹窗，再继续验证 Token 撤销。此修复尚未执行 CI；当前仍不得宣称浏览器 E2E 已通过。
+- 当前分支 HEAD：`7758b62f87d6e3ebc84c966a74ee411b18a217aa`。
+- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143257668` 已成功完成 Python 3.11/3.12/3.13、migration、production-compose、container-build，但浏览器测试在页面初始化竞态处失败：app-shell 刚显示时项目异步初始化尚未结束，测试过早切换到 Agent 页面，随后初始化完成又切回 overview，导致创建按钮不可见。已在 `7d3b939f28d2bb07994fc71ebf156db62984fb66` 中等待 `#overview.page.active` 后再切换，并明确等待 Agent 页面及创建按钮可见。第二次 CI run `45143609777` 的登录、项目初始化、创建/编辑、Token 轮换、绑定和解绑步骤已运行通过；随后发现测试未关闭解绑后重新打开的详情弹窗，导致后续点击被遮挡。已在 `4888c7e66b6bf2c0ded48dc78364946840c65479` 修复。最终 CI run `45144014967` 对应当前 HEAD `7758b62f87d6e3ebc84c966a74ee411b18a217aa`，browser-e2e、Python 3.11/3.12/3.13、PostgreSQL migration/RLS、production-compose、container-build 全部成功；浏览器完整生命周期测试已验证通过。
 - 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
-- 下一步唯一任务：检查包含解绑后关闭详情弹窗修复的最新 CI run，确认 Token 撤销及完整浏览器流程是否通过；若失败，依据失败步骤继续修复 harness 或 UI/API，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
+- 下一步唯一任务：增加 Agent 安全负向 E2E，至少覆盖非所有者读取/编辑/轮换/撤销其他用户 Agent 被拒绝、无项目管理员权限的用户不能绑定项目，以及 Token 撤销后不能再通过 MCP 身份认证。继续使用独立临时数据库和真实浏览器登录会话。
 
