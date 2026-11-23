@@ -89,7 +89,7 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     assert governance_write.status_code==403,governance_write.text
     artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
         'artifact_type':'test_report','uri':'https://example.invalid/governance-proof',
-        'commit_sha':'governance-proof','metadata':{'verified':True}})
+        'commit_sha':'governance-proof','metadata':{'verified':True,'test_summary':{'total':1,'passed':1,'failed':0}}})
     assert artifact.status_code==200,artifact.text
     admin_progress=client.post(f'/api/v1/tasks/{tid}/progress',headers=ADMIN,json={'progress':100})
     assert admin_progress.status_code==200,admin_progress.text
@@ -911,7 +911,7 @@ def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
     assert no_artifact.status_code==409
     artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=rh,json={
         'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/def456',
-        'commit_sha':'def456','metadata':{}})
+        'commit_sha':'def4567','metadata':{}})
     assert artifact.status_code==200
     reported=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
         'outcome':'COMPLETE','summary':'Implementation and tests finished','idempotency_key':'result-1'})
@@ -1062,7 +1062,7 @@ def test_rc26_stage4_work_package_review_reject_and_approve_gate():
     assert created.status_code==200
     package=created.json()
     child=package['task_id']
-    first_artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4','commit_sha':'stage4','metadata':{}})
+    first_artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4','commit_sha':'a4e0004','metadata':{}})
     assert first_artifact.status_code==200,first_artifact.text
     assert client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={'outcome':'COMPLETE','summary':'ready','idempotency_key':'stage4-result'}).status_code==200
     rejected=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={
@@ -1073,7 +1073,7 @@ def test_rc26_stage4_work_package_review_reject_and_approve_gate():
     assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='IN_PROGRESS'
     second_artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/commit/stage4-v2',
-        'commit_sha':'stage4-v2','metadata':{'resubmission':True}})
+        'commit_sha':'a4e0005','metadata':{'resubmission':True}})
     assert second_artifact.status_code==200 and second_artifact.json()['version_number']==2
     assert client.post(f'/api/v1/tasks/{child}/progress',headers=mh,json={'progress':100,'note':'resubmitted'}).status_code==200
     stale_approval=client.post(f'/api/v1/work-packages/{package["id"]}/review',headers=ADMIN,json={
@@ -1436,7 +1436,7 @@ def test_rc26_full_role_delivery_to_project_closure_e2e():
 
     evidence=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=tester_h,json={
         'artifact_type':'test_report','uri':'https://example.invalid/full-e2e-report',
-        'commit_sha':'full-e2e-test','metadata':{'passed':12}})
+        'commit_sha':'full-e2e-test','metadata':{'test_summary':{'total':12,'passed':12,'failed':0}}})
     assert evidence.status_code==200,evidence.text
     assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=tester_h,
         json={'target_stage':'REVIEW'}).status_code==200
@@ -1520,7 +1520,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
         (test_child,second_h,'tests-e2e-commit','test_report')):
         artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=headers,json={
             'artifact_type':kind,'uri':f'https://example.invalid/{sha}',
-            'commit_sha':sha,'metadata':{'stage':'rc26-stage8'}})
+            'commit_sha':sha,'metadata':({'stage':'rc26-stage8','test_summary':{'total':10,'passed':10,'failed':0}} if kind=='test_report' else {'stage':'rc26-stage8'})})
         assert artifact.status_code==200,artifact.text
         result=client.post(f'/api/v1/tasks/{child}/work-result',headers=headers,json={
             'outcome':'COMPLETE','summary':f'Delivered {kind}','idempotency_key':f'{sha}-result'})
@@ -1701,7 +1701,7 @@ def test_rc26_stage12_concurrent_work_package_reviews_emit_one_governance_event(
     child=created.json()['task_id']
     assert client.post(f'/api/v1/tasks/{child}/artifacts',headers=mh,json={
         'artifact_type':'git_commit','uri':'https://github.com/example/repo/commit/stage12',
-        'commit_sha':'stage12','metadata':{}}).status_code==200
+        'commit_sha':'a120012','metadata':{}}).status_code==200
     result=client.post(f'/api/v1/tasks/{child}/work-result',headers=mh,json={
         'outcome':'COMPLETE','summary':'Ready for concurrent review','idempotency_key':'stage12-review-result'})
     assert result.status_code==200,result.text
@@ -2135,7 +2135,7 @@ def test_rc26_workflow_runtime_custom_gate_is_project_scoped_and_idempotent():
     assert gate.status_code == 200, gate.text
     dh={'Authorization':f'Bearer {developer_token}'}
     artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=dh,json={
-        'artifact_type':'test-report','uri':'file://test-report.txt','metadata':{'case_count':3}
+        'artifact_type':'test-report','uri':'https://example.invalid/test-report.txt','metadata':{'case_count':3,'test_summary':{'total':3,'passed':3,'failed':0}}
     })
     assert artifact.status_code == 200, artifact.text
     blocked=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers={**dh,'Idempotency-Key':'scoped-review'},json={'target_stage':'REVIEW'})
@@ -2330,7 +2330,7 @@ def test_rc32_workflow_gate_review_role_matrix_is_enforced_end_to_end():
     # role submits evidence; the project reviewer then owns the approval step.
     evidence=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=tester_h,json={
         'artifact_type':'test_report','uri':'https://example.invalid/rc32-report',
-        'commit_sha':'rc32-test','metadata':{'passed':8}})
+        'commit_sha':'rc32-test','metadata':{'test_summary':{'total':8,'passed':8,'failed':0}}})
     assert evidence.status_code==200,evidence.text
     moved=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=tester_h,
                       json={'target_stage':'REVIEW'})
@@ -2359,7 +2359,7 @@ def test_rc32_workflow_gate_review_role_matrix_is_enforced_end_to_end():
     assert missing_evidence.status_code==409,missing_evidence.text
     test_evidence=client.post(f'/api/v1/tasks/{bypass_tid}/artifacts',headers=tester_h,json={
         'artifact_type':'test_report','uri':'https://example.invalid/rc32-progress-gate',
-        'commit_sha':'rc32-progress-gate','metadata':{'passed':3}})
+        'commit_sha':'rc32-progress-gate','metadata':{'test_summary':{'total':3,'passed':3,'failed':0}}})
     assert test_evidence.status_code==200,test_evidence.text
     tester_review=client.post(f'/api/v1/tasks/{bypass_tid}/progress',
         headers=tester_h,json={'progress':100})
@@ -2770,7 +2770,7 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     # human member row.
     artifact=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent',
-        'commit_sha':'rc9-agent-audit','metadata':{'source':'agent'}})
+        'commit_sha':'a9e0001','metadata':{'source':'agent'}})
     assert artifact.status_code==200,artifact.text
     audit=client.get(f'/api/v1/projects/{pid_a}/audit',headers=ADMIN)
     assert audit.status_code==200,audit.text
@@ -2825,7 +2825,7 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     assert accepted_grant.status_code==200 and accepted_grant.json()['status']=='ACCEPTED'
     delivered=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent-final',
-        'commit_sha':'rc9-agent-final','metadata':{'acceptance_criterion':0}})
+        'commit_sha':'a9e0002','metadata':{'acceptance_criterion':0}})
     assert delivered.status_code==200,delivered.text
     requested_review=client.post(f'/api/v1/tasks/{tid_a}/progress',headers=agent_h,json={
         'progress':100,'note':'Implementation and evidence delivered'})
@@ -3268,7 +3268,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     for sha in ('version-one','version-two'):
         response=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
             'artifact_type':'git_commit','uri':f'https://example.invalid/{sha}',
-            'commit_sha':sha,'metadata':{'iteration':sha}})
+            'commit_sha':{'version-one':'a000001','version-two':'a000002'}[sha],'metadata':{'iteration':sha}})
         assert response.status_code==200,response.text
         submitted.append(response.json())
     assert [x['version_number'] for x in submitted]==[2,3]
@@ -3284,7 +3284,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
 
     resubmitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/version-three',
-        'commit_sha':'version-three','metadata':{'iteration':'resubmission'}})
+        'commit_sha':'a000003','metadata':{'iteration':'resubmission'}})
     assert resubmitted.status_code==200,resubmitted.text
     assert resubmitted.json()['version_number']==4
     approved=client.post(f"/api/v1/artifact-versions/{resubmitted.json()['artifact_version_id']}/review",
@@ -3299,7 +3299,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert rows[0]['actor_type']=='AGENT' and rows[0]['agent_id']==agent['id']
     assert rows[0]['actor_member_id'] is None
     assert rows[1]['review_comment']=='Missing integration test evidence'
-    assert rows[2]['commit_sha']=='version-one'
+    assert rows[2]['commit_sha']=='a000001'
     assert rows[3]['actor_type']=='MEMBER' and rows[3]['actor_member_id']=='member-admin'
     assert rows[3]['commit_sha']=='human-version-one'
 
@@ -3311,7 +3311,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
 
     pending_latest=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/version-five',
-        'commit_sha':'version-five','metadata':{'iteration':'unreviewed-latest'}})
+        'commit_sha':'a000005','metadata':{'iteration':'unreviewed-latest'}})
     assert pending_latest.status_code==200 and pending_latest.json()['version_number']==5
     with main_module.conn() as c:
         c.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
