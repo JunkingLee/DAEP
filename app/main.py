@@ -224,6 +224,37 @@ def init():
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
         CREATE TABLE IF NOT EXISTS artifact_versions(id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,task_id TEXT NOT NULL,work_package_id TEXT,version_number INTEGER NOT NULL CHECK(version_number>0),actor_type TEXT NOT NULL DEFAULT 'MEMBER' CHECK(actor_type IN ('MEMBER','AGENT')),actor_member_id TEXT,agent_id TEXT,tenant_id TEXT NOT NULL,review_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(review_status IN ('PENDING','APPROVED','REJECTED')),review_comment TEXT,reviewed_by_member_id TEXT,reviewed_at TEXT,quality_policy_snapshot TEXT,created_at TEXT NOT NULL,UNIQUE(task_id,version_number),FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(work_package_id) REFERENCES task_work_packages(id),FOREIGN KEY(actor_member_id) REFERENCES members(id),FOREIGN KEY(reviewed_by_member_id) REFERENCES members(id));
+        CREATE TABLE IF NOT EXISTS project_risk_events(
+            id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,task_id TEXT NOT NULL,
+            artifact_version_id TEXT NOT NULL,risk_key TEXT NOT NULL,artifact_type TEXT NOT NULL,
+            quality_check_key TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'LOW' CHECK(severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+            status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','IN_PROGRESS','RESOLVED','DISMISSED')),
+            occurrence_count INTEGER NOT NULL DEFAULT 1 CHECK(occurrence_count>0),
+            first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,source_actor_type TEXT,
+            source_member_id TEXT,source_agent_id TEXT,assignee_member_id TEXT,due_at TEXT,
+            resolved_at TEXT,resolution_note TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+            UNIQUE(tenant_id,project_id,risk_key),
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY(artifact_version_id) REFERENCES artifact_versions(id),
+            FOREIGN KEY(source_member_id) REFERENCES members(id),
+            FOREIGN KEY(assignee_member_id) REFERENCES members(id)
+        );
+        CREATE TABLE IF NOT EXISTS project_risk_occurrences(
+            id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,task_id TEXT NOT NULL,
+            risk_id TEXT NOT NULL,artifact_version_id TEXT NOT NULL,quality_check_key TEXT NOT NULL,
+            severity TEXT NOT NULL,message TEXT NOT NULL,actor_type TEXT,actor_member_id TEXT,agent_id TEXT,
+            occurred_at TEXT NOT NULL,
+            UNIQUE(risk_id,artifact_version_id,quality_check_key),
+            FOREIGN KEY(risk_id) REFERENCES project_risk_events(id) ON DELETE CASCADE,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY(artifact_version_id) REFERENCES artifact_versions(id),
+            FOREIGN KEY(actor_member_id) REFERENCES members(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_risk_events_project_status ON project_risk_events(project_id,status,severity,last_seen_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_project_risk_occurrences_risk ON project_risk_occurrences(risk_id,occurred_at DESC);
         CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
         CREATE TABLE IF NOT EXISTS project_workflows(project_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS project_gates(project_id TEXT NOT NULL,gate_key TEXT NOT NULL,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,gate_key),FOREIGN KEY(project_id) REFERENCES projects(id));
@@ -2210,6 +2241,86 @@ def artifact_version_quality(c, version_id):
     if isinstance(snapshot,dict): report['policy_snapshot']=snapshot
     return report
 
+
+def record_project_quality_risks(c, version_id, report, actor_id=None):
+    """Persist one risk per task/artifact/check and append immutable failure occurrences."""
+    if not report or report.get('status') != 'FAIL':
+        return []
+    version = c.execute("""SELECT v.id AS version_id,v.task_id,v.tenant_id,v.actor_type,
+        v.actor_member_id,v.agent_id,a.artifact_type,t.title AS task_title,
+        r.project_id,p.name AS project_name
+        FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+        JOIN tasks t ON t.id=v.task_id JOIN requirements r ON r.id=t.requirement_id
+        JOIN projects p ON p.id=r.project_id WHERE v.id=?""",(version_id,)).fetchone()
+    if not version:
+        return []
+    item=dict(version)
+    artifact_type=str(item.get('artifact_type') or 'unknown').strip().lower().replace('-','_')
+    stamp=now()
+    recorded=[]
+    for check in report.get('checks') or []:
+        if not isinstance(check,dict) or check.get('status') != 'FAIL':
+            continue
+        check_key=str(check.get('key') or 'quality_failure').strip().lower() or 'quality_failure'
+        risk_key=':'.join((str(item['task_id']),artifact_type,check_key))
+        existing=c.execute("""SELECT * FROM project_risk_events
+            WHERE tenant_id=? AND project_id=? AND risk_key=?""",
+            (item['tenant_id'],item['project_id'],risk_key)).fetchone()
+        if existing:
+            risk_id=existing['id']
+            duplicate=c.execute("""SELECT id FROM project_risk_occurrences
+                WHERE risk_id=? AND artifact_version_id=? AND quality_check_key=?""",
+                (risk_id,version_id,check_key)).fetchone()
+            if duplicate:
+                continue
+            count=int(existing['occurrence_count'])+1
+            severity='LOW' if count==1 else ('MEDIUM' if count==2 else 'HIGH')
+            previous_status=existing['status']
+            status='OPEN' if previous_status in ('RESOLVED','DISMISSED') else previous_status
+            c.execute("""UPDATE project_risk_events SET artifact_version_id=?,description=?,
+                occurrence_count=?,severity=?,status=?,last_seen_at=?,resolved_at=CASE
+                WHEN ?='OPEN' THEN NULL ELSE resolved_at END,updated_at=?,
+                source_actor_type=?,source_member_id=?,source_agent_id=? WHERE id=?""",
+                (version_id,str(check.get('message') or '质量检查失败'),count,severity,status,stamp,
+                 status,stamp,item['actor_type'],item['actor_member_id'],item['agent_id'],risk_id))
+            event_type='project.quality_risk.reopened' if status=='OPEN' and previous_status in ('RESOLVED','DISMISSED') else 'project.quality_risk.occurrence_recorded'
+        else:
+            risk_id='risk_'+uuid.uuid4().hex[:24]
+            count=1
+            severity='LOW'
+            status='OPEN'
+            title='质量检查失败：'+str(item.get('artifact_type') or '交付物')+' / '+check_key
+            c.execute("""INSERT INTO project_risk_events(
+                id,tenant_id,project_id,task_id,artifact_version_id,risk_key,artifact_type,
+                quality_check_key,title,description,severity,status,occurrence_count,
+                first_seen_at,last_seen_at,source_actor_type,source_member_id,source_agent_id,
+                created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (risk_id,item['tenant_id'],item['project_id'],item['task_id'],version_id,risk_key,
+             artifact_type,check_key,title,str(check.get('message') or '质量检查失败'),
+             severity,status,count,stamp,stamp,item['actor_type'],item['actor_member_id'],
+             item['agent_id'],stamp,stamp))
+            event_type='project.quality_risk.created'
+        occurrence_id='rko_'+uuid.uuid4().hex[:24]
+        c.execute("""INSERT INTO project_risk_occurrences(
+            id,tenant_id,project_id,task_id,risk_id,artifact_version_id,quality_check_key,
+            severity,message,actor_type,actor_member_id,agent_id,occurred_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (occurrence_id,item['tenant_id'],item['project_id'],item['task_id'],risk_id,
+         version_id,check_key,severity,str(check.get('message') or '质量检查失败'),
+         item['actor_type'],item['actor_member_id'],item['agent_id'],stamp))
+        audit_id=event(c,event_type,actor_id or item['actor_member_id'],item['task_id'],{
+            'project_id':item['project_id'],'risk_id':risk_id,'risk_key':risk_key,
+            'artifact_version_id':version_id,'quality_check_key':check_key,
+            'severity':severity,'status':status,'occurrence_count':count,
+            'artifact_type':item.get('artifact_type')
+        })
+        recorded.append({'risk_id':risk_id,'occurrence_id':occurrence_id,
+                         'severity':severity,'status':status,'occurrence_count':count,
+                         'audit_event_id':audit_id})
+    return recorded
+
+
 @app.get('/api/v1/tasks/{tid}/artifact-quality')
 def task_artifact_quality(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -2257,7 +2368,10 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),submitted_at,tenant))
         c.execute('INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at,quality_policy_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(version_id,aid,tid,wp['id'] if wp else None,version_number,actor_type,actor_member_id,agent_id,tenant,'PENDING',submitted_at,json.dumps(quality_snapshot,sort_keys=True)))
         event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'artifact_version_id':version_id,'version_number':version_number,'actor_type':actor_type,'agent_id':agent_id,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
-    return {'id':aid,'task_id':tid,'artifact_version_id':version_id,'version_number':version_number,'review_status':'PENDING'}
+        quality_report=artifact_version_quality(c,version_id)
+        quality_risks=record_project_quality_risks(c,version_id,quality_report,a['id'])
+    return {'id':aid,'task_id':tid,'artifact_version_id':version_id,'version_number':version_number,
+            'review_status':'PENDING','quality':quality_report,'quality_risks':quality_risks}
 
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
