@@ -3480,3 +3480,12 @@ def test_artifact_quality_policy_validation_rejects_invalid_thresholds():
     invalid=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json={
         'min_coverage_percent':120,'max_failed_tests':-1})
     assert invalid.status_code==422
+
+
+def test_project_quality_policy_controls_are_exposed_in_governance_ui():
+    from pathlib import Path
+    source=Path('web/index.html').read_text(encoding='utf-8')
+    assert 'qualityPolicySummary' in source
+    assert 'openQualityPolicyDesigner()' in source
+    assert 'saveQualityPolicy()' in source
+    assert "'/quality-policy'" in source
