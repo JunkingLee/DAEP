@@ -2562,6 +2562,64 @@ def task_artifacts(tid:str,authorization:str=Header(None)):
     with conn() as c:
         require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
+
+@app.get('/api/v1/tasks/{tid}/artifact-versions')
+def task_artifact_versions(tid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_task_access(c,tid,a)
+        rows=c.execute("""SELECT v.*,a.artifact_type,a.uri,a.commit_sha,a.metadata,
+            m.name AS actor_name,rm.name AS reviewer_name
+            FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+            LEFT JOIN members m ON m.id=v.actor_member_id
+            LEFT JOIN members rm ON rm.id=v.reviewed_by_member_id
+            WHERE v.task_id=? ORDER BY v.version_number DESC""",(tid,)).fetchall()
+        result=[]
+        for raw in rows:
+            item=dict(raw)
+            try: item['metadata']=json.loads(item.get('metadata') or '{}')
+            except Exception: item['metadata']={}
+            result.append(item)
+        return result
+
+@app.post('/api/v1/artifact-versions/{version_id}/review')
+def review_artifact_version(version_id:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve artifact versions')
+    decision=str(b.get('decision','')).strip().upper()
+    comment=str(b.get('comment','')).strip()[:4000]
+    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
+    if decision=='REJECT' and not comment: raise HTTPException(422,'A rejection reason is required')
+    with conn() as c:
+        begin_serialized_write(c)
+        version_sql="""SELECT v.*,a.uri,a.commit_sha FROM artifact_versions v
+            JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=?"""
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): version_sql += ' FOR UPDATE'
+        version=c.execute(version_sql,(version_id,)).fetchone()
+        if not version: raise HTTPException(404,'Artifact version not found')
+        pid=task_project(c,version['task_id'])
+        if not pid: raise HTTPException(404,'Task not found')
+        if is_admin(a): pass
+        else:
+            role=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
+            if not role or role['role'] not in ('owner','manager','reviewer'):
+                raise HTTPException(403,'Reviewer role required')
+        if version['review_status']!='PENDING': raise HTTPException(409,'Artifact version has already been reviewed')
+        latest=c.execute('SELECT MAX(version_number) AS n FROM artifact_versions WHERE task_id=?',(version['task_id'],)).fetchone()['n']
+        if decision=='APPROVE' and int(version['version_number'])!=int(latest):
+            raise HTTPException(409,'Only the latest submitted artifact version can be approved')
+        reviewed_at=now()
+        status='APPROVED' if decision=='APPROVE' else 'REJECTED'
+        updated=c.execute("UPDATE artifact_versions SET review_status=?,review_comment=?,reviewed_by_member_id=?,reviewed_at=? WHERE id=? AND review_status='PENDING'",
+            (status,comment,a['id'],reviewed_at,version_id))
+        if updated.rowcount!=1: raise HTTPException(409,'Artifact version review was already recorded')
+        eid=event(c,'artifact.version.reviewed',a['id'],version['task_id'],{
+            'artifact_version_id':version_id,'artifact_id':version['artifact_id'],
+            'version_number':version['version_number'],'work_package_id':version['work_package_id'],
+            'decision':decision,'comment':comment,'review_status':status})
+        return {'artifact_version_id':version_id,'artifact_id':version['artifact_id'],
+            'version_number':version['version_number'],'review_status':status,
+            'reviewed_at':reviewed_at,'event_id':eid}
 @app.post('/internal/v1/outbox/claim')
 def claim_outbox(body:dict,authorization:str=Header(None)):
     require_worker(authorization)
