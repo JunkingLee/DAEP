@@ -95,8 +95,6 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     assert admin_progress.status_code==200,admin_progress.text
     self_review=client.post(f'/api/v1/tasks/{tid}/review',headers=ah,json={'decision':'APPROVE'})
     assert self_review.status_code==403,self_review.text
-    human_review=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
-    assert human_review.status_code==200,human_review.text
     self_acceptance=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",
         headers=ah,json={'decision':'APPROVE','verified_criteria':[0]})
     assert self_acceptance.status_code==403,self_acceptance.text
@@ -115,6 +113,8 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     reenabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
         'name':agent['name'],'description':agent['description'],'status':'ACTIVE'})
     assert reenabled.status_code==200,reenabled.text
+    human_review=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert human_review.status_code==200,human_review.text
     assert client.get('/api/v1/mcp/context',headers=ah).status_code==401
     assert client.get('/api/v1/agents/me/tasks',headers=ah).status_code==401
 
