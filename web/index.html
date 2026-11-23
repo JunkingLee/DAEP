@@ -410,13 +410,22 @@ function canReviewWork(){return isManager()||selectedProjectRole==='reviewer'}
 function renderAgentAssignments(items,canManage,taskId){
  if(!items.length)return '<h3 style="margin-top:20px">Agent 执行分配</h3><div class="empty">当前任务没有 Agent 分配记录</div>';
  const active=['ASSIGNED','ACCEPTED'];
+ const hasActive=items.some(x=>active.includes(x.status));
+ const eligible=projectAgents.filter(a=>a.status!=='OFFLINE');
+ const reassign=canManage&&!hasActive&&eligible.length?'<div class="actions" style="margin-top:12px"><select id="agent-reassign-'+esc(taskId)+'">'+eligible.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.agent_name)+' · '+esc(a.member_name||a.member_id)+'</option>').join('')+'</select><button class="btn" onclick="assignTaskToAgent(\''+esc(taskId)+'\')">分配 / 重新分配 Agent</button></div>':'';
  return '<h3 style="margin-top:20px">Agent 执行分配</h3><div class="list">'+items.map(x=>{
   const stamp=x.updated_at||x.created_at||'',age=stamp?Math.max(0,Math.floor((Date.now()-Date.parse(stamp))/60000)):null;
   const stale=age!==null&&age>=30&&active.includes(x.status);
   const statusLabel=x.status==='ACCEPTED'?'执行中':x.status==='ASSIGNED'?'待领取':x.status==='REVOKED'?'已撤销':x.status==='COMPLETED'?'已完成':x.status;
   const recover=canManage&&active.includes(x.status)?'<button class="btn danger" onclick="recoverAgentAssignment(\''+esc(x.id)+'\',\''+esc(taskId)+'\')">恢复 / 释放</button>':'';
   return '<div class="list-row"><span><b>'+esc(x.agent_name||x.agent_id)+'</b> <span class="badge '+(stale?'amber':x.status==='ACCEPTED'?'green':'')+'">'+esc(statusLabel)+(stale?' · 超过 30 分钟无心跳':'')+'</span><br><small class="muted">分配时间：'+esc(x.created_at||'未知')+' · 最近活动/心跳：'+esc(stamp||'未知')+(age!==null?' · '+age+' 分钟前':'')+'</small>'+(x.accepted_at?'<br><small class="muted">领取时间：'+esc(x.accepted_at)+'</small>':'')+(x.revoked_at?'<br><small class="muted">撤销时间：'+esc(x.revoked_at)+'</small>':'')+'</span><span>'+recover+'</span></div>';
- }).join('')+'</div><p class="muted small">失联判断以服务端最近活动时间为准；30 分钟仅为界面提示，实际恢复阈值由管理员操作时指定。</p>';
+ }).join('')+'</div>'+reassign+'<p class="muted small">同一任务只允许一个活动 Agent 执行。释放旧分配后可在此选择其他 Agent；失联判断以服务端时间为准。</p>';
+}
+async function assignTaskToAgent(taskId){
+ if(!isManager()){toast('只有项目管理员可以分配 Agent');return}
+ const select=$('agent-reassign-'+taskId),agentId=select?.value;
+ if(!agentId){toast('请选择 Agent');return}
+ try{await api('/api/v1/tasks/'+taskId+'/agent-assignments',{method:'POST',body:JSON.stringify({agent_id:agentId})});await openTask(taskId);toast('Agent 已分配，等待 Agent 领取任务')}catch(e){showError(e)}
 }
 async function recoverAgentAssignment(assignmentId,taskId){
  if(!isManager()){toast('只有项目管理员可以恢复 Agent 任务');return}
