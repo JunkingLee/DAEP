@@ -27,18 +27,18 @@ def upgrade():
       SET row_security = off
       AS $func$
       BEGIN
-        IF NEW.status IS DISTINCT FROM OLD.status THEN
-          IF NEW.status = 'CLOSED' THEN
-            IF NOT daep_project_owner(OLD.id) THEN
-              RAISE EXCEPTION 'Project owner approval required to close project'
-                USING ERRCODE = '42501';
-            END IF;
-          ELSIF OLD.status = 'CLOSED' AND NEW.status = 'ACTIVE' THEN
-            IF current_setting('app.lifecycle_action', true) IS DISTINCT FROM 'REOPEN'
-               OR NOT daep_project_owner(OLD.id) THEN
-              RAISE EXCEPTION 'Project owner approval required to reopen project'
-                USING ERRCODE = '42501';
-            END IF;
+        IF OLD.status = 'CLOSED' THEN
+          -- Closed projects are immutable except for an explicit owner reopen.
+          IF NEW.status IS DISTINCT FROM 'ACTIVE'
+             OR current_setting('app.lifecycle_action', true) IS DISTINCT FROM 'REOPEN'
+             OR NOT daep_project_owner(OLD.id) THEN
+            RAISE EXCEPTION 'Closed project is immutable; owner reopen approval required'
+              USING ERRCODE = '42501';
+          END IF;
+        ELSIF OLD.status = 'ACTIVE' AND NEW.status = 'CLOSED' THEN
+          IF NOT daep_project_owner(OLD.id) THEN
+            RAISE EXCEPTION 'Project owner approval required to close project'
+              USING ERRCODE = '42501';
           END IF;
         END IF;
         RETURN NEW;
@@ -55,17 +55,7 @@ def upgrade():
     # trigger above, while the CHECK expression validates tenant ownership.
     op.execute("""DROP POLICY IF EXISTS daep_projects_tenant ON projects""")
     op.execute("""CREATE POLICY daep_projects_tenant ON projects
-      USING (
-        daep_tenant_visible(tenant_id)
-        AND (
-          status = 'ACTIVE'
-          OR (
-            status = 'CLOSED'
-            AND current_setting('app.lifecycle_action', true) = 'REOPEN'
-            AND daep_project_owner(id)
-          )
-        )
-      )
+      USING (daep_tenant_visible(tenant_id))
       WITH CHECK (daep_tenant_visible(tenant_id))""")
 
 
