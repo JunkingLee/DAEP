@@ -2838,3 +2838,66 @@ def test_product_work_function_can_create_requirements_and_tasks_but_developer_c
     denied_task = client.post('/api/v1/tasks', headers=developer_headers, json={
         'requirement_id':requirement.json()['id'], 'title':'Developer cannot create unassigned task'})
     assert denied_task.status_code == 403, denied_task.text
+
+
+def test_rc41_member_credentials_never_revive_after_disable_enable_or_disabled_rotation():
+    created=client.post('/api/v1/members',headers=ADMIN,json={
+        'name':'Credential Lifecycle','username':'credential.lifecycle',
+        'password':'InitialStrongPassw0rd!'})
+    assert created.status_code==200,created.text
+    member_id=created.json()['id']
+
+    login=client.post('/api/v1/auth/login',json={
+        'username':'credential.lifecycle','password':'InitialStrongPassw0rd!'})
+    assert login.status_code==200,login.text
+    original_token=login.json()['access_token']
+    original_headers={'Authorization':'Bearer '+original_token}
+    assert client.get('/api/v1/me',headers=original_headers).status_code==200
+
+    disabled=client.post(f'/api/v1/members/{member_id}/disable',headers=ADMIN)
+    assert disabled.status_code==200,disabled.text
+    assert client.get('/api/v1/me',headers=original_headers).status_code==401
+    assert client.post('/api/v1/auth/login',json={
+        'username':'credential.lifecycle','password':'InitialStrongPassw0rd!'}).status_code==401
+
+    enabled=client.post(f'/api/v1/members/{member_id}/enable',headers=ADMIN)
+    assert enabled.status_code==200,enabled.text
+    assert enabled.json()['token_status']=='REVOKED'
+    assert client.get('/api/v1/me',headers=original_headers).status_code==401
+
+    # Rotating a token while the account is disabled must not bypass account status.
+    assert client.post(f'/api/v1/members/{member_id}/disable',headers=ADMIN).status_code==200
+    rotated_while_disabled=client.post(f'/api/v1/members/{member_id}/rotate-token',headers=ADMIN)
+    assert rotated_while_disabled.status_code==200,rotated_while_disabled.text
+    disabled_rotation_headers={'Authorization':'Bearer '+rotated_while_disabled.json()['token']}
+    assert client.get('/api/v1/me',headers=disabled_rotation_headers).status_code==401
+    assert client.post(f'/api/v1/members/{member_id}/enable',headers=ADMIN).status_code==200
+    assert client.get('/api/v1/me',headers=disabled_rotation_headers).status_code==401
+
+    # A fresh login issues a new token; password reset also revokes machine credentials.
+    fresh_login=client.post('/api/v1/auth/login',json={
+        'username':'credential.lifecycle','password':'InitialStrongPassw0rd!'})
+    assert fresh_login.status_code==200,fresh_login.text
+    fresh_token=fresh_login.json()['access_token']
+    fresh_headers={'Authorization':'Bearer '+fresh_token}
+    assert client.get('/api/v1/me',headers=fresh_headers).status_code==200
+    reset=client.post(f'/api/v1/members/{member_id}/reset-password',headers=ADMIN,
+        json={'password':'ReplacementStrongPassw0rd!'})
+    assert reset.status_code==200,reset.text
+    assert reset.json()['token_status']=='REVOKED'
+    assert client.get('/api/v1/me',headers=fresh_headers).status_code==401
+    assert client.post('/api/v1/auth/login',json={
+        'username':'credential.lifecycle','password':'InitialStrongPassw0rd!'}).status_code==401
+    replacement_login=client.post('/api/v1/auth/login',json={
+        'username':'credential.lifecycle','password':'ReplacementStrongPassw0rd!'})
+    assert replacement_login.status_code==200,replacement_login.text
+    replacement_headers={'Authorization':'Bearer '+replacement_login.json()['access_token']}
+    assert client.get('/api/v1/me',headers=replacement_headers).status_code==200
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    audit_types={row[0] for row in db.execute(
+        "SELECT event_type FROM events WHERE payload LIKE ?",
+        ('%'+member_id+'%',)).fetchall()}
+    db.close()
+    assert {'member.account.disabled','member.account.enabled',
+            'member.password.reset'} <= audit_types
