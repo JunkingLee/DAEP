@@ -1,7 +1,7 @@
 """RC38: make the project owner predicate independent of caller RLS visibility."""
 from alembic import op
 
-revision = "0028_rc38_project_lifecycle_rls_fix"
+revision = "0028_rc38_lifecycle_rls_fix"
 down_revision = "0027_rc37_agent_task_assignment"
 branch_labels = None
 depends_on = None
