@@ -129,6 +129,6 @@
   - `f1256da8925305c30f06fa7f30d97cf56e9d15ab` — `fix: serve dashboard static assets`
   - `96f36a3cb897d1f61ae8e937718a35fe3d6a56dd` — `fix: load agent script from static mount`
   - `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` — `test: cover dashboard static asset serving`
-- 验证状态：新增回归测试已提交；当前 HEAD `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` 的 CI run `45141300034` 查询时为 `in_progress`。尚未宣称 CI 通过；本环境本轮未直接运行 pytest。
+- 验证状态：新增回归测试已提交；静态资源代码与回归测试提交 HEAD `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` 的 CI run `45141300034` 已完成并通过：Python 3.11/3.12/3.13 测试、Compile、Dashboard JavaScript 检查、PostgreSQL migration/RLS、production compose 和容器构建全部成功。本环境本轮未直接运行 pytest。交接文档随后更新为提交 `c2ccba54bb64f3f5958867670afe6c090d4a7906`，该文档提交自身的 CI run `45141384928` 查询时仍在运行。
 - 之前 HEAD `1113e2c8c67dda026852f68667e644934c99cc69` 的 CI run `45140494166` 已成功，但不覆盖本轮静态资源修改。
 - 下一步唯一任务：等待并核实最新静态资源修复 HEAD 的 CI 最终结果；若失败，按 job 日志修复。
