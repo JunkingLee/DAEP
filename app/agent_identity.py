@@ -106,28 +106,57 @@ def _issue(c, agent_id, timestamp, tenant_id):
 def authenticate_agent_token(conn, raw_token):
     if not raw_token or not raw_token.startswith('daep_at_'):
         raise HTTPException(401,'Invalid Agent token')
-    # PostgreSQL RLS permits the narrow credential lookup context, just as for
-    # member-token authentication. Subsequent project access uses the resolved tenant.
+
+    # Agent credentials live behind tenant RLS in PostgreSQL. Resolve the
+    # credential through a narrowly scoped SECURITY DEFINER function, just as
+    # member credentials do; never rely on an empty-tenant RLS bypass.
     try:
-        from app.main import _auth_lookup_ctx
+        from app.main import (
+            DATABASE_URL, _auth_lookup_ctx, _tenant_ctx, _member_ctx,
+            _agent_ctx, _admin_ctx,
+        )
+        is_postgres=DATABASE_URL.startswith(('postgresql://','postgres://'))
         lookup_reset=_auth_lookup_ctx.set(True)
     except Exception:
+        is_postgres=False
         lookup_reset=None
+
     try:
         with conn() as c:
-            row=c.execute("""SELECT t.id token_id,t.agent_id,a.owner_member_id,a.tenant_id,a.status agent_status,t.status token_status,t.expires_at
-                             FROM agent_tokens t JOIN agents a ON a.id=t.agent_id
-                             WHERE t.token_hash=?""",(_hash(raw_token),)).fetchone()
-            if not row or row['token_status']!='ACTIVE' or row['agent_status']!='ACTIVE':
-                raise HTTPException(401,'Invalid or revoked Agent token')
-            if row['expires_at'] and row['expires_at'] <= now():
-                raise HTTPException(401,'Agent token expired')
-            c.execute("UPDATE agent_tokens SET last_used_at=? WHERE id=?",(now(),row['token_id']))
-            c.execute("UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=?",(now(),now(),row['agent_id']))
-            return dict(row)
+            if is_postgres:
+                row=c.execute(
+                    "SELECT * FROM daep_authenticate_agent_token(?,?)",
+                    (_hash(raw_token),now())
+                ).fetchone()
+            else:
+                row=c.execute("""SELECT t.id token_id,t.agent_id,a.owner_member_id,a.tenant_id,
+                                        a.status agent_status,t.status token_status,t.expires_at
+                                 FROM agent_tokens t JOIN agents a ON a.id=t.agent_id
+                                 WHERE t.token_hash=?""",(_hash(raw_token),)).fetchone()
     finally:
         if lookup_reset is not None:
             _auth_lookup_ctx.reset(lookup_reset)
+
+    if not row or row['token_status']!='ACTIVE' or row['agent_status']!='ACTIVE':
+        raise HTTPException(401,'Invalid or revoked Agent token')
+    if row['expires_at'] and row['expires_at'] <= now():
+        raise HTTPException(401,'Agent token expired')
+
+    # Subsequent reads/writes must run under the resolved Agent tenant. This
+    # is also required by the direct MCP context endpoint, which does not call
+    # the general member/Agent actor resolver first.
+    if '_tenant_ctx' in locals():
+        _tenant_ctx.set(row['tenant_id'])
+        _member_ctx.set(row['owner_member_id'])
+        _agent_ctx.set(row['agent_id'])
+        _admin_ctx.set(False)
+
+    stamp=now()
+    with conn() as c:
+        c.execute("UPDATE agent_tokens SET last_used_at=? WHERE id=?",(stamp,row['token_id']))
+        c.execute("UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=?",
+                  (stamp,stamp,row['agent_id']))
+    return dict(row)
 
 def register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now):
 
