@@ -263,9 +263,16 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
             if not is_admin(a):
                 prow=c.execute("SELECT role FROM project_members WHERE project_id=? AND member_id=?",(project_id,a['id'])).fetchone()
                 if not prow or prow['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
+            # Resolve the Agent inside the caller's tenant before touching
+            # assignments. A project manager may unbind an Agent from their
+            # project, but must never mutate grants for another tenant's Agent.
+            agent=c.execute("SELECT id,tenant_id FROM agents WHERE id=? AND tenant_id=?",
+                (agent_id,project['tenant_id'])).fetchone()
+            if not agent:
+                raise HTTPException(404,'Agent not found')
             active_assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
-                WHERE agent_id=? AND project_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
-                (agent_id,project_id)).fetchall()
+                WHERE agent_id=? AND project_id=? AND tenant_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
+                (agent_id,project_id,project['tenant_id'])).fetchall()
             ts=now()
             for assignment in active_assignments:
                 c.execute("""UPDATE agent_task_assignments
@@ -275,7 +282,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                 event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
                     'assignment_id':assignment['id'],'agent_id':agent_id,
                     'reason':'Agent unbound from project'})
-            c.execute("DELETE FROM agent_project_bindings WHERE agent_id=? AND project_id=?",(agent_id,project_id))
+            c.execute("DELETE FROM agent_project_bindings WHERE agent_id=? AND project_id=? AND tenant_id=?",(agent_id,project_id,project['tenant_id']))
             event(c,'agent.project.unbound',a['id'],None,{'agent_id':agent_id,'project_id':project_id,
                 'revoked_assignment_count':len(active_assignments)})
             return {'status':'UNBOUND','revoked_assignment_count':len(active_assignments)}
