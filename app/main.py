@@ -1057,6 +1057,41 @@ def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunction
         event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
         return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
 
+@app.delete('/api/v1/projects/{pid}/members/{member_id}')
+def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a,write=True)
+        target=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',
+            (pid,member_id)).fetchone()
+        if not target:
+            raise HTTPException(404,'Target is not a project member')
+        if target['role'] in ('owner','manager') and not is_admin(a):
+            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',
+                (pid,a['id'])).fetchone()
+            if not own or own['role']!='owner':
+                raise HTTPException(403,'Only project owners may remove project owners or managers')
+        if target['role']=='owner':
+            owner_count=c.execute("SELECT COUNT(*) AS n FROM project_members WHERE project_id=? AND role='owner'",
+                (pid,)).fetchone()['n']
+            if owner_count<=1:
+                raise HTTPException(409,'A project must retain at least one owner')
+        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        removed_assignments=c.execute("""
+            DELETE FROM assignments
+            WHERE member_id=? AND task_id IN (
+                SELECT t.id FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+                WHERE r.project_id=?
+            )
+        """,(member_id,pid)).rowcount
+        c.execute('DELETE FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id))
+        event(c,'project.member.removed',a['id'],None,{
+            'project_id':pid,'member_id':member_id,'previous_role':target['role'],
+            'removed_assignment_count':removed_assignments
+        },tenant_override=project['tenant_id'])
+        return {'project_id':pid,'member_id':member_id,'removed':True,
+            'previous_role':target['role'],'removed_assignment_count':removed_assignments}
+
 @app.post('/api/v1/projects/{pid}/role-change-requests')
 def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
