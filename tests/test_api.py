@@ -38,6 +38,81 @@ def setup_project_task():
     t=client.post('/api/v1/tasks',headers=ADMIN,json={'requirement_id':r.json()['id'],'title':'Implement API','assignee_member_ids':[mid]}); assert t.status_code==200
     return pid,mid,token,t.json()['id']
 
+
+def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Agent Human Governance Boundary'}).json()
+    pid=project['id']
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'Reviewer Agent Owner'})
+    assert owner.status_code==200,owner.text
+    owner_body=owner.json()
+    owner_headers={'Authorization':'Bearer '+owner_body['token']}
+    added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':owner_body['id'],'role':'reviewer'})
+    assert added.status_code==200,added.text
+
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid,'title':'Human acceptance required',
+        'acceptance_criteria':['Implementation verified']})
+    assert req.status_code==200,req.text
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req.json()['id'],'title':'Governed task'})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Reviewer Owner Agent','description':'Must never inherit reviewer authority'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; raw_token=created.json()['token']
+    ah={'Authorization':'Bearer '+raw_token}
+    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'reviewer','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent['id']})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
+    assert accepted.status_code==200,accepted.text
+
+    # An Agent cannot use its owner's reviewer membership to self-close work.
+    progress_100=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':100})
+    assert progress_100.status_code==409,progress_100.text
+    close=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=ah,json={'target_stage':'DONE'})
+    assert close.status_code==403,close.text
+    artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/governance-proof',
+        'commit_sha':'governance-proof','metadata':{'verified':True}})
+    assert artifact.status_code==200,artifact.text
+    admin_progress=client.post(f'/api/v1/tasks/{tid}/progress',headers=ADMIN,json={'progress':100})
+    assert admin_progress.status_code==200,admin_progress.text
+    self_review=client.post(f'/api/v1/tasks/{tid}/review',headers=ah,json={'decision':'APPROVE'})
+    assert self_review.status_code==403,self_review.text
+    human_review=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert human_review.status_code==200,human_review.text
+    self_acceptance=client.post(f"/api/v1/requirements/{req.json()['id']}/acceptance",
+        headers=ah,json={'decision':'APPROVE','verified_criteria':[0]})
+    assert self_acceptance.status_code==403,self_acceptance.text
+
+    # Disabling the Agent itself revokes its credential and active task grant.
+    disabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
+        'name':agent['name'],'description':agent['description'],'status':'DISABLED'})
+    assert disabled.status_code==200,disabled.text
+    assert client.get('/api/v1/mcp/context',headers=ah).status_code==401
+    with main_module.conn() as c:
+        state=c.execute("SELECT status FROM agent_task_assignments WHERE id=?",(assignment_id,)).fetchone()
+        token_state=c.execute("SELECT status FROM agent_tokens WHERE agent_id=?",(agent['id'],)).fetchone()
+    assert state['status']=='REVOKED'
+    assert token_state['status']=='REVOKED'
+
+    reenabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
+        'name':agent['name'],'description':agent['description'],'status':'ACTIVE'})
+    assert reenabled.status_code==200,reenabled.text
+    assert client.get('/api/v1/mcp/context',headers=ah).status_code==401
+    assert client.get('/api/v1/agents/me/tasks',headers=ah).status_code==401
+
+
 def test_agent_task_assignment_is_identity_scoped_and_revocable():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
