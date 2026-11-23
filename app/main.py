@@ -1959,7 +1959,8 @@ def validate_artifact_quality_policy(raw, allow_stage_overrides=True):
         stage_key = str(stage).strip().upper()
         if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,39}',stage_key):
             raise HTTPException(422,'Invalid workflow stage key in stage_overrides')
-        clean_overrides[stage_key] = validate_artifact_quality_policy(override,allow_stage_overrides=False)
+        validated_override=validate_artifact_quality_policy(override,allow_stage_overrides=False)
+        clean_overrides[stage_key] = {k:validated_override[k] for k in QUALITY_POLICY_FIELDS if k in override}
     policy['stage_overrides'] = clean_overrides
     return policy
 
