@@ -232,3 +232,23 @@ def test_rc32_product_planning_guard_is_scoped_and_does_not_grant_governance():
     assert "project['status']=='CLOSED'" in helper
     assert "row['role'] not in ('owner','manager') and row['work_function']!='product'" in helper
     assert "Agent cannot create project requirements or tasks" in helper
+
+
+def test_rc41_member_auth_and_lifecycle_require_fresh_credentials_after_enable():
+    actor_block=MAIN.split("def actor(authorization):",1)[1].split("def is_admin",1)[0]
+    assert "password_status='ACTIVE'" in actor_block
+    enable_block=MAIN.split("@app.post('/api/v1/members/{member_id}/enable')",1)[1].split("@app.post('/api/v1/members/{member_id}/reset-password')",1)[0]
+    assert "token_status='REVOKED'" in enable_block
+    assert "'token_status':'REVOKED'" in enable_block
+    migration=(ROOT / "alembic" / "versions" / "0031_rc41_member_auth_status.py").read_text(encoding="utf-8")
+    assert "m.password_status = 'ACTIVE'" in migration
+    assert "0030_rc40_agent_assignment" in migration
+
+
+def test_rc41_project_member_removal_and_role_change_ui_contract():
+    assert "@app.delete('/api/v1/projects/{pid}/members/{member_id}')" in MAIN
+    assert "project.member.removed" in MAIN
+    assert "Use a project role-change request to change an existing member role" in MAIN
+    ui=(ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert "removeProjectMember" in ui
+    assert "/role-change-requests" in ui
