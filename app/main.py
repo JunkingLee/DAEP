@@ -238,7 +238,10 @@ def init():
             schema=schema.replace('CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY','CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY')
             for stmt in [x.strip() for x in schema.split(';') if x.strip()]: c.execute(stmt)
         else: c.executescript(schema)
-        if not DATABASE_URL.startswith(('postgresql://','postgres://')):\n            artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}\n            if 'quality_policy_snapshot' not in artifact_version_cols:\n                c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')\n        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
+        if not DATABASE_URL.startswith(('postgresql://','postgres://')):
+            artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}
+            if 'quality_policy_snapshot' not in artifact_version_cols:
+                c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')\n        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
         # Versioned, additive schema ledger. Existing RC databases are baselined without destructive changes.
         c.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
         c.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES('0005-rc5-baseline',?)",(now(),))
@@ -1980,9 +1983,9 @@ def artifact_quality_policy_snapshot(c, project_id, stage):
             'policy_updated_at':record.get('updated_at'),'policy_source':record.get('source')}
 
 def enforce_required_artifact_types(c, task_id, quality_report=None):
-    snapshot=(quality_report or {}).get('policy_snapshot') if isinstance(quality_report,dict) else None
-    if isinstance(snapshot,dict):
-        policy=snapshot.get('policy') or {}
+    if isinstance(quality_report,dict):
+        snapshot=quality_report.get('policy_snapshot')
+        policy=(snapshot.get('policy') or {}) if isinstance(snapshot,dict) else dict(DEFAULT_ARTIFACT_QUALITY_POLICY)
     else:
         project_id=task_project(c,task_id)
         policy=project_artifact_quality_policy(c,project_id)['policy'] if project_id else {}
@@ -2117,6 +2120,8 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         if decision=='APPROVE' and task_approval_quality and task_approval_quality['status']=='FAIL':
             raise HTTPException(409,detail={'message':'Artifact quality gate failed; task approval is blocked','artifact_version_id':latest_version['id'],'quality':task_approval_quality})
         if decision=='APPROVE':
+            enforce_required_artifact_types(c,tid,task_approval_quality if latest_version else None)
+        if decision=='APPROVE':
             enforce_workflow_exit(c,pid,task['status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
             packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
@@ -2186,6 +2191,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             selected_quality=artifact_version_quality(c,selected_version['id'])
             if selected_quality and selected_quality['status']=='FAIL':
                 raise HTTPException(409,detail={'message':'Artifact quality gate failed; work package approval is blocked','artifact_version_id':selected_version['id'],'quality':selected_quality})
+            enforce_required_artifact_types(c,package['child_task_id'],selected_quality)
             if selected_version['review_status']=='REJECTED':
                 raise HTTPException(409,'The selected artifact version was rejected; submit a new version')
             status='DONE'; progress=100
