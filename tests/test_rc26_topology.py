@@ -130,3 +130,14 @@ def test_task_timeline_distinguishes_agent_actor_identity():
     html = (ROOT / "web" / "index.html").read_text()
     assert "payload.actor_type==='AGENT'" in html
     assert "'Agent · '+(payload.agent_id||'未知身份')" in html
+
+
+
+def test_product_workbench_exposes_only_supported_requirement_and_task_creation():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "function canCreateWorkItems()" in html
+    assert "return isManager()||selectedWorkFunction==='product'" in html
+    assert "toggle('role-hidden',!canCreateWorkItems())" in html
+    assert "toggle('role-hidden',closed||!canCreateWorkItems())" in html
+    assert "function openCreateRequirement(){if(!canCreateWorkItems())" in html
+    assert "function openCreateTask(){if(!canCreateWorkItems())" in html
