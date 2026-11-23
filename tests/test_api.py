@@ -1347,7 +1347,7 @@ def test_rc26_stage7_requirement_acceptance_requires_all_criteria_tasks_and_arti
     db.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(task['id'],))
     db.execute("INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)",
         ('art_acceptance',task['id'],'TEST_REPORT','https://example.invalid/report',None,'{}','2026-01-01T00:00:00+00:00','tenant-default'))
-        db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+    db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         ('av_acceptance','art_acceptance',task['id'],1,'MEMBER',m['id'],'tenant-default','APPROVED','Evidence reviewed','member-admin','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00'))
     db.commit(); db.close()
     report=client.get(f"/api/v1/requirements/{req['id']}/acceptance-report",headers=ADMIN).json()
@@ -2458,7 +2458,7 @@ def test_rc33_release_decision_is_manager_scoped_and_project_bound():
         ('rc33_release_artifact',tid,'TEST_REPORT',
          'https://example.invalid/rc33-report','rc33-release','{}',
          '2026-01-01T00:00:00+00:00','tenant-default'))
-        db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+    db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         ('av_rc33_release','rc33_release_artifact',tid,1,'MEMBER',developer['id'],'tenant-default','APPROVED','Release evidence approved',reviewer['id'],'2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00'))
     db.commit()
     db.close()
@@ -2543,7 +2543,7 @@ def test_rc34_project_closure_blocks_incomplete_delivery_and_freezes_writes():
         "VALUES(?,?,?,?,?,?,?,?)",
         ('rc34_closure_artifact',tid,'TEST_REPORT','https://example.invalid/rc34','rc34','{}',
          '2026-01-01T00:00:00+00:00','tenant-default'))
-        db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+    db.execute("INSERT INTO artifact_versions(id,artifact_id,task_id,version_number,actor_type,actor_member_id,tenant_id,review_status,review_comment,reviewed_by_member_id,reviewed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         ('av_rc34_closure','rc34_closure_artifact',tid,1,'MEMBER',manager['id'],'tenant-default','APPROVED','Closure evidence approved','member-admin','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00'))
     db.commit(); db.close()
 
