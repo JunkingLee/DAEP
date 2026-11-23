@@ -25,6 +25,7 @@ async def tenant_context(request, call_next):
     tok=token[7:] if token.startswith('Bearer ') else ''
     reset_tenant=_tenant_ctx.set('')
     reset_member=_member_ctx.set('')
+    reset_agent=_agent_ctx.set('')
     reset_lifecycle=_lifecycle_action_ctx.set('')
     reset_admin=_admin_ctx.set(False)
     reset_service=_service_ctx.set(False)
@@ -45,7 +46,7 @@ async def tenant_context(request, call_next):
     try:
         return await call_next(request)
     finally:
-        _tenant_ctx.reset(reset_tenant); _member_ctx.reset(reset_member); _lifecycle_action_ctx.reset(reset_lifecycle); _admin_ctx.reset(reset_admin); _service_ctx.reset(reset_service)
+        _tenant_ctx.reset(reset_tenant); _member_ctx.reset(reset_member); _agent_ctx.reset(reset_agent); _lifecycle_action_ctx.reset(reset_lifecycle); _admin_ctx.reset(reset_admin); _service_ctx.reset(reset_service)
 
 @app.middleware('http')
 async def security_headers(request, call_next):
