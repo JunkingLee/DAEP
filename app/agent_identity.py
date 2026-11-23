@@ -238,9 +238,22 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
             if not is_admin(a):
                 prow=c.execute("SELECT role FROM project_members WHERE project_id=? AND member_id=?",(project_id,a['id'])).fetchone()
                 if not prow or prow['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
+            active_assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
+                WHERE agent_id=? AND project_id=? AND status IN ('ASSIGNED','ACCEPTED')""",
+                (agent_id,project_id)).fetchall()
+            ts=now()
+            for assignment in active_assignments:
+                c.execute("""UPDATE agent_task_assignments
+                    SET status='REVOKED',revoked_at=?,updated_at=?
+                    WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",
+                    (ts,ts,assignment['id']))
+                event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
+                    'assignment_id':assignment['id'],'agent_id':agent_id,
+                    'reason':'Agent unbound from project'})
             c.execute("DELETE FROM agent_project_bindings WHERE agent_id=? AND project_id=?",(agent_id,project_id))
-            event(c,'agent.project.unbound',a['id'],None,{'agent_id':agent_id,'project_id':project_id})
-            return {'status':'UNBOUND'}
+            event(c,'agent.project.unbound',a['id'],None,{'agent_id':agent_id,'project_id':project_id,
+                'revoked_assignment_count':len(active_assignments)})
+            return {'status':'UNBOUND','revoked_assignment_count':len(active_assignments)}
 
     @app.get('/api/v1/mcp/context')
     def mcp_context(authorization: str = Header(default='')):
