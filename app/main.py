@@ -1892,9 +1892,23 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
+        begin_serialized_write(c)
         require_task_access(c,tid,a,assigned_only=True)
-        c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
-    return {'id':aid,'task_id':tid}
+        task_sql='SELECT id FROM tasks WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
+        if not c.execute(task_sql,(tid,)).fetchone(): raise HTTPException(404,'Task not found')
+        tenant=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id']
+        wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone()
+        version_number=int(c.execute('SELECT COALESCE(MAX(version_number),0)+1 AS n FROM artifact_versions WHERE task_id=?',(tid,)).fetchone()['n'])
+        version_id='av_'+uuid.uuid4().hex[:24]
+        submitted_at=now()
+        actor_type='AGENT' if a.get('actor_type')=='AGENT' else 'MEMBER'
+        actor_member_id=None if actor_type=='AGENT' else a['id']
+        agent_id=a.get('agent_id') if actor_type=='AGENT' else None
+        c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),submitted_at,tenant))
+        c.execute('INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(version_id,aid,tid,wp['id'] if wp else None,version_number,actor_type,actor_member_id,agent_id,tenant,'PENDING',submitted_at))
+        event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'artifact_version_id':version_id,'version_number':version_number,'actor_type':actor_type,'agent_id':agent_id,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
+    return {'id':aid,'task_id':tid,'artifact_version_id':version_id,'version_number':version_number,'review_status':'PENDING'}
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
