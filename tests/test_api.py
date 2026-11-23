@@ -1476,14 +1476,21 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     assert timeline.status_code==200
     trace=timeline.json()
     assert len(trace['work_packages'])==2
-    # The message is attached to the parent task; inbox delivery and ACK are
-    # asserted above. This timeline currently aggregates child-package messages.
     assert {item['artifact']['commit_sha'] for item in trace['items'] if item.get('kind')=='artifact'} >= {'api-e2e-commit','tests-e2e-commit'}
 
     parent_artifact=client.post(f'/api/v1/tasks/{parent_id}/artifacts',headers=owner_h,json={
         'artifact_type':'delivery_bundle','uri':'https://example.invalid/checkout-delivery',
         'commit_sha':'delivery-e2e-commit','metadata':{'child_artifacts':2}})
     assert parent_artifact.status_code==200,parent_artifact.text
+    # The parent timeline must include coordination messages and its own final bundle,
+    # not only events/artifacts attached to child work packages.
+    complete_timeline=client.get(f'/api/v1/tasks/{parent_id}/work-timeline',headers=owner_h)
+    assert complete_timeline.status_code==200
+    timeline_items=complete_timeline.json()['items']
+    assert any(item.get('kind')=='message' and item.get('message_id')==coordination.json()['id']
+               for item in timeline_items)
+    assert any(item.get('kind')=='artifact' and item.get('artifact',{}).get('commit_sha')=='delivery-e2e-commit'
+               for item in timeline_items)
     closed=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={
         'decision':'APPROVE','comment':'Both member deliveries accepted'})
     assert closed.status_code==200 and closed.json()['status']=='DONE'
