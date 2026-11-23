@@ -154,10 +154,11 @@ def test_web_password_login_change_password_and_logout_session_lifecycle():
     new_password_login=client.post('/api/v1/auth/login',json={
         'username':username,'password':new_password})
     assert new_password_login.status_code==200
+    latest_headers={'Authorization':'Bearer '+new_password_login.json()['access_token']}
 
-    logout=client.post('/api/v1/auth/logout',headers=rotated_headers)
+    logout=client.post('/api/v1/auth/logout',headers=latest_headers)
     assert logout.status_code==200 and logout.json()['logged_out'] is True
-    assert client.get('/api/v1/me',headers=rotated_headers).status_code==401
+    assert client.get('/api/v1/me',headers=latest_headers).status_code==401
 
 
 def test_project_requirement_task_message_flow():
