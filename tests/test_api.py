@@ -2566,3 +2566,100 @@ def test_rc35_sqlite_upgrade_adds_active_project_status():
         assert 'status' in cols and status=='ACTIVE'
     finally:
         module.DB=old_db
+
+
+def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC9 Agent Lifecycle A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC9 Agent Lifecycle B'}).json()
+    pid_a,pid_b=project_a['id'],project_b['id']
+
+    req_a=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_a,'title':'RC9 Agent lifecycle requirement'}).json()
+    task_a=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req_a['id'],'title':'RC9 Agent lifecycle task'}).json()
+    tid_a=task_a['id']
+
+    req_b=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid_b,'title':'RC9 Agent isolation requirement'}).json()
+    task_b=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':req_b['id'],'title':'RC9 Agent isolation task'}).json()
+    tid_b=task_b['id']
+
+    created=client.post('/api/v1/agents',headers=ADMIN,json={
+        'name':'RC9 lifecycle Agent','description':'unbind/rebind regression'})
+    assert created.status_code==200,created.text
+    agent=created.json()
+    agent_id=agent['agent']['id']
+    agent_h={'Authorization':'Bearer '+agent['token']}
+
+    # A task may only be assigned when the Agent is actively bound to the
+    # target project; binding to another project is not sufficient.
+    assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid_b,'role':'member','work_function':'developer'}).status_code==200
+    cross=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent_id})
+    assert cross.status_code==409,cross.text
+
+    # Once bound to the target project, assignment and acceptance establish
+    # the execution grant independently from the project binding itself.
+    assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid_a,'role':'member','work_function':'developer'}).status_code==200
+    assigned=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent_id})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=agent_h)
+    assert accepted.status_code==200,accepted.text
+
+    # Execution is attributable to the Agent identity, never to the owner's
+    # human member row.
+    artifact=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent',
+        'commit_sha':'rc9-agent-audit','metadata':{'source':'agent'}})
+    assert artifact.status_code==200,artifact.text
+    audit=client.get(f'/api/v1/projects/{pid_a}/audit',headers=ADMIN)
+    assert audit.status_code==200,audit.text
+    submitted=[x for x in audit.json()['items'] if x['event_type']=='artifact.submitted'
+               and x['task_id']==tid_a]
+    assert submitted
+    assert submitted[0]['actor_member_id'] is None
+    assert submitted[0]['payload']['actor_type']=='AGENT'
+    assert submitted[0]['payload']['agent_id']==agent_id
+
+    # Unbinding is a security revocation boundary: accepted execution grants
+    # are revoked immediately and must not be resurrected by a later rebind.
+    unbound=client.delete(f'/api/v1/agents/{agent_id}/projects/{pid_a}',headers=ADMIN)
+    assert unbound.status_code==200,unbound.text
+    assert unbound.json()['revoked_assignment_count']==1
+
+    mine=client.get('/api/v1/agents/me/tasks',headers=agent_h)
+    assert mine.status_code==200 and mine.json()['items']==[]
+    denied=client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h)
+    assert denied.status_code==403,denied.text
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    status=db.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()[0]
+    db.close()
+    assert status=='REVOKED'
+
+    rebound=client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid_a,'role':'member','work_function':'developer'})
+    assert rebound.status_code==200,rebound.text
+    mine_again=client.get('/api/v1/agents/me/tasks',headers=agent_h)
+    assert mine_again.status_code==200 and mine_again.json()['items']==[]
+    still_denied=client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h)
+    assert still_denied.status_code==403,still_denied.text
+
+    # Rebinding restores project visibility only; it does not resurrect the
+    # revoked task grant.
+    rows=client.get(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN)
+    assert rows.status_code==200
+    restored=[x for x in rows.json()['items'] if x['id']==assignment_id]
+    assert restored and restored[0]['status']=='REVOKED'
+
+    # The Agent can be newly assigned after the explicit rebind, proving that
+    # a new execution grant is required.
+    reassigned=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent_id})
+    assert reassigned.status_code==200,reassigned.text
+    assert reassigned.json()['id']!=assignment_id
