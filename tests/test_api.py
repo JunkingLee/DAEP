@@ -82,6 +82,56 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
 
 
 
+
+def test_agent_unbind_revokes_assignments_and_rebind_does_not_restore_access():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    project_id,_,_,task_id=setup_project_task()
+    created=client.post('/api/v1/agents',headers=ADMIN,json={
+        'name':'Unbind Revocation Agent','description':'Binding removal revokes task grants'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; token=created.json()['token']
+    agent_headers={'Authorization':'Bearer '+token}
+
+    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':project_id,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{task_id}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent['id']})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',
+        headers=agent_headers,json={})
+    assert accepted.status_code==200,accepted.text
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==200
+
+    # A bound Agent cannot inspect unrelated tasks in the same project.
+    other_project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Unbound Agent Project'})
+    assert other_project.status_code==200,other_project.text
+    other_requirement=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':other_project.json()['id'],'title':'Private requirement'})
+    assert other_requirement.status_code==200,other_requirement.text
+    other_task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':other_requirement.json()['id'],'title':'Unassigned task'})
+    assert other_task.status_code==200,other_task.text
+    assert client.get(f"/api/v1/tasks/{other_task.json()['id']}",headers=agent_headers).status_code==403
+
+    unbound=client.delete(f"/api/v1/agents/{agent['id']}/projects/{project_id}",headers=ADMIN)
+    assert unbound.status_code==200,unbound.text
+    assert unbound.json()['revoked_assignment_count']==1
+    with main_module.conn() as c:
+        state=c.execute("SELECT status FROM agent_task_assignments WHERE id=?",(assignment_id,)).fetchone()
+    assert state['status']=='REVOKED'
+
+    rebound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':project_id,'role':'member','work_function':'developer'})
+    assert rebound.status_code==200,rebound.text
+    assert client.get('/api/v1/agents/me/tasks',headers=agent_headers).json()['items']==[]
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==403
+    assert client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,
+        json={'progress':40,'note':'Must remain revoked'}).status_code==403
+
+
 def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
