@@ -3670,3 +3670,60 @@ def test_quality_dashboard_reads_do_not_create_additional_risk_occurrences():
     assert db.execute('SELECT COUNT(*) FROM project_risk_events WHERE project_id=?',(pid,)).fetchone()[0]==1
     assert db.execute('SELECT COUNT(*) FROM project_risk_occurrences WHERE project_id=?',(pid,)).fetchone()[0]==1
     db.close()
+
+
+def test_project_quality_risk_list_detail_and_remediation_workflow():
+    pid, owner_id, owner_token, tid = setup_project_task()
+    headers={'Authorization':'Bearer '+owner_token}
+    submitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json={
+        'artifact_type':'document','uri':'invalid-uri','metadata':{}})
+    assert submitted.status_code==200,submitted.text
+    risk_id=submitted.json()['quality_risks'][0]['risk_id']
+
+    listed=client.get(f'/api/v1/projects/{pid}/risks',headers=headers)
+    assert listed.status_code==200,listed.text
+    assert listed.json()['total']==1
+    assert listed.json()['items'][0]['id']==risk_id
+
+    detail=client.get(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=headers)
+    assert detail.status_code==200,detail.text
+    assert len(detail.json()['occurrences'])==1
+    assert any(x['event_type']=='project.quality_risk.created' for x in detail.json()['audit_events'])
+
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'Quality Risk Manager'}).json()
+    added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'})
+    assert added.status_code==200,added.text
+    manager_headers={'Authorization':'Bearer '+manager['token']}
+    updated=client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=manager_headers,json={
+        'assignee_member_id':manager['id'],'due_at':'2026-12-01T10:00:00+00:00',
+        'status':'IN_PROGRESS','resolution_note':'正在整改'})
+    assert updated.status_code==200,updated.text
+    assert updated.json()['risk']['assignee_member_id']==manager['id']
+    assert updated.json()['risk']['status']=='IN_PROGRESS'
+    assert updated.json()['risk']['due_at']=='2026-12-01T10:00:00+00:00'
+
+    resolved=client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=manager_headers,json={
+        'status':'RESOLVED','resolution_note':'已修复并重新提交'})
+    assert resolved.status_code==200,resolved.text
+    assert resolved.json()['risk']['status']=='RESOLVED'
+    assert resolved.json()['risk']['resolved_at']
+
+    invalid=client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=manager_headers,json={
+        'status':'DISMISSED'})
+    assert invalid.status_code==422
+
+
+def test_project_quality_risk_api_enforces_project_scope_and_manager_permissions():
+    pid, owner_id, owner_token, tid = setup_project_task()
+    other_pid, _, other_token, _ = setup_project_task()
+    headers={'Authorization':'Bearer '+owner_token}
+    submitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json={
+        'artifact_type':'document','uri':'bad-uri','metadata':{}})
+    assert submitted.status_code==200,submitted.text
+    risk_id=submitted.json()['quality_risks'][0]['risk_id']
+    outsider={'Authorization':'Bearer '+other_token}
+    assert client.get(f'/api/v1/projects/{pid}/risks',headers=outsider).status_code==403
+    assert client.get(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=outsider).status_code==403
+    assert client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=headers,json={
+        'status':'IN_PROGRESS'}).status_code==403
