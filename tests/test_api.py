@@ -2663,3 +2663,38 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
         'agent_id':agent_id})
     assert reassigned.status_code==200,reassigned.text
     assert reassigned.json()['id']!=assignment_id
+
+
+def test_agent_assignment_active_uniqueness_and_state_machine():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid,_,_,tid=setup_project_task()
+    created=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Assignment State Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; agent_token=created.json()['token']
+    assert client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'}).status_code==200
+    first=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent['id']})
+    assert first.status_code==200,first.text
+    assignment_id=first.json()['id']
+    duplicate=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent['id']})
+    assert duplicate.status_code==409,duplicate.text
+
+    ah={'Authorization':'Bearer '+agent_token}
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
+    assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    accepted_again=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
+    assert accepted_again.status_code==200 and accepted_again.json()['status']=='ACCEPTED'
+
+    revoked=client.post(f'/api/v1/agent-assignments/{assignment_id}/revoke',headers=ADMIN,json={'reason':'state machine test'})
+    assert revoked.status_code==200 and revoked.json()['status']=='REVOKED'
+    revoke_again=client.post(f'/api/v1/agent-assignments/{assignment_id}/revoke',headers=ADMIN,json={'reason':'duplicate revoke'})
+    assert revoke_again.status_code==409,revoke_again.text
+
+    second=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent['id']})
+    assert second.status_code==200,second.text
+    assert second.json()['id']!=assignment_id
+
+    with main_module.conn() as c:
+        indexes=c.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_agent_task_assignments_active'").fetchall()
+    assert indexes
