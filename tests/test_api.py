@@ -3527,7 +3527,7 @@ def test_workflow_transition_enforces_stage_quality_policy_and_dashboard_reports
         'min_coverage_percent':None,'max_failed_tests':None,
         'required_artifact_types':[],'require_commit_sha':False,
         'require_test_report':False,
-        'stage_overrides':{'REVIEW':{'min_coverage_percent':90,'require_test_report':True}}
+        'stage_overrides':{'READY':{'min_coverage_percent':90,'require_test_report':True},'REVIEW':{'min_coverage_percent':90,'require_test_report':True}}
     }
     configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json=policy)
     assert configured.status_code==200,configured.text
