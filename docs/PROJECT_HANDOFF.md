@@ -160,8 +160,8 @@
 - 提交：
   - `9bb7d11a9c1e585cce09553292e77227622036a0` — `test: add Playwright Agent lifecycle browser E2E`
   - `d970bcee7c4a17b468f9f6a1f68217c62fc0a78e` — `ci: run Agent lifecycle Playwright browser E2E`
-- 当前分支 HEAD：`7d3b939f28d2bb07994fc71ebf156db62984fb66`。
-- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143257668` 已成功完成 Python 3.11/3.12/3.13、migration、production-compose、container-build，但浏览器测试在页面初始化竞态处失败：app-shell 刚显示时项目异步初始化尚未结束，测试过早切换到 Agent 页面，随后初始化完成又切回 overview，导致创建按钮不可见。已在 `7d3b939f28d2bb07994fc71ebf156db62984fb66` 中等待 `#overview.page.active` 后再切换，并明确等待 Agent 页面及创建按钮可见。该修复后的浏览器测试尚未运行；当前不得宣称浏览器 E2E 已通过。
+- 当前分支 HEAD：`4888c7e66b6bf2c0ded48dc78364946840c65479`。
+- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143257668` 已成功完成 Python 3.11/3.12/3.13、migration、production-compose、container-build，但浏览器测试在页面初始化竞态处失败：app-shell 刚显示时项目异步初始化尚未结束，测试过早切换到 Agent 页面，随后初始化完成又切回 overview，导致创建按钮不可见。已在 `7d3b939f28d2bb07994fc71ebf156db62984fb66` 中等待 `#overview.page.active` 后再切换，并明确等待 Agent 页面及创建按钮可见。第二次 CI run `45143609777` 的登录、项目初始化、创建/编辑、Token 轮换、绑定和解绑步骤已运行通过；随后在解绑后的 Token 撤销步骤失败。原因是前端 `unbindAgentProject()` 会在解绑后重新打开并刷新详情弹窗，测试没有关闭这个弹窗便尝试再次点击卡片上的“管理”，点击被弹窗遮挡。已在 `4888c7e66b6bf2c0ded48dc78364946840c65479` 中显式关闭刷新后的详情弹窗，再继续验证 Token 撤销。此修复尚未执行 CI；当前仍不得宣称浏览器 E2E 已通过。
 - 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
-- 下一步唯一任务：检查包含页面初始化竞态修复的最新 CI run，确认 browser-e2e 真实点击流程是否通过；若失败，依据失败步骤继续修复 harness 或 UI/API，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
+- 下一步唯一任务：检查包含解绑后关闭详情弹窗修复的最新 CI run，确认 Token 撤销及完整浏览器流程是否通过；若失败，依据失败步骤继续修复 harness 或 UI/API，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
 
