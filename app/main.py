@@ -1,5 +1,5 @@
 import os, json, sqlite3, uuid, asyncio, hashlib, base64, secrets, urllib.parse, urllib.request, time, contextvars, hmac, re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Cookie, Request
@@ -2116,38 +2116,64 @@ def get_project_artifact_quality_policy(pid:str,authorization:str=Header(None)):
                 'updated_at':record['updated_at'],'source':record['source']}
 
 @app.get('/api/v1/projects/{pid}/quality-dashboard')
-def project_artifact_quality_dashboard(pid:str,authorization:str=Header(None)):
+def project_artifact_quality_dashboard(pid:str,days:int=30,authorization:str=Header(None)):
     a=actor(authorization)
+    if days not in (7,30,90):
+        raise HTTPException(422,'days must be one of 7, 30, or 90')
+    cutoff=(datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
     with conn() as c:
         require_project_access(c,pid,a)
         rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,v.created_at,
+            v.actor_type,v.actor_member_id,v.agent_id,
+            COALESCE(m.name,'') AS member_name,COALESCE(ag.name,'') AS agent_name,
             a.artifact_type,a.uri,a.commit_sha,a.metadata,t.id AS task_id,t.title AS task_title
             FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
             JOIN tasks t ON t.id=v.task_id JOIN requirements r ON r.id=t.requirement_id
-            WHERE r.project_id=? AND v.version_number=(
+            LEFT JOIN members m ON m.id=v.actor_member_id
+            LEFT JOIN agents ag ON ag.id=v.agent_id
+            WHERE r.project_id=? AND v.created_at>=? AND v.version_number=(
                 SELECT MAX(v2.version_number) FROM artifact_versions v2
                 JOIN artifacts a2 ON a2.id=v2.artifact_id
-                WHERE v2.task_id=v.task_id AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
-            ORDER BY v.created_at DESC""",(pid,)).fetchall()
+                WHERE v2.task_id=v.task_id
+                  AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
+            ORDER BY v.created_at DESC""",(pid,cutoff)).fetchall()
         totals={'PASS':0,'FAIL':0,'NEEDS_REVIEW':0}
-        trend={}
-        failures=[]; task_ids=set()
+        trend={}; failures=[]; task_ids=set()
+        dimensions={
+            'task':{},'artifact_type':{},'agent':{},'member':{}
+        }
+        def add_dimension(bucket,key,status):
+            key=str(key or '未归属')
+            item=bucket.setdefault(key,{'key':key,'PASS':0,'FAIL':0,'NEEDS_REVIEW':0,'total':0})
+            item[status]=item.get(status,0)+1
+            item['total']+=1
         for raw in rows:
             item=dict(raw); task_ids.add(item['task_id'])
             report=artifact_version_quality(c,item['version_id']) or {'status':'NEEDS_REVIEW','score':0,'checks':[]}
             status=report.get('status','NEEDS_REVIEW')
-            totals[status]=totals.get(status,0)+1
+            if status not in totals: status='NEEDS_REVIEW'
+            totals[status]+=1
             day=str(item.get('created_at') or '')[:10] or 'unknown'
             trend.setdefault(day,{'date':day,'pass':0,'fail':0,'needs_review':0})
-            trend[day][{'PASS':'pass','FAIL':'fail','NEEDS_REVIEW':'needs_review'}.get(status,'needs_review')]+=1
+            trend[day][{'PASS':'pass','FAIL':'fail','NEEDS_REVIEW':'needs_review'}[status]]+=1
+            add_dimension(dimensions['task'],item['task_id']+' · '+item['task_title'],status)
+            add_dimension(dimensions['artifact_type'],item['artifact_type'],status)
+            add_dimension(dimensions['agent'],item['agent_name'] or ('Agent '+item['agent_id'] if item['agent_id'] else '非 Agent 提交'),status)
+            add_dimension(dimensions['member'],item['member_name'] or ('成员 '+item['actor_member_id'] if item['actor_member_id'] else '非成员提交'),status)
             if status=='FAIL':
                 failures.append({'task_id':item['task_id'],'task_title':item['task_title'],
                     'artifact_version_id':item['version_id'],'artifact_type':item['artifact_type'],
-                    'version_number':item['version_number'],'failed_checks':report.get('failed_checks',0)})
-        return {'project_id':pid,'task_count':len(task_ids),'artifact_version_count':len(rows),
-            'quality_totals':totals,'pass_rate':round(100*totals['PASS']/len(rows),1) if rows else None,
-            'daily_trend':sorted(trend.values(),key=lambda x:x['date'])[-30:],
-            'recent_failures':failures[:20]}
+                    'version_number':item['version_number'],'failed_checks':report.get('failed_checks',0),
+                    'actor_type':item['actor_type'],'agent_id':item['agent_id'],'agent_name':item['agent_name'],
+                    'member_id':item['actor_member_id'],'member_name':item['member_name'],
+                    'created_at':item['created_at']})
+        breakdowns={name:sorted(values.values(),key=lambda x:(-x['FAIL'],-x['total'],x['key']))
+                    for name,values in dimensions.items()}
+        return {'project_id':pid,'days':days,'since':cutoff,'task_count':len(task_ids),
+            'artifact_version_count':len(rows),'quality_totals':totals,
+            'pass_rate':round(100*totals['PASS']/len(rows),1) if rows else None,
+            'daily_trend':sorted(trend.values(),key=lambda x:x['date']),
+            'breakdowns':breakdowns,'recent_failures':failures[:50]}
 
 
 @app.put('/api/v1/projects/{pid}/quality-policy')
