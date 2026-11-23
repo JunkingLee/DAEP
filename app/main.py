@@ -843,8 +843,27 @@ def disable_member(member_id:str,authorization:str=Header(None)):
         if not target: raise HTTPException(404,'Member not found')
         stamp=now()
         c.execute("UPDATE members SET password_status='DISABLED',token_status='REVOKED',token_revoked_at=? WHERE id=?",(stamp,member_id))
-        event(c,'member.account.disabled',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED'}
+        owned_agents=c.execute("SELECT id FROM agents WHERE owner_member_id=? AND tenant_id=? AND status='ACTIVE'",
+            (member_id,target['tenant_id'])).fetchall()
+        for agent_row in owned_agents:
+            agent_id=agent_row['id']
+            c.execute("UPDATE agents SET status='DISABLED',updated_at=? WHERE id=?",(stamp,agent_id))
+            c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",
+                (stamp,agent_id))
+            assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
+                WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
+            for assignment in assignments:
+                c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+                    WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(stamp,stamp,assignment['id']))
+                event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
+                    'assignment_id':assignment['id'],'agent_id':agent_id,
+                    'reason':'Agent owner account disabled'},tenant_override=target['tenant_id'])
+            event(c,'agent.owner_account_disabled',a['id'],None,{'agent_id':agent_id,
+                'revoked_assignment_count':len(assignments)},tenant_override=target['tenant_id'])
+        event(c,'member.account.disabled',a['id'],None,{'member_id':member_id,
+            'disabled_agent_count':len(owned_agents)},tenant_override=target['tenant_id'])
+    return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED',
+        'disabled_agent_count':len(owned_agents)}
 
 @app.post('/api/v1/members/{member_id}/enable')
 def enable_member(member_id:str,authorization:str=Header(None)):
@@ -6530,8 +6549,27 @@ def disable_member(member_id:str,authorization:str=Header(None)):
         if not target: raise HTTPException(404,'Member not found')
         stamp=now()
         c.execute("UPDATE members SET password_status='DISABLED',token_status='REVOKED',token_revoked_at=? WHERE id=?",(stamp,member_id))
-        event(c,'member.account.disabled',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED'}
+        owned_agents=c.execute("SELECT id FROM agents WHERE owner_member_id=? AND tenant_id=? AND status='ACTIVE'",
+            (member_id,target['tenant_id'])).fetchall()
+        for agent_row in owned_agents:
+            agent_id=agent_row['id']
+            c.execute("UPDATE agents SET status='DISABLED',updated_at=? WHERE id=?",(stamp,agent_id))
+            c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",
+                (stamp,agent_id))
+            assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
+                WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
+            for assignment in assignments:
+                c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
+                    WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(stamp,stamp,assignment['id']))
+                event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
+                    'assignment_id':assignment['id'],'agent_id':agent_id,
+                    'reason':'Agent owner account disabled'},tenant_override=target['tenant_id'])
+            event(c,'agent.owner_account_disabled',a['id'],None,{'agent_id':agent_id,
+                'revoked_assignment_count':len(assignments)},tenant_override=target['tenant_id'])
+        event(c,'member.account.disabled',a['id'],None,{'member_id':member_id,
+            'disabled_agent_count':len(owned_agents)},tenant_override=target['tenant_id'])
+    return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED',
+        'disabled_agent_count':len(owned_agents)}
 
 @app.post('/api/v1/members/{member_id}/enable')
 def enable_member(member_id:str,authorization:str=Header(None)):
