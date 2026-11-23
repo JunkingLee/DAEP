@@ -3044,3 +3044,42 @@ def test_rc42_agent_project_binding_requires_owner_consent_and_is_project_scoped
     mine=client.get('/api/v1/agents/me/tasks',headers=agent_h)
     assert mine.status_code==200, mine.text
     assert [x['task_id'] for x in mine.json()['items']]==[task_a['id']]
+
+
+def test_agent_token_revocation_releases_active_assignments():
+    pid,_,_,tid=setup_project_task()
+    created=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Token Revocation Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; token=created.json()['token']
+    agent_id=agent['id']
+    assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'}).status_code==200
+
+    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent_id})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    ah={'Authorization':'Bearer '+token}
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
+    assert accepted.status_code==200,accepted.text
+
+    revoked=client.post(f'/api/v1/agents/{agent_id}/tokens/revoke',headers=ADMIN)
+    assert revoked.status_code==200,revoked.text
+    assert revoked.json()['revoked_assignment_count']==1
+    assert client.get('/api/v1/agents/me/tasks',headers=ah).status_code==401
+    with main_module.conn() as c:
+        row=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()
+        events=c.execute("""SELECT event_type,payload FROM events
+            WHERE event_type IN ('agent.token.revoked','task.agent_assignment_revoked')
+            AND payload LIKE ?""",('%'+assignment_id+'%',)).fetchall()
+    assert row['status']=='REVOKED'
+    assert any(x['event_type']=='task.agent_assignment_revoked' for x in events)
+
+    # A later credential rotation restores authentication, not the old grant.
+    rotated=client.post(f'/api/v1/agents/{agent_id}/tokens/rotate',headers=ADMIN)
+    assert rotated.status_code==200,rotated.text
+    new_headers={'Authorization':'Bearer '+rotated.json()['token']}
+    assert client.get('/api/v1/agents/me/tasks',headers=new_headers).json()['items']==[]
+    new_assignment=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent_id})
+    assert new_assignment.status_code==200,new_assignment.text
+    assert new_assignment.json()['id']!=assignment_id
+
