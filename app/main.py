@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Cookie, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,8 @@ async def lifespan(app):
     yield
 
 app=FastAPI(title='DAEP Enterprise Platform API',version='1.0.0-rc9',description='Task-centric distributed agent engineering platform',lifespan=lifespan)
+WEB_DIR=os.path.join(os.path.dirname(os.path.dirname(__file__)),'web')
+app.mount('/static',StaticFiles(directory=WEB_DIR),name='static')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:3000').split(','),allow_credentials=False,allow_methods=['*'],allow_headers=['*'])
 @app.middleware('http')
 async def tenant_context(request, call_next):
