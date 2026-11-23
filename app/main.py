@@ -614,6 +614,7 @@ def assign_task_to_agent(task_id:str, body:dict, authorization:str=Header(None))
     agent_id=str(body.get('agent_id','')).strip()
     if not agent_id: raise HTTPException(422,'agent_id is required')
     with conn() as c:
+        begin_serialized_write(c)
         pid=task_project(c,task_id)
         if not pid: raise HTTPException(404,'Task not found')
         require_project_access(c,pid,a,write=True)
@@ -653,6 +654,7 @@ def list_task_agent_assignments(task_id:str, authorization:str=Header(None)):
 def revoke_agent_task_assignment(assignment_id:str, body:dict=None, authorization:str=Header(None)):
     a=actor(authorization); reason=str((body or {}).get('reason','')).strip()
     with conn() as c:
+        begin_serialized_write(c)
         row=c.execute('SELECT * FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()
         if not row: raise HTTPException(404,'Agent task assignment not found')
         require_project_access(c,row['project_id'],a,write=True)
@@ -686,6 +688,7 @@ def accept_agent_task_assignment(assignment_id:str, authorization:str=Header(Non
     a=actor(authorization)
     if a.get('actor_type')!='AGENT': raise HTTPException(403,'Agent Token required')
     with conn() as c:
+        begin_serialized_write(c)
         row=c.execute('SELECT * FROM agent_task_assignments WHERE id=? AND agent_id=?',(assignment_id,a['agent_id'])).fetchone()
         if not row: raise HTTPException(404,'Assignment not found for this Agent')
         require_project_access(c,row['project_id'],a)
