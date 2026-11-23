@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse, RedirectResponse, JSONResponse, Resp
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.artifact_quality import assess_artifact_quality
+
 DB=os.getenv('DAEP_DB_PATH','/data/daep.db')
 ADMIN_TOKEN=os.getenv('DAEP_ADMIN_TOKEN','change-me-before-use')
 @asynccontextmanager
@@ -1906,6 +1908,27 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
             # The transition event itself is the idempotent record; attach a unique companion event only when needed.
             c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
         return {'task_id':tid,'status':target,'event_id':eid}
+
+@app.get('/api/v1/tasks/{tid}/artifact-quality')
+def task_artifact_quality(tid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_task_access(c,tid,a)
+        rows=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,
+            a.id AS artifact_id,a.artifact_type,a.uri,a.commit_sha,a.metadata
+            FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+            WHERE v.task_id=? ORDER BY v.version_number DESC""",(tid,)).fetchall()
+        reports=[]
+        for raw in rows:
+            item=dict(raw)
+            try: metadata=json.loads(item.get('metadata') or '{}')
+            except Exception: metadata={}
+            report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata)
+            reports.append({'artifact_version_id':item['artifact_version_id'],'version_number':item['version_number'],
+                'review_status':item['review_status'],'artifact_type':item['artifact_type'],'quality':report})
+        latest=reports[0] if reports else None
+        return {'task_id':tid,'artifact_count':len(reports),'latest':latest,'versions':reports,
+            'quality_gate':'NOT_EVALUATED' if not latest else latest['quality']['status']}
 
 @app.post('/api/v1/tasks/{tid}/artifacts')
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
