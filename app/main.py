@@ -1831,6 +1831,7 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
         require_task_access(c,tid,a,assigned_only=True)
         if b.progress==100:
             enforce_task_review_request(c,tid,a)
+            enforce_task_quality_stage(c,tid,'REVIEW')
             active_packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
             if active_packages:
                 pending=[x['child_task_id'] for x in active_packages if x['status']!='DONE']
@@ -2238,6 +2239,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
             raise HTTPException(409,detail={'message':'Artifact quality gate failed; task approval is blocked','artifact_version_id':latest_version['id'],'quality':task_approval_quality})
         if decision=='APPROVE':
             enforce_required_artifact_types(c,tid,task_approval_quality if latest_version else None)
+            enforce_task_quality_stage(c,tid,'DONE')
         if decision=='APPROVE':
             enforce_workflow_exit(c,pid,task['status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
@@ -2301,6 +2303,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             if not latest_version or selected_version['id']!=latest_version['id']:
                 raise HTTPException(409,'Work package review must target the latest submitted artifact version')
         if decision=='APPROVE':
+            enforce_task_quality_stage(c,package['child_task_id'],'DONE')
             enforce_workflow_exit(c,pid,package['task_status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
             if not selected_version:
