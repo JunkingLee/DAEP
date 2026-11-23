@@ -765,8 +765,8 @@ def change_password(body:dict,authorization:str=Header(None)):
     if not row or not row['password_hash'] or not verify_password(current,row['password_hash']):
         raise HTTPException(401,'Current password is incorrect')
     with conn() as c: c.execute("UPDATE members SET password_hash=?,password_status='ACTIVE' WHERE id=?",(hash_password(new),a['id']))
-    issue_member_token(a['id'])
-    return {'changed':True}
+    access_token=issue_member_token(a['id'])
+    return {'changed':True,'access_token':access_token,'token_type':'bearer'}
 
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
