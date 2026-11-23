@@ -3303,6 +3303,20 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert latest_audit['actor_member_id'] is None
     assert json.loads(latest_audit['payload'])['agent_id']==agent['id']
 
+    pending_latest=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/version-five',
+        'commit_sha':'version-five','metadata':{'iteration':'unreviewed-latest'}})
+    assert pending_latest.status_code==200 and pending_latest.json()['version_number']==5
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+    report=client.get(f"/api/v1/requirements/{requirement.json()['id']}/acceptance-report",headers=ADMIN)
+    assert report.status_code==200 and report.json()['ready_for_acceptance'] is False
+    assert tid in report.json()['missing_artifact_version_task_ids']
+    acceptance=client.post(f"/api/v1/requirements/{requirement.json()['id']}/acceptance",headers=ADMIN,json={
+        'decision':'APPROVE','verified_criteria':[0],'comment':'Must not accept pending latest version'})
+    assert acceptance.status_code==409
+    assert tid in acceptance.json()['detail']['pending_artifact_version_task_ids']
+
     frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
     assert "api('/api/v1/tasks/'+id+'/artifact-versions')" in frontend
     assert "api('/api/v1/tasks/'+id+'/work-summary')" in frontend
