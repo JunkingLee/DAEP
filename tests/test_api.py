@@ -3572,7 +3572,7 @@ def test_requirement_acceptance_applies_acceptance_stage_quality_policy():
         version=c.execute("SELECT id FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1",(tid,)).fetchone()
         c.execute("UPDATE artifact_versions SET review_status='APPROVED' WHERE id=?",(version['id'],))
         req=c.execute("SELECT requirement_id FROM tasks WHERE id=?",(tid,)).fetchone()
-        c.execute("UPDATE requirements SET acceptance_criteria='[\\"criterion\\"]' WHERE id=?",(req['requirement_id'],))
+        c.execute("UPDATE requirements SET acceptance_criteria=? WHERE id=?",('["criterion"]',req['requirement_id']))
     accepted=client.post(f'/api/v1/requirements/{req["requirement_id"]}/acceptance',headers=ADMIN,json={
         'decision':'APPROVE','verified_criteria':[0],'comment':'acceptance gate test'})
     assert accepted.status_code==409,accepted.text
