@@ -3188,3 +3188,77 @@ def test_agent_assignment_recovery_controls_are_visible_in_task_detail():
     assert '当前任务没有 Agent 分配记录' in frontend
     assert 'const rows=items.map' in frontend
 
+def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Artifact Version Governance'}).json()
+    pid=project['id']
+    requirement=client.post('/api/v1/requirements',headers=ADMIN,json={
+        'project_id':pid,'title':'Versioned delivery','acceptance_criteria':['Latest artifact approved']})
+    assert requirement.status_code==200,requirement.text
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={
+        'requirement_id':requirement.json()['id'],'title':'Submit versioned evidence'})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    created=client.post('/api/v1/agents',headers=ADMIN,json={
+        'name':'Versioned Delivery Agent','description':'Submit immutable artifact versions'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    agent_headers={'Authorization':'Bearer '+created.json()['token']}
+    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
+        'agent_id':agent['id']})
+    assert assigned.status_code==200,assigned.text
+    accepted=client.post(f"/api/v1/agent-assignments/{assigned.json()['id']}/accept",headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+
+    submitted=[]
+    for sha in ('version-one','version-two'):
+        response=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
+            'artifact_type':'git_commit','uri':f'https://example.invalid/{sha}',
+            'commit_sha':sha,'metadata':{'iteration':sha}})
+        assert response.status_code==200,response.text
+        submitted.append(response.json())
+    assert [x['version_number'] for x in submitted]==[1,2]
+
+    old_approval=client.post(f"/api/v1/artifact-versions/{submitted[0]['artifact_version_id']}/review",
+        headers=ADMIN,json={'decision':'APPROVE','comment':'Older version must not supersede latest'})
+    assert old_approval.status_code==409,old_approval.text
+
+    rejected=client.post(f"/api/v1/artifact-versions/{submitted[1]['artifact_version_id']}/review",
+        headers=ADMIN,json={'decision':'REJECT','comment':'Missing integration test evidence'})
+    assert rejected.status_code==200,rejected.text
+    assert rejected.json()['review_status']=='REJECTED'
+
+    resubmitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/version-three',
+        'commit_sha':'version-three','metadata':{'iteration':'resubmission'}})
+    assert resubmitted.status_code==200,resubmitted.text
+    assert resubmitted.json()['version_number']==3
+    approved=client.post(f"/api/v1/artifact-versions/{resubmitted.json()['artifact_version_id']}/review",
+        headers=ADMIN,json={'decision':'APPROVE','comment':'Latest version verified'})
+    assert approved.status_code==200,approved.text
+
+    versions=client.get(f'/api/v1/tasks/{tid}/artifact-versions',headers=ADMIN)
+    assert versions.status_code==200,versions.text
+    rows=versions.json()
+    assert [x['version_number'] for x in rows]==[3,2,1]
+    assert [x['review_status'] for x in rows]==['APPROVED','REJECTED','PENDING']
+    assert rows[0]['actor_type']=='AGENT' and rows[0]['agent_id']==agent['id']
+    assert rows[0]['actor_member_id'] is None
+    assert rows[1]['review_comment']=='Missing integration test evidence'
+    assert rows[2]['commit_sha']=='version-one'
+
+    with main_module.conn() as c:
+        audit=c.execute("SELECT actor_member_id,payload FROM events WHERE event_type='artifact.submitted' AND task_id=? ORDER BY created_at",(tid,)).fetchall()
+    latest_audit=[x for x in audit if json.loads(x['payload']).get('artifact_version_id')==resubmitted.json()['artifact_version_id']][0]
+    assert latest_audit['actor_member_id'] is None
+    assert json.loads(latest_audit['payload'])['agent_id']==agent['id']
+
+    frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
+    assert "api('/api/v1/tasks/'+id+'/artifact-versions')" in frontend
+    assert 'renderArtifactVersions(artifactVersions,canReview)' in frontend
+    assert 'reviewArtifactVersion' in frontend
