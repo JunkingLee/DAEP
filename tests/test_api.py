@@ -3205,6 +3205,12 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert task.status_code==200,task.text
     tid=task.json()['id']
 
+    human_submission=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'design_spec','uri':'https://example.invalid/human-v1',
+        'commit_sha':'human-version-one','metadata':{'submitter':'human'}})
+    assert human_submission.status_code==200,human_submission.text
+    assert human_submission.json()['version_number']==1
+
     created=client.post('/api/v1/agents',headers=ADMIN,json={
         'name':'Versioned Delivery Agent','description':'Submit immutable artifact versions'})
     assert created.status_code==200,created.text
@@ -3226,7 +3232,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
             'commit_sha':sha,'metadata':{'iteration':sha}})
         assert response.status_code==200,response.text
         submitted.append(response.json())
-    assert [x['version_number'] for x in submitted]==[1,2]
+    assert [x['version_number'] for x in submitted]==[2,3]
 
     old_approval=client.post(f"/api/v1/artifact-versions/{submitted[0]['artifact_version_id']}/review",
         headers=ADMIN,json={'decision':'APPROVE','comment':'Older version must not supersede latest'})
@@ -3241,7 +3247,7 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
         'artifact_type':'git_commit','uri':'https://example.invalid/version-three',
         'commit_sha':'version-three','metadata':{'iteration':'resubmission'}})
     assert resubmitted.status_code==200,resubmitted.text
-    assert resubmitted.json()['version_number']==3
+    assert resubmitted.json()['version_number']==4
     approved=client.post(f"/api/v1/artifact-versions/{resubmitted.json()['artifact_version_id']}/review",
         headers=ADMIN,json={'decision':'APPROVE','comment':'Latest version verified'})
     assert approved.status_code==200,approved.text
@@ -3249,12 +3255,12 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     versions=client.get(f'/api/v1/tasks/{tid}/artifact-versions',headers=ADMIN)
     assert versions.status_code==200,versions.text
     rows=versions.json()
-    assert [x['version_number'] for x in rows]==[3,2,1]
-    assert [x['review_status'] for x in rows]==['APPROVED','REJECTED','PENDING']
+    assert [x['version_number'] for x in rows]==[4,3,2,1]
+    assert [x['review_status'] for x in rows]==['APPROVED','REJECTED','PENDING','PENDING']
     assert rows[0]['actor_type']=='AGENT' and rows[0]['agent_id']==agent['id']
     assert rows[0]['actor_member_id'] is None
     assert rows[1]['review_comment']=='Missing integration test evidence'
-    assert rows[2]['commit_sha']=='version-one'
+    assert rows[2]['commit_sha']=='version-one'\n    assert rows[3]['actor_type']=='MEMBER' and rows[3]['actor_member_id']=='member-admin'\n    assert rows[3]['commit_sha']=='human-version-one'
 
     with main_module.conn() as c:
         audit=c.execute("SELECT actor_member_id,payload FROM events WHERE event_type='artifact.submitted' AND task_id=? ORDER BY created_at",(tid,)).fetchall()
