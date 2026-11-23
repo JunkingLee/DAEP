@@ -242,6 +242,10 @@ def init():
             artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}
             if 'quality_policy_snapshot' not in artifact_version_cols:
                 c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')
+            c.execute("""CREATE TRIGGER IF NOT EXISTS trg_artifact_quality_snapshot_immutable
+                BEFORE UPDATE OF quality_policy_snapshot ON artifact_versions
+                WHEN OLD.quality_policy_snapshot IS NOT NEW.quality_policy_snapshot
+                BEGIN SELECT RAISE(ABORT, 'artifact quality policy snapshot is immutable'); END""")
         c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
         # Versioned, additive schema ledger. Existing RC databases are baselined without destructive changes.
         c.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
