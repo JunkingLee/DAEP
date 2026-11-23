@@ -1749,6 +1749,16 @@ def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(N
             items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
                 'task_id':parent_id,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
                 'actor_name':e['actor_name'],'payload':p})
+        # Parent-level coordination messages and delivery bundles are part of
+        # the same execution trace as child work-package activity.
+        for msg in c.execute('SELECT id,message_type,title,status,created_at,acked_at,content FROM messages WHERE task_id=? ORDER BY created_at',(parent_id,)).fetchall():
+            try: body=json.loads(msg['content'] or '{}')
+            except Exception: body={'content':msg['content']}
+            items.append({'occurred_at':msg['created_at'],'kind':'message','message_id':msg['id'],
+                'message_type':msg['message_type'],'title':msg['title'],'status':msg['status'],
+                'acked_at':msg['acked_at'],'task_id':parent_id,'correlation_id':body.get('correlation_id'),'payload':body})
+        for art in c.execute('SELECT id,artifact_type,uri,commit_sha,created_at FROM artifacts WHERE task_id=? ORDER BY created_at',(parent_id,)).fetchall():
+            items.append({'occurred_at':art['created_at'],'kind':'artifact','task_id':parent_id,'correlation_id':None,'artifact':dict(art)})
         for w in packages:
             cid=w['correlation_id'] or w['id']; child=w['child_task_id']
             for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
