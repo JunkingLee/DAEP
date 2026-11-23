@@ -268,6 +268,12 @@ def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
     assert created.json()['token_once'] is True
 
     original_headers={'Authorization':'Bearer '+original}
+    # Credential verification must return identity data without mutating request-scoped audit context.
+    from app.agent_identity import authenticate_agent_token
+    prior_agent_context=main_module._agent_ctx.get()
+    identity=authenticate_agent_token(main_module.conn,original)
+    assert identity['agent_id']==agent['id']
+    assert main_module._agent_ctx.get()==prior_agent_context
     assert client.get('/api/v1/mcp/context',headers=original_headers).status_code==200
 
     rotated=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=ADMIN)
