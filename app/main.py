@@ -241,7 +241,8 @@ def init():
         if not DATABASE_URL.startswith(('postgresql://','postgres://')):
             artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}
             if 'quality_policy_snapshot' not in artifact_version_cols:
-                c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')\n        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
+                c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')
+        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
         # Versioned, additive schema ledger. Existing RC databases are baselined without destructive changes.
         c.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
         c.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES('0005-rc5-baseline',?)",(now(),))
