@@ -932,7 +932,7 @@ def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
     assert parent_approved.status_code==200 and parent_approved.json()['status']=='DONE'
     summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=ADMIN).json()
     assert summary['all_done'] is True and summary['artifact_count']==1
-    assert summary['artifacts'][0]['commit_sha']=='def456'
+    assert summary['artifacts'][0]['commit_sha']=='def4567'
 
 
 def test_rc16_failed_work_package_becomes_blocked():
@@ -1516,7 +1516,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     assert ack.status_code==200 and ack.json()['status']=='ACKNOWLEDGED'
 
     for child,headers,sha,kind in (
-        (api_child,first_h,'api-e2e-commit','git_commit'),
+        (api_child,first_h,'a9e2601','git_commit'),
         (test_child,second_h,'tests-e2e-commit','test_report')):
         artifact=client.post(f'/api/v1/tasks/{child}/artifacts',headers=headers,json={
             'artifact_type':kind,'uri':f'https://example.invalid/{sha}',
@@ -1543,7 +1543,7 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
     assert timeline.status_code==200
     trace=timeline.json()
     assert len(trace['work_packages'])==2
-    assert {item['artifact']['commit_sha'] for item in trace['items'] if item.get('kind')=='artifact'} >= {'api-e2e-commit','tests-e2e-commit'}
+    assert {item['artifact']['commit_sha'] for item in trace['items'] if item.get('kind')=='artifact'} >= {'a9e2601','tests-e2e-commit'}
 
     parent_artifact=client.post(f'/api/v1/tasks/{parent_id}/artifacts',headers=owner_h,json={
         'artifact_type':'delivery_bundle','uri':'https://example.invalid/checkout-delivery',
@@ -2248,7 +2248,7 @@ def test_rc26_workflow_runtime_enforces_custom_gate_and_stage_exit_approval():
     blocked=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=dh,json={'target_stage':'TEST'})
     assert blocked.status_code == 409
     artifact=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=dh,json={
-        'artifact_type':'test-report','uri':'file://test-report.txt','metadata':{'case_count':3}
+        'artifact_type':'test-report','uri':'https://example.invalid/test-report.txt','metadata':{'case_count':3,'test_summary':{'total':3,'passed':3,'failed':0}}
     })
     assert artifact.status_code == 200, artifact.text
     moved=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers={**dh,'Idempotency-Key':'to-test'},json={'target_stage':'TEST'})
