@@ -3373,3 +3373,108 @@ def test_task_detail_loads_and_renders_artifact_quality():
     assert "'/artifact-quality'" in source
     assert 'function renderArtifactQuality(data)' in source
     assert 'artifactQualityPanel+' in source
+
+
+def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid, owner_id, owner_token, tid = setup_project_task()
+    owner_headers={'Authorization':'Bearer '+owner_token}
+    policy={
+        'min_coverage_percent':80,
+        'max_failed_tests':0,
+        'required_artifact_types':['test_report'],
+        'require_test_report':True,
+        'require_commit_sha':False,
+        'stage_overrides':{'TEST':{'min_coverage_percent':90}}
+    }
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=owner_headers,json=policy)
+    assert configured.status_code==200,configured.text
+    assert configured.json()['policy']['min_coverage_percent']==80
+    assert configured.json()['policy']['stage_overrides']['TEST']['min_coverage_percent']==90
+
+    other_pid, _, other_token, _ = setup_project_task()
+    denied=client.get(f'/api/v1/projects/{pid}/quality-policy',
+        headers={'Authorization':'Bearer '+other_token})
+    assert denied.status_code==403
+
+    agent=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Quality Policy Guard Agent'})
+    assert agent.status_code==200,agent.text
+    agent_id=agent.json()['agent']['id']
+    bound=client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    agent_headers={'Authorization':'Bearer '+agent.json()['token']}
+    agent_update=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=agent_headers,json=policy)
+    assert agent_update.status_code==403
+
+    submitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/policy-report',
+        'metadata':{'test_summary':{'total':10,'passed':10,'failed':0},'coverage_percent':85}})
+    assert submitted.status_code==200,submitted.text
+
+    changed=dict(policy)
+    changed['min_coverage_percent']=95
+    changed['stage_overrides']={}
+    updated=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=owner_headers,json=changed)
+    assert updated.status_code==200,updated.text
+
+    quality=client.get(f'/api/v1/tasks/{tid}/artifact-quality',headers=ADMIN)
+    assert quality.status_code==200,quality.text
+    latest=quality.json()['latest']
+    assert latest['quality']['status']=='PASS'
+    assert latest['quality']['policy_snapshot']['policy']['min_coverage_percent']==80
+    assert latest['quality']['policy_snapshot']['stage']=='READY'
+
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='REVIEW',progress=90 WHERE id=?",(tid,))
+    approved=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={
+        'decision':'APPROVE','comment':'Approved against immutable submission policy'})
+    assert approved.status_code==200,approved.text
+
+
+def test_project_quality_policy_required_artifacts_and_thresholds_block_approval():
+    pid, _, _, tid = setup_project_task()
+    policy={
+        'min_coverage_percent':90,
+        'max_failed_tests':0,
+        'required_artifact_types':['git_commit'],
+        'require_test_report':True,
+        'require_commit_sha':False,
+        'stage_overrides':{}
+    }
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json=policy)
+    assert configured.status_code==200,configured.text
+    submitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/low-quality-report',
+        'metadata':{'test_summary':{'total':10,'passed':9,'failed':1},'coverage_percent':75}})
+    assert submitted.status_code==200,submitted.text
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='REVIEW',progress=90 WHERE id=?",(tid,))
+    blocked=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert blocked.status_code==409,blocked.text
+    detail=blocked.json()['detail']
+    assert detail['message']=='Artifact quality gate failed; task approval is blocked'
+    assert {x['key'] for x in detail['quality']['checks']} >= {'policy_min_coverage','policy_max_failed_tests'}
+
+    # A new project policy is snapshotted on the next submission and required
+    # artifact types are checked independently from per-version quality scores.
+    pid2, _, _, tid2 = setup_project_task()
+    configured2=client.put(f'/api/v1/projects/{pid2}/quality-policy',headers=ADMIN,json={
+        'required_artifact_types':['git_commit'],'require_test_report':False})
+    assert configured2.status_code==200,configured2.text
+    artifact=client.post(f'/api/v1/tasks/{tid2}/artifacts',headers=ADMIN,json={
+        'artifact_type':'design_spec','uri':'https://example.invalid/design-spec','metadata':{}})
+    assert artifact.status_code==200,artifact.text
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='REVIEW',progress=90 WHERE id=?",(tid2,))
+    missing=client.post(f'/api/v1/tasks/{tid2}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert missing.status_code==409,missing.text
+    assert missing.json()['detail']['missing_artifact_types']==['git_commit']
+
+
+def test_artifact_quality_policy_validation_rejects_invalid_thresholds():
+    pid, _, _, _ = setup_project_task()
+    invalid=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json={
+        'min_coverage_percent':120,'max_failed_tests':-1})
+    assert invalid.status_code==422
