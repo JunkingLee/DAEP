@@ -223,7 +223,7 @@ def init():
         CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
-        CREATE TABLE IF NOT EXISTS artifact_versions(id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,task_id TEXT NOT NULL,work_package_id TEXT,version_number INTEGER NOT NULL CHECK(version_number>0),actor_type TEXT NOT NULL DEFAULT 'MEMBER' CHECK(actor_type IN ('MEMBER','AGENT')),actor_member_id TEXT,agent_id TEXT,tenant_id TEXT NOT NULL,review_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(review_status IN ('PENDING','APPROVED','REJECTED')),review_comment TEXT,reviewed_by_member_id TEXT,reviewed_at TEXT,created_at TEXT NOT NULL,UNIQUE(task_id,version_number),FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(work_package_id) REFERENCES task_work_packages(id),FOREIGN KEY(actor_member_id) REFERENCES members(id),FOREIGN KEY(reviewed_by_member_id) REFERENCES members(id));
+        CREATE TABLE IF NOT EXISTS artifact_versions(id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,task_id TEXT NOT NULL,work_package_id TEXT,version_number INTEGER NOT NULL CHECK(version_number>0),actor_type TEXT NOT NULL DEFAULT 'MEMBER' CHECK(actor_type IN ('MEMBER','AGENT')),actor_member_id TEXT,agent_id TEXT,tenant_id TEXT NOT NULL,review_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(review_status IN ('PENDING','APPROVED','REJECTED')),review_comment TEXT,reviewed_by_member_id TEXT,reviewed_at TEXT,quality_policy_snapshot TEXT,created_at TEXT NOT NULL,UNIQUE(task_id,version_number),FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(work_package_id) REFERENCES task_work_packages(id),FOREIGN KEY(actor_member_id) REFERENCES members(id),FOREIGN KEY(reviewed_by_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_work_packages_parent ON task_work_packages(parent_task_id,status);
         CREATE TABLE IF NOT EXISTS project_workflows(project_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS project_gates(project_id TEXT NOT NULL,gate_key TEXT NOT NULL,tenant_id TEXT NOT NULL,config TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,gate_key),FOREIGN KEY(project_id) REFERENCES projects(id));
@@ -238,7 +238,7 @@ def init():
             schema=schema.replace('CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY','CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY')
             for stmt in [x.strip() for x in schema.split(';') if x.strip()]: c.execute(stmt)
         else: c.executescript(schema)
-        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
+        if not DATABASE_URL.startswith(('postgresql://','postgres://')):\n            artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}\n            if 'quality_policy_snapshot' not in artifact_version_cols:\n                c.execute('ALTER TABLE artifact_versions ADD COLUMN quality_policy_snapshot TEXT')\n        c.execute("INSERT OR IGNORE INTO tenants(id,name,status,created_at) VALUES('tenant-default','Default Tenant','ACTIVE',?)",(now(),))
         # Versioned, additive schema ledger. Existing RC databases are baselined without destructive changes.
         c.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
         c.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES('0005-rc5-baseline',?)",(now(),))
@@ -1910,6 +1910,126 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
         return {'task_id':tid,'status':target,'event_id':eid}
 
 
+
+DEFAULT_ARTIFACT_QUALITY_POLICY = {
+    'min_coverage_percent': None,
+    'max_failed_tests': None,
+    'required_artifact_types': [],
+    'require_commit_sha': False,
+    'require_test_report': False,
+    'stage_overrides': {}
+}
+QUALITY_POLICY_FIELDS = {
+    'min_coverage_percent', 'max_failed_tests', 'required_artifact_types',
+    'require_commit_sha', 'require_test_report'
+}
+def validate_artifact_quality_policy(raw, allow_stage_overrides=True):
+    if not isinstance(raw, dict):
+        raise HTTPException(422, 'Artifact quality policy must be an object')
+    allowed = QUALITY_POLICY_FIELDS | ({'stage_overrides'} if allow_stage_overrides else set())
+    unknown = set(raw) - allowed
+    if unknown:
+        raise HTTPException(422, detail={'message':'Unknown artifact quality policy fields','fields':sorted(unknown)})
+    policy = dict(DEFAULT_ARTIFACT_QUALITY_POLICY)
+    for key in QUALITY_POLICY_FIELDS:
+        if key in raw:
+            policy[key] = raw[key]
+    coverage = policy['min_coverage_percent']
+    if coverage is not None and (isinstance(coverage,bool) or not isinstance(coverage,(int,float)) or not 0 <= coverage <= 100):
+        raise HTTPException(422,'min_coverage_percent must be null or a number from 0 to 100')
+    failed = policy['max_failed_tests']
+    if failed is not None and (isinstance(failed,bool) or not isinstance(failed,int) or failed < 0):
+        raise HTTPException(422,'max_failed_tests must be null or a non-negative integer')
+    required = policy['required_artifact_types']
+    if not isinstance(required,list) or len(required)>32 or any(not isinstance(x,str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}',x.strip().lower().replace('-','_')) for x in required):
+        raise HTTPException(422,'required_artifact_types must contain up to 32 valid artifact type names')
+    policy['required_artifact_types'] = list(dict.fromkeys(x.strip().lower().replace('-','_') for x in required))
+    for key in ('require_commit_sha','require_test_report'):
+        if not isinstance(policy[key],bool):
+            raise HTTPException(422,f'{key} must be a boolean')
+    overrides = raw.get('stage_overrides', {})
+    if not isinstance(overrides,dict) or len(overrides)>20:
+        raise HTTPException(422,'stage_overrides must be an object with at most 20 stages')
+    clean_overrides = {}
+    for stage, override in overrides.items():
+        stage_key = str(stage).strip().upper()
+        if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,39}',stage_key):
+            raise HTTPException(422,'Invalid workflow stage key in stage_overrides')
+        clean_overrides[stage_key] = validate_artifact_quality_policy(override,allow_stage_overrides=False)
+    policy['stage_overrides'] = clean_overrides
+    return policy
+
+def project_artifact_quality_policy(c, project_id):
+    row=c.execute("SELECT config,updated_by,updated_at FROM project_gates WHERE project_id=? AND gate_key='ARTIFACT_QUALITY'",(project_id,)).fetchone()
+    if not row:
+        return {'policy':dict(DEFAULT_ARTIFACT_QUALITY_POLICY),'updated_by':None,'updated_at':None,'source':'system-default'}
+    try: raw=json.loads(row['config'] or '{}')
+    except Exception: raw={}
+    return {'policy':validate_artifact_quality_policy(raw),'updated_by':row['updated_by'],'updated_at':row['updated_at'],'source':'project'}
+
+def effective_artifact_quality_policy(record, stage):
+    base=dict(record.get('policy') or DEFAULT_ARTIFACT_QUALITY_POLICY)
+    overrides=base.pop('stage_overrides',{}) or {}
+    override=overrides.get(str(stage or '').upper(),{})
+    base.update({k:v for k,v in override.items() if k in QUALITY_POLICY_FIELDS})
+    return base
+
+def artifact_quality_policy_snapshot(c, project_id, stage):
+    record=project_artifact_quality_policy(c,project_id)
+    return {'policy':effective_artifact_quality_policy(record,stage),'stage':str(stage or '').upper(),
+            'policy_updated_at':record.get('updated_at'),'policy_source':record.get('source')}
+
+def enforce_required_artifact_types(c, task_id, quality_report=None):
+    snapshot=(quality_report or {}).get('policy_snapshot') if isinstance(quality_report,dict) else None
+    if isinstance(snapshot,dict):
+        policy=snapshot.get('policy') or {}
+    else:
+        project_id=task_project(c,task_id)
+        policy=project_artifact_quality_policy(c,project_id)['policy'] if project_id else {}
+    required=list(policy.get('required_artifact_types') or [])
+    if policy.get('require_test_report'):
+        required.append('test_report')
+    required=list(dict.fromkeys(str(x).lower().replace('-','_') for x in required))
+    if not required:
+        return
+    rows=c.execute('SELECT DISTINCT lower(replace(artifact_type,\'-\',\'_\')) AS artifact_type FROM artifacts WHERE task_id=?',(task_id,)).fetchall()
+    present={x['artifact_type'] for x in rows if x['artifact_type']}
+    missing=[x for x in required if x not in present]
+    if missing:
+        raise HTTPException(409,detail={'message':'Required artifact types are missing; approval is blocked',
+            'task_id':task_id,'missing_artifact_types':missing})
+
+@app.get('/api/v1/projects/{pid}/quality-policy')
+def get_project_artifact_quality_policy(pid:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        record=project_artifact_quality_policy(c,pid)
+        return {'project_id':pid,'policy':record['policy'],'updated_by':record['updated_by'],
+                'updated_at':record['updated_at'],'source':record['source']}
+
+@app.put('/api/v1/projects/{pid}/quality-policy')
+def set_project_artifact_quality_policy(pid:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')=='AGENT':
+        raise HTTPException(403,'Agent cannot change project artifact quality policy')
+    policy=validate_artifact_quality_policy(b)
+    with conn() as c:
+        begin_serialized_write(c)
+        require_project_access(c,pid,a,write=True)
+        if not is_admin(a) and project_role(c,pid,a) not in ('owner','manager'):
+            raise HTTPException(403,'Project manager or platform administrator required')
+        prior=project_artifact_quality_policy(c,pid)
+        tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
+        stamp=now()
+        c.execute("""INSERT INTO project_gates(project_id,gate_key,tenant_id,config,updated_by,updated_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,gate_key) DO UPDATE SET
+            tenant_id=excluded.tenant_id,config=excluded.config,updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
+            (pid,'ARTIFACT_QUALITY',tenant,json.dumps(policy,sort_keys=True),a['id'],stamp))
+        event(c,'project.artifact_quality_policy.updated',a['id'],None,
+              {'project_id':pid,'previous_policy':prior['policy'],'policy':policy},tenant_override=tenant)
+        return {'project_id':pid,'policy':policy,'updated_by':a['id'],'updated_at':stamp,'source':'project'}
+
 def artifact_version_quality(c, version_id):
     row=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,
         a.artifact_type,a.uri,a.commit_sha,a.metadata
@@ -1918,7 +2038,7 @@ def artifact_version_quality(c, version_id):
     item=dict(row)
     try: metadata=json.loads(item.get('metadata') or '{}')
     except Exception: metadata={}
-    return assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata)
+    try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')\n    except Exception: snapshot=None\n    report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,\n        policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))\n    if isinstance(snapshot,dict): report['policy_snapshot']=snapshot\n    return report
 
 @app.get('/api/v1/tasks/{tid}/artifact-quality')
 def task_artifact_quality(tid:str,authorization:str=Header(None)):
@@ -1934,7 +2054,7 @@ def task_artifact_quality(tid:str,authorization:str=Header(None)):
             item=dict(raw)
             try: metadata=json.loads(item.get('metadata') or '{}')
             except Exception: metadata={}
-            report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata)
+            try: snapshot=json.loads(item.get('quality_policy_snapshot') or '')\n            except Exception: snapshot=None\n            report=assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata,\n                policy=(snapshot.get('policy') if isinstance(snapshot,dict) else None))\n            if isinstance(snapshot,dict): report['policy_snapshot']=snapshot
             reports.append({'artifact_version_id':item['artifact_version_id'],'version_number':item['version_number'],
                 'review_status':item['review_status'],'artifact_type':item['artifact_type'],'quality':report})
         latest=reports[0] if reports else None
@@ -1959,7 +2079,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
         actor_member_id=None if actor_type=='AGENT' else a['id']
         agent_id=a.get('agent_id') if actor_type=='AGENT' else None
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),submitted_at,tenant))
-        c.execute('INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(version_id,aid,tid,wp['id'] if wp else None,version_number,actor_type,actor_member_id,agent_id,tenant,'PENDING',submitted_at))
+        c.execute('INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,agent_id,tenant_id,review_status,created_at,quality_policy_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(version_id,aid,tid,wp['id'] if wp else None,version_number,actor_type,actor_member_id,agent_id,tenant,'PENDING',submitted_at,json.dumps(quality_snapshot,sort_keys=True)))
         event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'artifact_version_id':version_id,'version_number':version_number,'actor_type':actor_type,'agent_id':agent_id,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid,'artifact_version_id':version_id,'version_number':version_number,'review_status':'PENDING'}
 @app.post('/api/v1/tasks/{tid}/review')
@@ -2728,7 +2848,7 @@ def review_artifact_version(version_id:str,b:dict,authorization:str=Header(None)
             raise HTTPException(409,'Only the latest submitted artifact version can be approved')
         try: version_metadata=json.loads(version['metadata'] or '{}')
         except Exception: version_metadata={}
-        version_quality=assess_artifact_quality(version['artifact_type'],version['uri'],version['commit_sha'],version_metadata)
+        version_quality=artifact_version_quality(c,version_id)
         if decision=='APPROVE' and version_quality['status']=='FAIL':
             raise HTTPException(409,detail={'message':'Artifact quality gate failed; version approval is blocked','artifact_version_id':version_id,'quality':version_quality})
         reviewed_at=now()
