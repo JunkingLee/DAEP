@@ -1715,6 +1715,48 @@ def my_tasks(authorization:str=Header(None)):
         raise HTTPException(403,'Use /api/v1/agents/me/tasks for Agent assignments')
     with conn() as c: return [dict(x) for x in c.execute('SELECT t.* FROM tasks t JOIN assignments s ON s.task_id=t.id JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE s.member_id=? AND p.tenant_id=? ORDER BY t.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))]
 
+def sync_work_package_parent(c,child_task_id,actor_member_id,trigger):
+    """Keep a work-package parent truthful without bypassing its human review gate."""
+    package=c.execute('SELECT id,parent_task_id FROM task_work_packages WHERE child_task_id=? AND status=\'ACTIVE\'',(child_task_id,)).fetchone()
+    if not package:
+        return None
+    rows=c.execute("""SELECT t.id,t.status,t.progress FROM task_work_packages w
+        JOIN tasks t ON t.id=w.child_task_id
+        WHERE w.parent_task_id=? AND w.status='ACTIVE'""",(package['parent_task_id'],)).fetchall()
+    if not rows:
+        return None
+    statuses=[x['status'] for x in rows]
+    total=len(rows)
+    done=sum(1 for status in statuses if status=='DONE')
+    blocked=sum(1 for status in statuses if status=='BLOCKED')
+    average=round(sum(int(x['progress'] or 0) for x in rows)/total)
+    parent=c.execute('SELECT status,progress FROM tasks WHERE id=?',(package['parent_task_id'],)).fetchone()
+    if not parent or parent['status']=='DONE':
+        return None
+    if blocked:
+        target='BLOCKED'
+        progress=min(99,average)
+    elif done==total:
+        target='REVIEW' if parent['status']=='REVIEW' else 'IN_PROGRESS'
+        progress=100 if target=='REVIEW' else 90
+    else:
+        target='IN_PROGRESS' if any(s in ('IN_PROGRESS','REVIEW','DONE') for s in statuses) else 'READY'
+        progress=min(90,average)
+        if parent['status']=='REVIEW':
+            target='IN_PROGRESS'
+    if parent['status']==target and int(parent['progress'] or 0)==progress:
+        return {'parent_task_id':package['parent_task_id'],'status':target,'progress':progress,'changed':False}
+    stamp=now()
+    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status!=\'DONE\'',
+        (target,progress,stamp,package['parent_task_id']))
+    event(c,'task.work_packages.parent_synced',actor_member_id,package['parent_task_id'],{
+        'parent_task_id':package['parent_task_id'],'trigger_task_id':child_task_id,
+        'trigger':trigger,'previous_status':parent['status'],'status':target,
+        'previous_progress':parent['progress'],'progress':progress,
+        'work_package_count':total,'done_count':done,'blocked_count':blocked})
+    return {'parent_task_id':package['parent_task_id'],'status':target,'progress':progress,'changed':True}
+
+
 @app.post('/api/v1/tasks/{tid}/progress')
 def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key:str=Header(None)):
     a=actor(authorization)
@@ -1722,6 +1764,12 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
         require_task_access(c,tid,a,assigned_only=True)
         if b.progress==100:
             enforce_task_review_request(c,tid,a)
+            active_packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
+            if active_packages:
+                pending=[x['child_task_id'] for x in active_packages if x['status']!='DONE']
+                missing=[x['child_task_id'] for x in active_packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
+                if pending or missing:
+                    raise HTTPException(409,detail={'message':'Parent task cannot request review until all active work packages are approved and have delivery evidence','pending_work_packages':pending,'missing_artifacts':missing})
         if a.get('actor_type')=='AGENT' and b.progress==100:
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(tid,)).fetchone() is None:
                 raise HTTPException(409,'Agent must submit at least one artifact before requesting review')
@@ -1735,6 +1783,7 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
                 if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
+        sync_work_package_parent(c,tid,a['id'],'progress_updated')
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
     return {'event_id':eid,'task_id':tid,'progress':b.progress}
 @app.post('/api/v1/tasks/{tid}/blocked')
@@ -1742,7 +1791,7 @@ def blocked(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid)); eid=event(c,'task.blocked',a['id'],tid,b)
+        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid)); sync_work_package_parent(c,tid,a['id'],'blocked'); eid=event(c,'task.blocked',a['id'],tid,b)
     return {'event_id':eid,'status':'BLOCKED'}
 @app.post('/api/v1/tasks/{tid}/work-result')
 def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
@@ -1772,6 +1821,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         else:
             status='BLOCKED'; progress=0
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,now(),tid))
+        sync_work_package_parent(c,tid,a['id'],'work_result_'+b.outcome.lower())
         eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
@@ -1847,6 +1897,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         if decision=='APPROVE':
             stamp=now()
             c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,tid))
+        sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
 
@@ -1884,6 +1935,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
         if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
         if decision=='APPROVE':
             c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,package['child_task_id']))
+        sync_work_package_parent(c,package['child_task_id'],a['id'],'work_package_review_'+decision.lower())
         eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
         return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
 
