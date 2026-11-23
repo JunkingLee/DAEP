@@ -191,7 +191,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def rotate_agent_token(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            _agent_owner(c,agent_id,a)
+            r=_agent_owner(c,agent_id,a)
             raw,token_id=_issue(c,agent_id,now(),r['tenant_id'])
             event(c,'agent.token.rotated',a['id'],None,{'agent_id':agent_id,'token_id':token_id})
             return {'agent_id':agent_id,'token':raw,'token_id':token_id,'token_once':True}
