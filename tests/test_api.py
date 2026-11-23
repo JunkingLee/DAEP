@@ -3429,6 +3429,12 @@ def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
     assert latest['quality']['policy_snapshot']['stage']=='READY'
 
     with main_module.conn() as c:
+        version_id=c.execute('SELECT id FROM artifact_versions WHERE task_id=?',(tid,)).fetchone()['id']
+        try:
+            c.execute("UPDATE artifact_versions SET quality_policy_snapshot='{}' WHERE id=?",(version_id,))
+            raise AssertionError('quality policy snapshot mutation unexpectedly succeeded')
+        except sqlite3.IntegrityError:
+            pass
         c.execute("UPDATE tasks SET status='REVIEW',progress=90 WHERE id=?",(tid,))
     approved=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={
         'decision':'APPROVE','comment':'Approved against immutable submission policy'})
