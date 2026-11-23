@@ -29,7 +29,7 @@ def upgrade():
             created_at TEXT NOT NULL,
             UNIQUE(task_id, version_number),
             CHECK ((actor_type='AGENT' AND agent_id IS NOT NULL AND actor_member_id IS NULL)
-                OR (actor_type='MEMBER' AND actor_member_id IS NOT NULL AND agent_id IS NULL))
+                OR (actor_type='MEMBER' AND agent_id IS NULL))
         )
     """)
     op.execute("""
