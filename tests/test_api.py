@@ -3754,10 +3754,13 @@ def test_agent_unbind_enforces_project_tenant_boundary():
         'name':'Tenant Agent Owner '+suffix,'tenant_id':tenant_id})
     assert member.status_code==200,member.text
     tenant_headers={'Authorization':'Bearer '+member.json()['token']}
-    tenant_project=client.post('/api/v1/projects',headers=tenant_headers,json={
-        'name':'Tenant B Agent Project '+suffix})
+    tenant_project=client.post('/api/v1/projects',headers=ADMIN,json={
+        'name':'Tenant B Agent Project '+suffix,'tenant_id':tenant_id})
     assert tenant_project.status_code==200,tenant_project.text
     tenant_project_id=tenant_project.json()['id']
+    membership=client.post(f'/api/v1/projects/{tenant_project_id}/members',headers=ADMIN,json={
+        'member_id':member.json()['id'],'role':'manager','work_function':'developer'})
+    assert membership.status_code==200,membership.text
     created=client.post('/api/v1/agents',headers=tenant_headers,json={
         'name':'Tenant B Private Agent '+suffix})
     assert created.status_code==200,created.text
