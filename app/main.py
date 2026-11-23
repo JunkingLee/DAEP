@@ -1382,6 +1382,14 @@ def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorizatio
             if not tasks or pending or missing or pending_versions:
                 raise HTTPException(409,detail={'message':'Requirement cannot be accepted until every task is DONE and its latest artifact version is approved',
                     'pending_task_ids':pending,'missing_artifact_task_ids':missing,'pending_artifact_version_task_ids':pending_versions})
+            quality_blockers=[]
+            for task_row in tasks:
+                stage_quality=evaluate_task_quality_for_stage(c,task_row['id'],'ACCEPTANCE')
+                if stage_quality['blocked']:
+                    quality_blockers.append(stage_quality)
+            if quality_blockers:
+                raise HTTPException(409,detail={'message':'Requirement acceptance is blocked by project artifact quality policy',
+                    'quality_blockers':quality_blockers})
             status='ACCEPTED'
         else: status='OPEN'
         stamp=now(); c.execute('UPDATE requirements SET status=? WHERE id=?',(status,rid))
@@ -1911,7 +1919,9 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
                 if prior['payload']!=json.dumps({'target_stage':target,'comment':comment}): raise HTTPException(409,'Idempotency-Key was already used with a different workflow transition')
                 return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
         enforce_workflow_stage(c,pid,target,a['id'],tid)
+        quality_result=enforce_task_quality_stage(c,tid,target)
         eid=transition_task_workflow(c,tid,target,a['id'],comment)
+        event(c,'task.quality_stage.checked',a['id'],tid,{'target_stage':target,'quality_gate':quality_result})
         sync_work_package_parent(c,tid,a['id'],'workflow_transition_'+target.lower())
         if scoped_key:
             # The transition event itself is the idempotent record; attach a unique companion event only when needed.
@@ -2021,6 +2031,56 @@ def enforce_required_artifact_types(c, task_id, quality_report=None):
         raise HTTPException(409,detail={'message':'Required artifact types are missing or failed quality checks; approval is blocked',
             'task_id':task_id,'missing_artifact_types':missing,'rejected_artifact_types':rejected,
             'failed_required_artifacts':failed})
+
+def evaluate_task_quality_for_stage(c, task_id, stage):
+    project_id=task_project(c,task_id)
+    if not project_id:
+        raise HTTPException(404,'Task not found')
+    record=project_artifact_quality_policy(c,project_id)
+    policy=effective_artifact_quality_policy(record,stage)
+    required=list(policy.get('required_artifact_types') or [])
+    if policy.get('require_test_report'):
+        required.append('test_report')
+    required=list(dict.fromkeys(str(x).lower().replace('-','_') for x in required))
+    rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,
+        a.artifact_type,a.uri,a.commit_sha,a.metadata
+        FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+        WHERE v.task_id=? AND v.version_number=(
+            SELECT MAX(v2.version_number) FROM artifact_versions v2
+            JOIN artifacts a2 ON a2.id=v2.artifact_id
+            WHERE v2.task_id=v.task_id AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
+        ORDER BY v.version_number DESC""",(task_id,)).fetchall()
+    reports=[]; found=set()
+    for raw in rows:
+        item=dict(raw); kind=str(item['artifact_type'] or '').lower().replace('-','_'); found.add(kind)
+        try: metadata=json.loads(item.get('metadata') or '{}')
+        except Exception: metadata={}
+        report=assess_artifact_quality(item['artifact_type'],item['uri'],item['commit_sha'],metadata,policy=policy)
+        reports.append({'artifact_version_id':item['version_id'],'artifact_type':kind,
+            'version_number':item['version_number'],'review_status':item['review_status'],'quality':report})
+    missing=[x for x in required if x not in found]
+    rejected=[x['artifact_type'] for x in reports if x['review_status']=='REJECTED' and x['artifact_type'] in required]
+    failed=[{'artifact_type':x['artifact_type'],'artifact_version_id':x['artifact_version_id'],'quality':x['quality']}
+        for x in reports if x['quality']['status']=='FAIL']
+    failed_required=[x for x in failed if x['artifact_type'] in required]
+    blocked=bool(missing or rejected or failed_required)
+    return {'task_id':task_id,'stage':str(stage or '').upper(),'policy':policy,
+        'artifact_count':len(reports),'missing_artifact_types':missing,
+        'rejected_artifact_types':rejected,'failed_artifacts':failed,
+        'failed_required_artifacts':failed_required,'blocked':blocked,'artifacts':reports}
+
+
+def enforce_task_quality_stage(c, task_id, stage):
+    result=evaluate_task_quality_for_stage(c,task_id,stage)
+    # Stage rules only block on required evidence or failures of required artifact types.
+    # Optional artifact failures remain visible for human review.
+    if result['blocked']:
+        raise HTTPException(409,detail={'message':'Project artifact quality gate blocks workflow stage transition',
+            'task_id':task_id,'target_stage':result['stage'],'missing_artifact_types':result['missing_artifact_types'],
+            'rejected_artifact_types':result['rejected_artifact_types'],
+            'failed_required_artifacts':result['failed_required_artifacts'],'policy':result['policy']})
+    return result
+
 
 @app.get('/api/v1/projects/{pid}/quality-policy')
 def get_project_artifact_quality_policy(pid:str,authorization:str=Header(None)):
