@@ -1927,6 +1927,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
         task=c.execute(task_sql,(tid,)).fetchone()
         if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
+        latest_version=c.execute('SELECT * FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1',(tid,)).fetchone()
         if decision=='APPROVE':
             enforce_workflow_exit(c,pid,task['status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
@@ -1935,17 +1936,28 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
             missing=[x['child_task_id'] for x in packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
             if pending or missing:
                 raise HTTPException(409,detail={'message':'Parent task cannot be approved until every active work package is approved and has at least one artifact','pending_work_packages':pending,'missing_artifacts':missing})
+            if latest_version and latest_version['review_status']=='REJECTED':
+                raise HTTPException(409,'Latest artifact version was rejected; submit a new version before task approval')
         status='DONE' if decision=='APPROVE' else 'IN_PROGRESS'
-        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,now(),tid,'REVIEW'))
+        stamp=now()
+        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,stamp,tid,'REVIEW'))
         if updated.rowcount != 1: raise HTTPException(409,'Task is no longer awaiting review')
+        version_status=latest_version['review_status'] if latest_version else None
+        if latest_version and latest_version['review_status']=='PENDING':
+            version_status='APPROVED' if decision=='APPROVE' else 'REJECTED'
+            c.execute('UPDATE artifact_versions SET review_status=?,review_comment=?,reviewed_by_member_id=?,reviewed_at=? WHERE id=? AND review_status=\'PENDING\'',
+                (version_status,str(b.get('comment',''))[:4000],a['id'],stamp,latest_version['id']))
         if decision=='APPROVE':
-            stamp=now()
             c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,tid))
         sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
-        sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
-        sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
-        eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
-        return {'task_id':tid,'status':status,'event_id':eid}
+        eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment',''),
+            'artifact_version_id':latest_version['id'] if latest_version else None,
+            'artifact_version_number':latest_version['version_number'] if latest_version else None,
+            'artifact_review_status':version_status})
+        return {'task_id':tid,'status':status,'event_id':eid,
+            'artifact_version_id':latest_version['id'] if latest_version else None,
+            'artifact_version_number':latest_version['version_number'] if latest_version else None,
+            'artifact_review_status':version_status}
 
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
