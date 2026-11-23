@@ -14,8 +14,9 @@
 
 - 核实时间：2026-11-23
 - 分支：`release/1.0.0-rc9`
-- 当前 HEAD：`3c98f27a0de21778a133c92f1e2e42f0dda100ea`（本次新增交接文档的提交）。
-- 最近一次应用代码 HEAD：`1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`。
+- 最近一次应用代码基线 HEAD：`1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`。
+- 交接文档提交：`3c98f27a0de21778a133c92f1e2e42f0dda100ea`（后续还有一次文档状态说明更新）。
+- 注意：HEAD 会随本文件自身的更新而变化，因此每次恢复必须实时查询分支 HEAD，不能把文档中记录的 SHA 当成永久最新值。
 - HEAD 提交：`Attribute Agent quality results to their owning member`
 - 最近一次应用代码 CI：run `45137113692`，对应应用代码 HEAD `1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`，状态 `completed`，结论 `success`。
 - 本次交接文档提交 `3c98f27a0de21778a133c92f1e2e42f0dda100ea` 是文档变更；核查时尚未看到对应的新 workflow run。不得把前一个应用代码提交的 CI 结果冒充为文档提交的 CI 结果。
