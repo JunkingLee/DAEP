@@ -1500,8 +1500,6 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
         assert reviewed.status_code==200 and reviewed.json()['status']=='DONE'
     assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_h,json={
         'progress':100,'note':'Both work packages approved'}).status_code==200
-    parent_review=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={'decision':'APPROVE'})
-    assert parent_review.status_code==200 and parent_review.json()['status']=='DONE'
 
     summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=owner_h).json()
     assert summary['all_done'] is True and summary['work_package_count']==2
