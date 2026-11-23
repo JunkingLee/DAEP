@@ -2204,6 +2204,141 @@ def project_artifact_quality_dashboard(pid:str,days:int=30,authorization:str=Hea
             'breakdowns':breakdowns,'recent_failures':failures[:50]}
 
 
+@app.get('/api/v1/projects/{pid}/risks')
+def list_project_quality_risks(pid:str,status:str=None,severity:str=None,limit:int=50,authorization:str=Header(None)):
+    a=actor(authorization)
+    if limit < 1 or limit > 200:
+        raise HTTPException(422,'limit must be between 1 and 200')
+    status_filter=(status or '').strip().upper()
+    severity_filter=(severity or '').strip().upper()
+    if status_filter and status_filter not in ('OPEN','IN_PROGRESS','RESOLVED','DISMISSED'):
+        raise HTTPException(422,'Unsupported risk status')
+    if severity_filter and severity_filter not in ('LOW','MEDIUM','HIGH','CRITICAL'):
+        raise HTTPException(422,'Unsupported risk severity')
+    with conn() as c:
+        require_project_access(c,pid,a)
+        where=['r.project_id=?']; params=[pid]
+        if status_filter:
+            where.append('r.status=?'); params.append(status_filter)
+        if severity_filter:
+            where.append('r.severity=?'); params.append(severity_filter)
+        where_sql=' AND '.join(where)
+        rows=c.execute("""SELECT r.*,t.title AS task_title,
+            av.version_number AS latest_version_number,
+            sm.name AS source_member_name,am.name AS assignee_name
+            FROM project_risk_events r
+            JOIN tasks t ON t.id=r.task_id
+            LEFT JOIN artifact_versions av ON av.id=r.artifact_version_id
+            LEFT JOIN members sm ON sm.id=r.source_member_id
+            LEFT JOIN members am ON am.id=r.assignee_member_id
+            WHERE """+where_sql+"""
+            ORDER BY CASE r.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1
+                WHEN 'MEDIUM' THEN 2 ELSE 3 END,r.last_seen_at DESC
+            LIMIT ?""",tuple(params+[limit])).fetchall()
+        total=c.execute('SELECT COUNT(*) AS n FROM project_risk_events r WHERE '+where_sql,tuple(params)).fetchone()['n']
+        return {'project_id':pid,'total':total,'limit':limit,'items':[dict(x) for x in rows]}
+
+
+@app.get('/api/v1/projects/{pid}/risks/{risk_id}')
+def get_project_quality_risk(pid:str,risk_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    with conn() as c:
+        require_project_access(c,pid,a)
+        row=c.execute("""SELECT r.*,t.title AS task_title,
+            av.version_number AS latest_version_number,
+            sm.name AS source_member_name,am.name AS assignee_name
+            FROM project_risk_events r
+            JOIN tasks t ON t.id=r.task_id
+            LEFT JOIN artifact_versions av ON av.id=r.artifact_version_id
+            LEFT JOIN members sm ON sm.id=r.source_member_id
+            LEFT JOIN members am ON am.id=r.assignee_member_id
+            WHERE r.project_id=? AND r.id=?""",(pid,risk_id)).fetchone()
+        if not row:
+            raise HTTPException(404,'Project risk not found')
+        occurrences=c.execute("""SELECT o.*,av.version_number
+            FROM project_risk_occurrences o
+            LEFT JOIN artifact_versions av ON av.id=o.artifact_version_id
+            WHERE o.project_id=? AND o.risk_id=? ORDER BY o.occurred_at DESC""",
+            (pid,risk_id)).fetchall()
+        audit=[]
+        for raw in c.execute("""SELECT id,event_type,actor_member_id,payload,created_at
+            FROM events WHERE task_id=? AND event_type LIKE 'project.quality_risk.%'
+            ORDER BY created_at DESC LIMIT 200""",(row['task_id'],)).fetchall():
+            item=dict(raw)
+            try: payload=json.loads(item.get('payload') or '{}')
+            except Exception: payload={}
+            if payload.get('risk_id')==risk_id:
+                item['payload']=payload
+                audit.append(item)
+        return {'project_id':pid,'risk':dict(row),
+                'occurrences':[dict(x) for x in occurrences],
+                'audit_events':audit}
+
+
+@app.patch('/api/v1/projects/{pid}/risks/{risk_id}')
+def update_project_quality_risk(pid:str,risk_id:str,b:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')=='AGENT':
+        raise HTTPException(403,'Agent identities cannot manage project risks')
+    allowed={'assignee_member_id','due_at','status','resolution_note'}
+    unknown=set(b)-allowed
+    if unknown:
+        raise HTTPException(422,'Unsupported risk fields: '+', '.join(sorted(unknown)))
+    if not b:
+        raise HTTPException(422,'At least one risk field must be provided')
+    with conn() as c:
+        begin_serialized_write(c)
+        require_project_access(c,pid,a,write=True)
+        role=project_role(c,pid,a)
+        if not is_admin(a) and role not in ('owner','manager','reviewer'):
+            raise HTTPException(403,'Project manager, owner, or reviewer required')
+        risk_sql='SELECT * FROM project_risk_events WHERE project_id=? AND id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            risk_sql+=' FOR UPDATE'
+        risk=c.execute(risk_sql,(pid,risk_id)).fetchone()
+        if not risk:
+            raise HTTPException(404,'Project risk not found')
+        assignee=risk['assignee_member_id']
+        if 'assignee_member_id' in b:
+            assignee=b.get('assignee_member_id') or None
+            if assignee:
+                member=c.execute("""SELECT 1 FROM project_members pm
+                    JOIN members m ON m.id=pm.member_id
+                    WHERE pm.project_id=? AND pm.member_id=?""",(pid,assignee)).fetchone()
+                if not member:
+                    raise HTTPException(422,'Risk assignee must be a member of this project')
+        due_at=risk['due_at']
+        if 'due_at' in b:
+            due_at=b.get('due_at') or None
+            if due_at:
+                try:
+                    parsed_due=datetime.fromisoformat(str(due_at).replace('Z','+00:00'))
+                    if parsed_due.tzinfo is None:
+                        parsed_due=parsed_due.replace(tzinfo=timezone.utc)
+                    due_at=parsed_due.astimezone(timezone.utc).isoformat()
+                except (TypeError,ValueError):
+                    raise HTTPException(422,'due_at must be an ISO-8601 datetime')
+        status=str(b.get('status',risk['status']) or '').strip().upper()
+        if status not in ('OPEN','IN_PROGRESS','RESOLVED','DISMISSED'):
+            raise HTTPException(422,'Unsupported risk status')
+        resolution_note=str(b.get('resolution_note',risk['resolution_note']) or '').strip() or None
+        if status in ('RESOLVED','DISMISSED') and not resolution_note:
+            raise HTTPException(422,'resolution_note is required when resolving or dismissing a risk')
+        stamp=now()
+        resolved_at=stamp if status in ('RESOLVED','DISMISSED') else None
+        c.execute("""UPDATE project_risk_events SET assignee_member_id=?,due_at=?,status=?,
+            resolution_note=?,resolved_at=?,updated_at=? WHERE id=? AND project_id=?""",
+            (assignee,due_at,status,resolution_note,resolved_at,stamp,risk_id,pid))
+        changes={key:b.get(key) for key in sorted(b)}
+        audit_id=event(c,'project.quality_risk.updated',a['id'],risk['task_id'],{
+            'project_id':pid,'risk_id':risk_id,'previous_status':risk['status'],
+            'status':status,'changes':changes,'assignee_member_id':assignee,'due_at':due_at
+        })
+        updated=c.execute('SELECT * FROM project_risk_events WHERE project_id=? AND id=?',
+            (pid,risk_id)).fetchone()
+        return {'risk':dict(updated),'audit_event_id':audit_id}
+
+
 @app.put('/api/v1/projects/{pid}/quality-policy')
 def set_project_artifact_quality_policy(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
