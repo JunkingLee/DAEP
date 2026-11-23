@@ -2580,7 +2580,8 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     pid_a,pid_b=project_a['id'],project_b['id']
 
     req_a=client.post('/api/v1/requirements',headers=ADMIN,json={
-        'project_id':pid_a,'title':'RC9 Agent lifecycle requirement'}).json()
+        'project_id':pid_a,'title':'RC9 Agent lifecycle requirement',
+        'acceptance_criteria':['Agent delivery artifact is present']}).json()
     task_a=client.post('/api/v1/tasks',headers=ADMIN,json={
         'requirement_id':req_a['id'],'title':'RC9 Agent lifecycle task'}).json()
     tid_a=task_a['id']
@@ -2669,6 +2670,33 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
         'agent_id':agent_id})
     assert reassigned.status_code==200,reassigned.text
     assert reassigned.json()['id']!=assignment_id
+
+    # Complete a fresh execution grant through the full human-review boundary.
+    new_assignment_id=reassigned.json()['id']
+    accepted_grant=client.post(f'/api/v1/agent-assignments/{new_assignment_id}/accept',headers=agent_h)
+    assert accepted_grant.status_code==200 and accepted_grant.json()['status']=='ACCEPTED'
+    delivered=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent-final',
+        'commit_sha':'rc9-agent-final','metadata':{'acceptance_criterion':0}})
+    assert delivered.status_code==200,delivered.text
+    requested_review=client.post(f'/api/v1/tasks/{tid_a}/progress',headers=agent_h,json={
+        'progress':100,'note':'Implementation and evidence delivered'})
+    assert requested_review.status_code==200,requested_review.text
+    agent_approval=client.post(f'/api/v1/tasks/{tid_a}/review',headers=agent_h,json={
+        'decision':'APPROVE'})
+    assert agent_approval.status_code==403,agent_approval.text
+    human_review=client.post(f'/api/v1/tasks/{tid_a}/review',headers=ADMIN,json={
+        'decision':'APPROVE','comment':'Reviewed Agent delivery evidence'})
+    assert human_review.status_code==200 and human_review.json()['status']=='DONE'
+    accepted_requirement=client.post(f"/api/v1/requirements/{req_a['id']}/acceptance",
+        headers=ADMIN,json={'decision':'APPROVE','verified_criteria':[0],
+                            'comment':'Verified Agent artifact and human task review'})
+    assert accepted_requirement.status_code==200
+    assert accepted_requirement.json()['status']=='ACCEPTED'
+    with main_module.conn() as c:
+        grant=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',
+                        (new_assignment_id,)).fetchone()
+    assert grant['status']=='COMPLETED'
 
 
 def test_agent_assignment_active_uniqueness_and_state_machine():
