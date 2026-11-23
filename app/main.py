@@ -1376,6 +1376,26 @@ def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
     if not stage: raise HTTPException(409,detail={'message':'Target workflow stage is not configured','stage_key':stage_key})
     for gate_key in [x['gate_key'] for x in c.execute('SELECT gate_key FROM project_gates WHERE project_id=?',(pid,)).fetchall()]:
         enforce_project_gate(c,pid,gate_key,actor_member_id,task_id,stage_key)
+def enforce_task_review_request(c,tid,a):
+    """Apply REVIEW-stage gates when progress is used to request human review."""
+    pid=task_project(c,tid)
+    if not pid: raise HTTPException(404,'Task not found')
+    workflow=project_workflow_config(c,pid)
+    if not any(x.get('key')=='REVIEW' for x in workflow.get('stages',[])):
+        raise HTTPException(409,'REVIEW stage is not configured for this project')
+    if a.get('actor_type')=='AGENT':
+        gate_rows=c.execute('SELECT gate_key FROM project_gates WHERE project_id=?',(pid,)).fetchall()
+        for gate_row in gate_rows:
+            gate_key=gate_row['gate_key']
+            gate=project_gate_config(c,pid,gate_key)
+            if not gate or not gate.get('enabled',True) or gate.get('applies_to','DONE')!='REVIEW':
+                continue
+            if gate.get('required_roles'):
+                raise HTTPException(403,'Agent cannot satisfy human role gates')
+            enforce_project_gate(c,pid,gate_key,a['id'],tid,'REVIEW')
+        return
+    enforce_workflow_stage(c,pid,'REVIEW',a['id'],tid)
+
 def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
@@ -1517,6 +1537,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if b.progress==100:
+            enforce_task_review_request(c,tid,a)
         if a.get('actor_type')=='AGENT' and b.progress==100:
             if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(tid,)).fetchone() is None:
                 raise HTTPException(409,'Agent must submit at least one artifact before requesting review')
@@ -3386,6 +3408,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
         raise HTTPException(409,'Agent must submit delivery evidence and report work result; a human reviewer closes the task')
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if b.progress==100:
+            enforce_task_review_request(c,tid,a)
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
@@ -5227,6 +5251,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if b.progress==100:
+            enforce_task_review_request(c,tid,a)
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
@@ -7203,6 +7229,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if b.progress==100:
+            enforce_task_review_request(c,tid,a)
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
@@ -9044,6 +9072,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
+        if b.progress==100:
+            enforce_task_review_request(c,tid,a)
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
