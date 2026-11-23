@@ -67,7 +67,7 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     agent=created.json()['agent']; raw_token=created.json()['token']
     ah={'Authorization':'Bearer '+raw_token}
     bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
-        'project_id':pid,'role':'reviewer','work_function':'developer'})
+        'project_id':pid,'role':'member','work_function':'developer'})
     assert bound.status_code==200,bound.text
     assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
         'agent_id':agent['id']})
