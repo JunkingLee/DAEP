@@ -180,6 +180,19 @@ BEGIN
   IF (SELECT count(*) FROM agent_tokens WHERE id IN ('rls-agent-token-a','rls-agent-token-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS Agent token isolation failed';
   END IF;
+  -- Credential lookup is permitted only through the dedicated definer
+  -- function; direct table access above remains tenant-filtered.
+  SELECT count(*) INTO visible_count
+    FROM daep_authenticate_agent_token('hash-a', now()::text)
+    WHERE tenant_id='tenant-a' AND agent_id='rls-agent-identity-a';
+  IF visible_count <> 1 THEN
+    RAISE EXCEPTION 'Agent token authenticator did not resolve the tenant-A credential';
+  END IF;
+  SELECT count(*) INTO visible_count
+    FROM daep_authenticate_agent_token('unknown-hash', now()::text);
+  IF visible_count <> 0 THEN
+    RAISE EXCEPTION 'Agent token authenticator accepted an unknown credential';
+  END IF;
   IF (SELECT count(*) FROM agent_project_bindings WHERE agent_id IN ('rls-agent-identity-a','rls-agent-identity-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS Agent project binding isolation failed';
   END IF;
