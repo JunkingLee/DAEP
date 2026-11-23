@@ -1376,10 +1376,14 @@ def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorizatio
         else: status='OPEN'
         stamp=now(); c.execute('UPDATE requirements SET status=? WHERE id=?',(status,rid))
         tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
+        accepted_versions=[{'task_id':x['id'],'artifact_version_id':latest_versions[x['id']]['id'],
+            'version_number':latest_versions[x['id']]['version_number']} for x in tasks if latest_versions[x['id']]]
         payload={'project_id':pid,'requirement_id':rid,'decision':b.decision,'status':status,'verified_criteria':verified,
-            'acceptance_criteria':criteria,'comment':b.comment,'task_ids':[x['id'] for x in tasks]}
+            'acceptance_criteria':criteria,'comment':b.comment,'task_ids':[x['id'] for x in tasks],
+            'artifact_versions':accepted_versions}
         eid=event(c,'requirement.acceptance.'+b.decision.lower(),a['id'],None,payload,tenant_override=tenant)
-        return {'requirement_id':rid,'status':status,'decision':b.decision,'event_id':eid,'decided_at':stamp,'verified_criteria':verified}
+        return {'requirement_id':rid,'status':status,'decision':b.decision,'event_id':eid,'decided_at':stamp,
+            'verified_criteria':verified,'artifact_versions':accepted_versions}
 
 @app.post('/api/v1/projects/{pid}/decisions')
 def record_project_decision(pid:str,b:ProjectDecisionIn,authorization:str=Header(None)):
