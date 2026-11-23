@@ -3356,3 +3356,20 @@ def test_artifact_quality_endpoint_is_registered():
     routes = [r for r in app.routes if getattr(r, 'path', '') == '/api/v1/tasks/{tid}/artifact-quality']
     assert len(routes) == 1
     assert 'GET' in routes[0].methods
+
+
+def test_artifact_quality_gate_is_enforced_for_human_approval():
+    from pathlib import Path
+    source = Path('app/main.py').read_text(encoding='utf-8')
+    assert "Artifact quality gate failed; task approval is blocked" in source
+    assert "Artifact quality gate failed; work package approval is blocked" in source
+    assert "Artifact quality gate failed; version approval is blocked" in source
+    assert "def artifact_version_quality(c, version_id):" in source
+
+
+def test_task_detail_loads_and_renders_artifact_quality():
+    from pathlib import Path
+    source = Path('web/index.html').read_text(encoding='utf-8')
+    assert "'/artifact-quality'" in source
+    assert 'function renderArtifactQuality(data)' in source
+    assert 'artifactQualityPanel+' in source
