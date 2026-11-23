@@ -87,6 +87,10 @@ BEGIN
   PERFORM set_config('app.member_id', 'rls-member-a', true);
   PERFORM set_config('app.lifecycle_action', '', true);
 
+  IF NOT daep_project_owner('rls-probe-a') THEN
+    RAISE EXCEPTION 'RLS lifecycle owner predicate failed: current member is not recognized as project owner';
+  END IF;
+
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
   UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
