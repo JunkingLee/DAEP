@@ -227,8 +227,12 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                 prow=c.execute("SELECT role FROM project_members WHERE project_id=? AND member_id=?",(body.project_id,a['id'])).fetchone()
                 if not prow or prow['role'] not in ('owner','manager'):
                     raise HTTPException(403,'Project manager role required')
-            r=c.execute("SELECT * FROM agents WHERE id=? AND tenant_id=? AND status='ACTIVE'",(agent_id,project['tenant_id'])).fetchone()
-            if not r: raise HTTPException(404,'Agent not found or inactive')
+            # Binding is the Agent owner's explicit consent to expose that
+            # identity to a project. A project manager may assign an already
+            # authorized Agent, but cannot bind another member's private Agent.
+            r=_agent_owner(c,agent_id,a,is_admin)
+            if r['tenant_id']!=project['tenant_id'] or r['status']!='ACTIVE':
+                raise HTTPException(404,'Agent not found or inactive')
             ts=now()
             c.execute("""INSERT INTO agent_project_bindings(project_id,agent_id,tenant_id,role,work_function,status,created_at,updated_at)
                          VALUES(?,?,?,?,?,?,?,?)
