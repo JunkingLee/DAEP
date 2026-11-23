@@ -2700,6 +2700,26 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
                             'comment':'Verified Agent artifact and human task review'})
     assert accepted_requirement.status_code==200
     assert accepted_requirement.json()['status']=='ACCEPTED'
+
+    # The progress shortcut must not bypass the REVIEW-stage role/evidence gate.
+    bypass_task=client.post('/api/v1/tasks',headers=manager_h,json={
+        'requirement_id':req.json()['id'],'title':'RC32 progress gate bypass',
+        'assignee_member_ids':[developer_id,tester_id]})
+    assert bypass_task.status_code==200,bypass_task.text
+    bypass_tid=bypass_task.json()['id']
+    developer_review=client.post(f'/api/v1/tasks/{bypass_tid}/progress',
+        headers=developer_h,json={'progress':100})
+    assert developer_review.status_code==403,developer_review.text
+    missing_evidence=client.post(f'/api/v1/tasks/{bypass_tid}/progress',
+        headers=tester_h,json={'progress':100})
+    assert missing_evidence.status_code==409,missing_evidence.text
+    test_evidence=client.post(f'/api/v1/tasks/{bypass_tid}/artifacts',headers=tester_h,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/rc32-progress-gate',
+        'commit_sha':'rc32-progress-gate','metadata':{'passed':3}})
+    assert test_evidence.status_code==200,test_evidence.text
+    tester_review=client.post(f'/api/v1/tasks/{bypass_tid}/progress',
+        headers=tester_h,json={'progress':100})
+    assert tester_review.status_code==200,tester_review.text
     with main_module.conn() as c:
         grant=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',
                         (new_assignment_id,)).fetchone()
