@@ -22,11 +22,12 @@ def upgrade():
       STABLE
       SECURITY DEFINER
       SET search_path = public
+      SET row_security = off
       AS $func$
         SELECT EXISTS (
           SELECT 1 FROM project_members pm
           WHERE pm.project_id = $1
-            AND pm.member_id = current_setting('app.member_id', true)
+            AND pm.member_id = NULLIF(current_setting('app.member_id', true), '')
             AND pm.role = 'owner'
         )
       $func$""")
