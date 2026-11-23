@@ -160,8 +160,8 @@
 - 提交：
   - `9bb7d11a9c1e585cce09553292e77227622036a0` — `test: add Playwright Agent lifecycle browser E2E`
   - `d970bcee7c4a17b468f9f6a1f68217c62fc0a78e` — `ci: run Agent lifecycle Playwright browser E2E`
-- 当前分支 HEAD：`ec9d14b0fc25a91f447c60108e532cb72add157f`。
-- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143208826` 对应修复后的 HEAD，当前等待最终结果。首次失败属于测试环境兼容问题，不代表 Agent 功能 E2E 已执行或失败；当前不得宣称浏览器 E2E 已通过。
+- 当前分支 HEAD：`7d3b939f28d2bb07994fc71ebf156db62984fb66`。
+- 验证状态：本环境未直接启动 Chromium。CI run `45143047580` 首次执行时，常规 Python 3.12 测试已通过，production-compose 与 container-build 已通过；浏览器安装失败，原因是 `ubuntu-latest` 已解析为 Ubuntu 26.04，而 Playwright 1.52.0 不支持该发行版。已将 `browser-e2e` 专用 runner 固定为 `ubuntu-24.04`（提交 `ec9d14b0fc25a91f447c60108e532cb72add157f`），新 CI run `45143257668` 已成功完成 Python 3.11/3.12/3.13、migration、production-compose、container-build，但浏览器测试在页面初始化竞态处失败：app-shell 刚显示时项目异步初始化尚未结束，测试过早切换到 Agent 页面，随后初始化完成又切回 overview，导致创建按钮不可见。已在 `7d3b939f28d2bb07994fc71ebf156db62984fb66` 中等待 `#overview.page.active` 后再切换，并明确等待 Agent 页面及创建按钮可见。该修复后的浏览器测试尚未运行；当前不得宣称浏览器 E2E 已通过。
 - 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
-- 下一步唯一任务：检查 CI run `45143047580` 的 browser-e2e 和全矩阵结果；若失败，依据失败步骤修复测试 harness 或实际 UI/API 缺陷，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
+- 下一步唯一任务：检查包含页面初始化竞态修复的最新 CI run，确认 browser-e2e 真实点击流程是否通过；若失败，依据失败步骤继续修复 harness 或 UI/API，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
 
