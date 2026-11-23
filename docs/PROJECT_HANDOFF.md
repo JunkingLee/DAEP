@@ -117,3 +117,18 @@
 ## 8. 新聊天可直接使用的恢复提示
 
 请先读取仓库 `JunkingLee/DAEP` 的 `docs/PROJECT_HANDOFF.md`，并核实 `release/1.0.0-rc9` 当前 HEAD 和对应 CI。严格按交接文档恢复项目进度，不要切换分支，不要重复已完成事项，不要擅自改变当前阶段。先向我汇报恢复结果，然后从文档中标记的下一项继续开发；每次提交后同步更新交接文档。
+
+## 9. 静态资源 404 修复（2026-11-23）
+
+- 问题确认：`web/index.html` 引用 `/agents.js`，但 `app/main.py` 未挂载静态目录，也没有 `/agents.js` 专用路由；`Dockerfile` 虽然复制 `web/`，但文件不会因此自动通过 HTTP 提供。
+- 已实现：
+  - `app/main.py` 引入 FastAPI `StaticFiles`，将仓库 `web/` 目录挂载到 `/static`；静态目录使用相对源码文件位置计算的绝对路径，避免依赖进程工作目录。
+  - `web/index.html` 将 Agent 脚本引用改为 `/static/agents.js`。
+  - 新增 `tests/test_static_assets.py`，覆盖首页引用、脚本 HTTP 200、JavaScript Content-Type、脚本内容，以及 `/readyz` API 未被静态挂载影响。
+- 提交：
+  - `f1256da8925305c30f06fa7f30d97cf56e9d15ab` — `fix: serve dashboard static assets`
+  - `96f36a3cb897d1f61ae8e937718a35fe3d6a56dd` — `fix: load agent script from static mount`
+  - `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` — `test: cover dashboard static asset serving`
+- 验证状态：新增回归测试已提交；当前 HEAD `8ff5ca60df2b2bf8ef265dbdaf498192b079b430` 的 CI run `45141300034` 查询时为 `in_progress`。尚未宣称 CI 通过；本环境本轮未直接运行 pytest。
+- 之前 HEAD `1113e2c8c67dda026852f68667e644934c99cc69` 的 CI run `45140494166` 已成功，但不覆盖本轮静态资源修改。
+- 下一步唯一任务：等待并核实最新静态资源修复 HEAD 的 CI 最终结果；若失败，按 job 日志修复。
