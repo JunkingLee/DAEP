@@ -81,6 +81,48 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
     assert denied_after_revoke.status_code==403
 
 
+
+def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    created=client.post('/api/v1/agents',headers=ADMIN,json={
+        'name':'Token Lifecycle Agent','description':'Token rotation and revocation regression'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    original=created.json()['token']
+    assert created.json()['token_once'] is True
+
+    original_headers={'Authorization':'Bearer '+original}
+    assert client.get('/api/v1/mcp/context',headers=original_headers).status_code==200
+
+    rotated=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=ADMIN)
+    assert rotated.status_code==200,rotated.text
+    replacement=rotated.json()['token']
+    assert rotated.json()['token_once'] is True
+    assert replacement != original
+    assert client.get('/api/v1/mcp/context',headers=original_headers).status_code==401
+
+    replacement_headers={'Authorization':'Bearer '+replacement}
+    context=client.get('/api/v1/mcp/context',headers=replacement_headers)
+    assert context.status_code==200,context.text
+    assert context.json()['actor_type']=='AGENT'
+    assert context.json()['agent_id']==agent['id']
+
+    revoked=client.post(f"/api/v1/agents/{agent['id']}/tokens/revoke",headers=ADMIN)
+    assert revoked.status_code==200 and revoked.json()['status']=='REVOKED'
+    assert client.get('/api/v1/mcp/context',headers=replacement_headers).status_code==401
+
+    with main_module.conn() as c:
+        token_rows=c.execute("SELECT token_hash,status FROM agent_tokens WHERE agent_id=?",(agent['id'],)).fetchall()
+        events=c.execute("SELECT event_type,payload FROM events WHERE actor_member_id IS NOT NULL ORDER BY created_at DESC LIMIT 20").fetchall()
+    assert len(token_rows)>=2
+    assert all(row['token_hash'] not in (original,replacement) for row in token_rows)
+    assert all(row['status']=='REVOKED' for row in token_rows)
+    event_types={row['event_type'] for row in events}
+    assert 'agent.token.rotated' in event_types
+    assert 'agent.token.revoked' in event_types
+
+
 def test_project_requirement_task_message_flow():
     _,mid,token,tid=setup_project_task()
     msg=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Start','content':'Please begin'}); assert msg.status_code==200
