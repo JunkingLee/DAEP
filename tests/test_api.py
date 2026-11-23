@@ -700,12 +700,12 @@ def test_rc5_secondary_admin_accounts_are_demoted_on_upgrade():
     db.close()
     assert role=='manager'
 
-def test_rc8_alembic_head_and_rls_migration_contract():
+def test_rc44_alembic_head_and_quality_risk_rls_migration_contract():
     from pathlib import Path
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0033_rc43_quality_policy (head)' in heads
+    assert '0034_rc44_quality_risk_events (head)' in heads
     migration=(root/'alembic/versions/0010_rc8_postgres_rls.py').read_text()
     assert 'FORCE ROW LEVEL SECURITY' in migration
     assert 'app.tenant_id' in migration
@@ -714,6 +714,12 @@ def test_rc8_alembic_head_and_rls_migration_contract():
     assert 'FORCE ROW LEVEL SECURITY' in artifact_migration
     assert 'UNIQUE(task_id, version_number)' in artifact_migration
     assert 'daep_artifact_versions_tenant' in artifact_migration
+    risk_migration=(root/'alembic/versions/0034_rc44_quality_risk_events.py').read_text()
+    assert 'project_risk_events' in risk_migration
+    assert 'project_risk_occurrences' in risk_migration
+    assert 'FORCE ROW LEVEL SECURITY' in risk_migration
+    assert 'daep_project_risk_events_tenant' in risk_migration
+    assert 'daep_project_risk_occurrences_tenant' in risk_migration
 
 
 def test_rc8_messages_have_explicit_tenant_ownership():
