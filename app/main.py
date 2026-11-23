@@ -1904,6 +1904,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
             c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,tid))
         sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
         sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
+        sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
         eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
         return {'task_id':tid,'status':status,'event_id':eid}
 
@@ -3832,6 +3833,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             status='IN_PROGRESS'; progress=90
         updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
         if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
+        sync_work_package_parent(c,package['child_task_id'],a['id'],'work_package_review_'+decision.lower())
         eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
         return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
 
@@ -5528,6 +5530,12 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
         require_task_access(c,tid,a,assigned_only=True)
         if b.progress==100:
             enforce_task_review_request(c,tid,a)
+            active_packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
+            if active_packages:
+                pending=[x['child_task_id'] for x in active_packages if x['status']!='DONE']
+                missing=[x['child_task_id'] for x in active_packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
+                if pending or missing:
+                    raise HTTPException(409,detail={'message':'Parent task cannot request review until all active work packages are approved and have delivery evidence','pending_work_packages':pending,'missing_artifacts':missing})
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
         scoped_key=f"{identity}:{tid}:{idempotency_key}" if idempotency_key else None
         if scoped_key:
@@ -5538,6 +5546,7 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
                 if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
+        sync_work_package_parent(c,tid,a['id'],'progress_updated')
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
     return {'event_id':eid,'task_id':tid,'progress':b.progress}
 @app.post('/api/v1/tasks/{tid}/blocked')
@@ -5545,7 +5554,7 @@ def blocked(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
-        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid)); eid=event(c,'task.blocked',a['id'],tid,b)
+        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid)); sync_work_package_parent(c,tid,a['id'],'blocked'); eid=event(c,'task.blocked',a['id'],tid,b)
     return {'event_id':eid,'status':'BLOCKED'}
 @app.post('/api/v1/tasks/{tid}/work-result')
 def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
@@ -5575,6 +5584,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         else:
             status='BLOCKED'; progress=0
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,now(),tid))
+        sync_work_package_parent(c,tid,a['id'],'work_result_'+b.outcome.lower())
         eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
@@ -5604,6 +5614,7 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
                 return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
         enforce_workflow_stage(c,pid,target,a['id'],tid)
         eid=transition_task_workflow(c,tid,target,a['id'],comment)
+        sync_work_package_parent(c,tid,a['id'],'workflow_transition_'+target.lower())
         if scoped_key:
             # The transition event itself is the idempotent record; attach a unique companion event only when needed.
             c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
