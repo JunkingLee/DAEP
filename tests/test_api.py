@@ -2927,10 +2927,10 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     db.row_factory=sqlite3.Row
     tenant_id=db.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
     requirement_id=db.execute('SELECT requirement_id FROM tasks WHERE id=?',(task_id,)).fetchone()['requirement_id']
-    child_id='tsk_member_exit_'+uuid.uuid4().hex[:8]
-    agent_id='agt_member_exit_'+uuid.uuid4().hex[:8]
-    package_id='wp_member_exit_'+uuid.uuid4().hex[:8]
-    assignment_id='ata_member_exit_'+uuid.uuid4().hex[:8]
+    child_id='tsk_member_exit_'+os.urandom(4).hex()
+    agent_id='agt_member_exit_'+os.urandom(4).hex()
+    package_id='wp_member_exit_'+os.urandom(4).hex()
+    assignment_id='ata_member_exit_'+os.urandom(4).hex()
     stamp=datetime.now(timezone.utc).isoformat()
     db.execute('INSERT INTO tasks(id,requirement_id,title,description,status,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
         (child_id,requirement_id,'Member-owned package','', 'IN_PROGRESS',20,stamp,stamp))
@@ -2942,7 +2942,7 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
         (assignment_id,child_id,pid,agent_id,tenant_id,manager.json()['id'],'ACCEPTED',stamp,stamp))
     db.execute('INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
         (package_id,task_id,child_id,pid,tenant_id,member_id,'member-exit-agent','ACTIVE',stamp,stamp))
-    message_id='msg_member_exit_'+uuid.uuid4().hex[:8]
+    message_id='msg_member_exit_'+os.urandom(4).hex()
     db.execute('INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
         (message_id,member_id,tenant_id,child_id,'WORK_PACKAGE_ASSIGNED','Exit package','{}','HIGH','PENDING',stamp))
     db.commit()
