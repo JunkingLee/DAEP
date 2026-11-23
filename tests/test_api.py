@@ -2802,6 +2802,15 @@ def test_agent_assignment_active_uniqueness_and_state_machine():
     assert second.status_code==200,second.text
     assert second.json()['id']!=assignment_id
 
+    other=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Competing Assignment Agent'})
+    assert other.status_code==200,other.text
+    assert client.post(f"/api/v1/agents/{other.json()['agent']['id']}/projects",headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'}).status_code==200
+    competing=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
+        'agent_id':other.json()['agent']['id']})
+    assert competing.status_code==409,competing.text
+    assert competing.json()['detail']['message']=='Task already has an active Agent assignment'
+
     with main_module.conn() as c:
         indexes=c.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_agent_task_assignments_active'").fetchall()
     assert indexes
