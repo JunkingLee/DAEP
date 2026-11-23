@@ -124,10 +124,15 @@ BEGIN
   PERFORM set_config('app.member_id', 'rls-member-a', true);
 
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
-  UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
-  GET DIAGNOSTICS changed_count = ROW_COUNT;
-  IF changed_count <> 0 THEN
-    RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project accepted normal write';
+  BEGIN
+    UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
+    RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project accepted normal write'
+      USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+  IF (SELECT name FROM projects WHERE id='rls-probe-a') <> 'RLS tenant A' THEN
+    RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project data was modified';
   END IF;
 
   PERFORM set_config('app.lifecycle_action', 'REOPEN', true);
