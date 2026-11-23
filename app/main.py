@@ -363,7 +363,7 @@ def actor(authorization):
     lookup_reset=_auth_lookup_ctx.set(True)
     try:
         with conn() as c:
-            r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
+            r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND password_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
     finally:
         _auth_lookup_ctx.reset(lookup_reset)
     if not r:
@@ -892,9 +892,9 @@ def enable_member(member_id:str,authorization:str=Header(None)):
         if not target: raise HTTPException(404,'Member not found')
         if not target['password_hash']: raise HTTPException(409,'Member has no password; reset password first')
         stamp=now()
-        c.execute("UPDATE members SET password_status='ACTIVE',token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(stamp,member_id))
+        c.execute("UPDATE members SET password_status='ACTIVE',token_status='REVOKED',token_revoked_at=COALESCE(token_revoked_at,?) WHERE id=?",(stamp,member_id))
         event(c,'member.account.enabled',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'ACTIVE','token_status':'ACTIVE'}
+    return {'member_id':member_id,'password_status':'ACTIVE','token_status':'REVOKED'}
 
 @app.post('/api/v1/members/{member_id}/reset-password')
 def reset_member_password(member_id:str,body:dict,authorization:str=Header(None)):
