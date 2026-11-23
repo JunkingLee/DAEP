@@ -118,17 +118,16 @@ def test_rc22_cross_member_agent_collaboration_end_to_end():
 
     parent_progress = client.post(f"/api/v1/tasks/{parent_id}/progress", headers=owner_h,
                                   json={"progress": 100, "note": "Delegated work ready for review"})
-    assert parent_progress.status_code == 200
-
-    parent_blocked = client.post(f"/api/v1/tasks/{parent_id}/review", headers=ADMIN,
-                                 json={"decision": "APPROVE"})
-    assert parent_blocked.status_code == 409
+    assert parent_progress.status_code == 409
 
     child_approved = client.post(f"/api/v1/tasks/{child_id}/review", headers=ADMIN,
                                  json={"decision": "APPROVE", "comment": "Artifact verified"})
     assert child_approved.status_code == 200
     assert child_approved.json()["status"] == "DONE"
 
+    parent_progress = client.post(f"/api/v1/tasks/{parent_id}/progress", headers=owner_h,
+                                  json={"progress": 100, "note": "All delegated work packages approved"})
+    assert parent_progress.status_code == 200
     parent_approved = client.post(f"/api/v1/tasks/{parent_id}/review", headers=ADMIN,
                                   json={"decision": "APPROVE", "comment": "Delegated work accepted"})
     assert parent_approved.status_code == 200
