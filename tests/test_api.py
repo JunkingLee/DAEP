@@ -3519,3 +3519,61 @@ def test_required_artifact_type_quality_is_checked_even_when_not_latest():
     blocked=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
     assert blocked.status_code==409,blocked.text
     assert blocked.json()['detail']['failed_required_artifacts'][0]['artifact_type']=='test_report'
+
+
+def test_workflow_transition_enforces_stage_quality_policy_and_dashboard_reports():
+    pid, _, _, tid = setup_project_task()
+    policy={
+        'min_coverage_percent':None,'max_failed_tests':None,
+        'required_artifact_types':[],'require_commit_sha':False,
+        'require_test_report':False,
+        'stage_overrides':{'REVIEW':{'min_coverage_percent':90,'require_test_report':True}}
+    }
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json=policy)
+    assert configured.status_code==200,configured.text
+
+    # The stage-specific requirement must block entering REVIEW before evidence exists.
+    blocked=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=ADMIN,json={'target_stage':'REVIEW'})
+    assert blocked.status_code==409,blocked.text
+    assert blocked.json()['detail']['missing_artifact_types']==['test_report']
+
+    report=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/stage-report',
+        'metadata':{'test_summary':{'total':20,'passed':20,'failed':0},'coverage_percent':80}})
+    assert report.status_code==200,report.text
+    blocked_again=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=ADMIN,json={'target_stage':'REVIEW'})
+    assert blocked_again.status_code==409,blocked_again.text
+    assert blocked_again.json()['detail']['failed_required_artifacts'][0]['artifact_type']=='test_report'
+
+    dashboard=client.get(f'/api/v1/projects/{pid}/quality-dashboard',headers=ADMIN)
+    assert dashboard.status_code==200,dashboard.text
+    data=dashboard.json()
+    assert data['artifact_version_count']==1
+    assert data['quality_totals']['FAIL']==1
+    assert data['recent_failures'][0]['task_id']==tid
+
+
+def test_requirement_acceptance_applies_acceptance_stage_quality_policy():
+    pid, _, _, tid = setup_project_task()
+    policy={
+        'required_artifact_types':[],'require_test_report':True,
+        'stage_overrides':{'ACCEPTANCE':{'min_coverage_percent':95}}
+    }
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json=policy)
+    assert configured.status_code==200,configured.text
+    report=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/acceptance-report',
+        'metadata':{'test_summary':{'total':5,'passed':5,'failed':0},'coverage_percent':90}})
+    assert report.status_code==200,report.text
+    # The task must be complete and its exact artifact version approved before the
+    # acceptance quality gate can be reached.
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='DONE',progress=100 WHERE id=?",(tid,))
+        version=c.execute("SELECT id FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1",(tid,)).fetchone()
+        c.execute("UPDATE artifact_versions SET review_status='APPROVED' WHERE id=?",(version['id'],))
+        req=c.execute("SELECT requirement_id FROM tasks WHERE id=?",(tid,)).fetchone()
+        c.execute("UPDATE requirements SET acceptance_criteria='[\\"criterion\\"]' WHERE id=?",(req['requirement_id'],))
+    accepted=client.post(f'/api/v1/requirements/{req["requirement_id"]}/acceptance',headers=ADMIN,json={
+        'decision':'APPROVE','verified_criteria':[0],'comment':'acceptance gate test'})
+    assert accepted.status_code==409,accepted.text
+    assert 'quality_blockers' in accepted.json()['detail']
