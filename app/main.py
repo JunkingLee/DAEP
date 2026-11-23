@@ -2002,12 +2002,25 @@ def enforce_required_artifact_types(c, task_id, quality_report=None):
     required=list(dict.fromkeys(str(x).lower().replace('-','_') for x in required))
     if not required:
         return
-    rows=c.execute('SELECT DISTINCT lower(replace(artifact_type,\'-\',\'_\')) AS artifact_type FROM artifacts WHERE task_id=?',(task_id,)).fetchall()
-    present={x['artifact_type'] for x in rows if x['artifact_type']}
-    missing=[x for x in required if x not in present]
-    if missing:
-        raise HTTPException(409,detail={'message':'Required artifact types are missing; approval is blocked',
-            'task_id':task_id,'missing_artifact_types':missing})
+    missing=[]; rejected=[]; failed=[]
+    for artifact_type in required:
+        row=c.execute("""SELECT v.id,v.review_status FROM artifact_versions v
+            JOIN artifacts a ON a.id=v.artifact_id
+            WHERE v.task_id=? AND lower(replace(a.artifact_type,'-','_'))=?
+            ORDER BY v.version_number DESC LIMIT 1""",(task_id,artifact_type)).fetchone()
+        if not row:
+            missing.append(artifact_type)
+            continue
+        if row['review_status']=='REJECTED':
+            rejected.append(artifact_type)
+            continue
+        report=artifact_version_quality(c,row['id'])
+        if report and report.get('status')=='FAIL':
+            failed.append({'artifact_type':artifact_type,'artifact_version_id':row['id'],'quality':report})
+    if missing or rejected or failed:
+        raise HTTPException(409,detail={'message':'Required artifact types are missing or failed quality checks; approval is blocked',
+            'task_id':task_id,'missing_artifact_types':missing,'rejected_artifact_types':rejected,
+            'failed_required_artifacts':failed})
 
 @app.get('/api/v1/projects/{pid}/quality-policy')
 def get_project_artifact_quality_policy(pid:str,authorization:str=Header(None)):
