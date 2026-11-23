@@ -179,3 +179,7 @@
 - CI：该提交触发的 workflow 运行状态待确认；浏览器用例尚未取得 CI 通过证据，不能标记为已验证。
 - 当前阶段：安全负向浏览器 E2E 正在验证中。
 - 下一步唯一任务：检查该提交的 browser-e2e 与完整 CI 结果；若失败，按日志修复并重跑；通过后更新本节的最终 HEAD、CI run ID 和验证结论。
+
+- 后续检查发现浏览器 E2E API helper 对无请求体的 GET/POST 传入了 JSON null；已修复为不为 GET/HEAD 构造 request body，避免浏览器 Fetch 规范拒绝该请求。
+- 修复提交：f200b4c458c238e9e575dc3c539edd404a31a7f1 — test: avoid GET request bodies in Agent security browser checks。
+- 首次安全测试提交触发的 CI run 45144832506 因同分支后续提交触发 concurrency 取消/重排，尚无有效浏览器 E2E 结论；修复提交及本交接文档的最终 CI 待确认。
