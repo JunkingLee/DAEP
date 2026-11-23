@@ -3388,12 +3388,12 @@ def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
         'required_artifact_types':['test_report'],
         'require_test_report':True,
         'require_commit_sha':False,
-        'stage_overrides':{'TEST':{'min_coverage_percent':90}}
+        'stage_overrides':{'READY':{'min_coverage_percent':85}}
     }
     configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=owner_headers,json=policy)
     assert configured.status_code==200,configured.text
     assert configured.json()['policy']['min_coverage_percent']==80
-    assert configured.json()['policy']['stage_overrides']['TEST']['min_coverage_percent']==90
+    assert configured.json()['policy']['stage_overrides']['READY']['min_coverage_percent']==85
 
     other_pid, _, other_token, _ = setup_project_task()
     denied=client.get(f'/api/v1/projects/{pid}/quality-policy',
@@ -3425,7 +3425,7 @@ def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
     assert quality.status_code==200,quality.text
     latest=quality.json()['latest']
     assert latest['quality']['status']=='PASS'
-    assert latest['quality']['policy_snapshot']['policy']['min_coverage_percent']==80
+    assert latest['quality']['policy_snapshot']['policy']['min_coverage_percent']==85
     assert latest['quality']['policy_snapshot']['stage']=='READY'
 
     with main_module.conn() as c:
