@@ -26,7 +26,7 @@ def test_rc26_tester_workbench_exposes_test_execution_controls():
         "function testerSetProgress",
         "function testerBlockTask",
         "function testerAddArtifact",
-        "测试操作",
+        "测试工作台",
         "添加验收证据",
     ):
         assert marker in HTML
