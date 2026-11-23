@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -34,6 +34,23 @@ INSERT INTO tasks (id,requirement_id,title,description,status,progress,created_a
 VALUES
   ('rls-task-a','rls-req-a','A task','','READY',0,'2026-11-18T00:00:00+00:00','2026-11-18T00:00:00+00:00'),
   ('rls-task-b','rls-req-b','B task','','READY',0,'2026-11-18T00:00:00+00:00','2026-11-18T00:00:00+00:00')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO agents(id,owner_member_id,tenant_id,name,description,status,created_at,updated_at)
+VALUES ('rls-agent-identity-a','rls-member-a','tenant-a','identity-a','','ACTIVE',now()::text,now()::text),
+       ('rls-agent-identity-b','rls-member-b','tenant-b','identity-b','','ACTIVE',now()::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_tokens(id,agent_id,tenant_id,token_hash,status,created_at)
+VALUES ('rls-agent-token-a','rls-agent-identity-a','tenant-a','hash-a','ACTIVE',now()::text),
+       ('rls-agent-token-b','rls-agent-identity-b','tenant-b','hash-b','ACTIVE',now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_project_bindings(project_id,agent_id,tenant_id,role,work_function,status,created_at,updated_at)
+VALUES ('rls-probe-a','rls-agent-identity-a','tenant-a','member','developer','ACTIVE',now()::text,now()::text),
+       ('rls-probe-b','rls-agent-identity-b','tenant-b','member','developer','ACTIVE',now()::text,now()::text)
+ON CONFLICT (project_id,agent_id) DO NOTHING;
+INSERT INTO agent_task_assignments(id,task_id,project_id,agent_id,tenant_id,assigned_by_member_id,status,created_at,updated_at)
+VALUES ('rls-agent-assignment-a','rls-task-a','rls-probe-a','rls-agent-identity-a','tenant-a','rls-member-a','ASSIGNED',now()::text,now()::text),
+       ('rls-agent-assignment-b','rls-task-b','rls-probe-b','rls-agent-identity-b','tenant-b','rls-member-b','ASSIGNED',now()::text,now()::text)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO project_members (project_id,member_id,role,joined_at)
@@ -149,6 +166,19 @@ BEGIN
   IF (SELECT count(*) FROM assignments WHERE task_id IN ('rls-task-a','rls-task-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS assignment isolation failed';
   END IF;
+  IF (SELECT count(*) FROM agents WHERE id IN ('rls-agent-identity-a','rls-agent-identity-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent identity isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_tokens WHERE id IN ('rls-agent-token-a','rls-agent-token-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent token isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_project_bindings WHERE agent_id IN ('rls-agent-identity-a','rls-agent-identity-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent project binding isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_task_assignments WHERE id IN ('rls-agent-assignment-a','rls-agent-assignment-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent task assignment isolation failed';
+  END IF;
+
   IF (SELECT count(*) FROM project_agents WHERE id IN ('rls-agent-a','rls-agent-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS project Agent isolation failed';
   END IF;
