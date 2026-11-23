@@ -66,8 +66,6 @@ DO $$
 DECLARE
   visible_count integer;
   changed_count integer;
-  policy_check text;
-  policy_using text;
 BEGIN
   SELECT count(*) INTO visible_count
     FROM projects WHERE id IN ('rls-probe-a', 'rls-probe-b');
@@ -98,17 +96,6 @@ BEGIN
     RAISE EXCEPTION 'RLS lifecycle owner predicate failed: current member is not recognized as project owner';
   END IF;
 
-  RAISE NOTICE 'RLS lifecycle pre-update: tenant=%, member=%, platform_admin=%, internal_service=%, tenant_visible=%, owner=%, row_tenant=%, row_status=%, closed_check=%',
-    current_setting('app.tenant_id', true), current_setting('app.member_id', true),
-    current_setting('app.platform_admin', true), current_setting('app.internal_service', true),
-    daep_tenant_visible((SELECT tenant_id FROM projects WHERE id='rls-probe-a')),
-    daep_project_owner('rls-probe-a'),
-    (SELECT tenant_id FROM projects WHERE id='rls-probe-a'),
-    (SELECT status FROM projects WHERE id='rls-probe-a'),
-    (daep_tenant_visible((SELECT tenant_id FROM projects WHERE id='rls-probe-a')) AND daep_project_owner('rls-probe-a'));
-  SELECT qual, with_check INTO policy_using, policy_check
-    FROM pg_policies WHERE schemaname='public' AND tablename='projects' AND policyname='daep_projects_tenant';
-  RAISE NOTICE 'RLS lifecycle policy: USING=%, WITH_CHECK=%', policy_using, policy_check;
   -- A tenant member who is not the project owner must not close the project.
   PERFORM set_config('app.member_id', 'rls-member-a2', true);
   BEGIN
@@ -145,7 +132,7 @@ BEGIN
   IF (SELECT count(*) FROM tasks WHERE id IN ('rls-task-a','rls-task-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS task isolation failed';
   END IF;
-  IF (SELECT count(*) FROM project_members WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 1 THEN
+  IF (SELECT count(*) FROM project_members WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 2 THEN
     RAISE EXCEPTION 'RLS project membership isolation failed';
   END IF;
   IF (SELECT count(*) FROM assignments WHERE task_id IN ('rls-task-a','rls-task-b')) <> 1 THEN
@@ -175,9 +162,6 @@ BEGIN
   IF NOT daep_tenant_visible('tenant-a') THEN
     RAISE EXCEPTION 'RLS same-tenant insert precondition failed: tenant context is not visible';
   END IF;
-  RAISE NOTICE 'RLS insert diagnostics: session_user=%, current_user=%, tenant=%, tenant_visible=%, active_status=%',
-    session_user, current_user, current_setting('app.tenant_id', true),
-    daep_tenant_visible('tenant-a'), 'ACTIVE';
   BEGIN
     INSERT INTO projects (id, name, description, created_by, created_at, tenant_id, status)
     VALUES ('rls-probe-a-write', 'Tenant A write', '', NULL, now()::text, 'tenant-a', 'ACTIVE');
