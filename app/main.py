@@ -2617,6 +2617,11 @@ def review_artifact_version(version_id:str,b:dict,authorization:str=Header(None)
     if decision=='REJECT' and not comment: raise HTTPException(422,'A rejection reason is required')
     with conn() as c:
         begin_serialized_write(c)
+        version_task=c.execute('SELECT task_id FROM artifact_versions WHERE id=?',(version_id,)).fetchone()
+        if not version_task: raise HTTPException(404,'Artifact version not found')
+        task_lock_sql='SELECT id FROM tasks WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')): task_lock_sql += ' FOR UPDATE'
+        c.execute(task_lock_sql,(version_task['task_id'],))
         version_sql="""SELECT v.*,a.uri,a.commit_sha FROM artifact_versions v
             JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=?"""
         if DATABASE_URL.startswith(('postgresql://','postgres://')): version_sql += ' FOR UPDATE'
