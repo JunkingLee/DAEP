@@ -124,6 +124,29 @@ def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
 
 
 
+
+def test_agent_management_is_scoped_to_owning_member_identity():
+    first=client.post('/api/v1/members',headers=ADMIN,json={'name':'Agent Owner One'}).json()
+    second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Agent Owner Two'}).json()
+    first_headers={'Authorization':'Bearer '+first['token']}
+    second_headers={'Authorization':'Bearer '+second['token']}
+
+    created=client.post('/api/v1/agents',headers=first_headers,json={
+        'name':'Private Member Agent','description':'Owner-scoped Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    assert agent['owner_member_id']==first['id']
+    assert [item['id'] for item in client.get('/api/v1/agents',headers=first_headers).json()]==[agent['id']]
+    assert client.get('/api/v1/agents',headers=second_headers).json()==[]
+
+    assert client.get(f"/api/v1/agents/{agent['id']}",headers=second_headers).status_code==403
+    assert client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=second_headers).status_code==403
+    assert client.post(f"/api/v1/agents/{agent['id']}/tokens/revoke",headers=second_headers).status_code==403
+
+    owner_view=client.get(f"/api/v1/agents/{agent['id']}",headers=first_headers)
+    assert owner_view.status_code==200 and owner_view.json()['owner_member_id']==first['id']
+
+
 def test_web_password_login_change_password_and_logout_session_lifecycle():
     username='session.lifecycle.user'
     old_password='Initial-Password-123!'
