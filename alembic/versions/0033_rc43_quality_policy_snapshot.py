@@ -1,7 +1,7 @@
 """RC43: preserve immutable artifact quality policy snapshots."""
 from alembic import op
 
-revision = "0033_rc43_quality_policy_snapshot"
+revision = "0033_rc43_quality_policy"
 down_revision = "0032_rc42_artifact_versions"
 branch_labels = None
 depends_on = None
