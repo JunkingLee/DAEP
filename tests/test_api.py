@@ -3611,3 +3611,56 @@ def test_requirement_acceptance_ui_shows_quality_blockers_and_guards_approval():
     assert 'd.quality_blockers' in source
     assert 'd.ready_for_acceptance&&' in source
     assert '质量门禁检查' in source
+
+
+def test_quality_failure_creates_and_escalates_project_risk_once_per_occurrence():
+    pid, owner_id, owner_token, tid = setup_project_task()
+    headers={'Authorization':'Bearer '+owner_token}
+    payload={'artifact_type':'document','uri':'invalid-uri','metadata':{}}
+
+    first=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json=payload)
+    assert first.status_code==200,first.text
+    first_body=first.json()
+    assert first_body['quality']['status']=='FAIL'
+    assert len(first_body['quality_risks'])==1
+    assert first_body['quality_risks'][0]['severity']=='LOW'
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.row_factory=sqlite3.Row
+    risks=db.execute('SELECT * FROM project_risk_events WHERE project_id=?',(pid,)).fetchall()
+    assert len(risks)==1
+    assert risks[0]['occurrence_count']==1
+    assert risks[0]['status']=='OPEN'
+    assert db.execute('SELECT COUNT(*) FROM project_risk_occurrences WHERE risk_id=?',(risks[0]['id'],)).fetchone()[0]==1
+    db.close()
+
+    second=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json=payload)
+    assert second.status_code==200,second.text
+    assert second.json()['quality_risks'][0]['severity']=='MEDIUM'
+
+    third=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json=payload)
+    assert third.status_code==200,third.text
+    assert third.json()['quality_risks'][0]['severity']=='HIGH'
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    risk=db.execute('SELECT occurrence_count,severity FROM project_risk_events WHERE project_id=?',(pid,)).fetchone()
+    assert tuple(risk)==(3,'HIGH')
+    assert db.execute('SELECT COUNT(*) FROM project_risk_events WHERE project_id=?',(pid,)).fetchone()[0]==1
+    assert db.execute('SELECT COUNT(*) FROM project_risk_occurrences WHERE project_id=?',(pid,)).fetchone()[0]==3
+    assert db.execute("SELECT COUNT(*) FROM events WHERE event_type LIKE 'project.quality_risk.%' AND task_id=?",(tid,)).fetchone()[0]==3
+    db.close()
+
+
+def test_quality_dashboard_reads_do_not_create_additional_risk_occurrences():
+    pid, owner_id, owner_token, tid = setup_project_task()
+    headers={'Authorization':'Bearer '+owner_token}
+    submitted=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=headers,json={
+        'artifact_type':'document','uri':'bad-uri','metadata':{}})
+    assert submitted.status_code==200,submitted.text
+    for _ in range(2):
+        dashboard=client.get(f'/api/v1/projects/{pid}/quality-dashboard?days=7',headers=headers)
+        assert dashboard.status_code==200,dashboard.text
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    assert db.execute('SELECT COUNT(*) FROM project_risk_events WHERE project_id=?',(pid,)).fetchone()[0]==1
+    assert db.execute('SELECT COUNT(*) FROM project_risk_occurrences WHERE project_id=?',(pid,)).fetchone()[0]==1
+    db.close()
