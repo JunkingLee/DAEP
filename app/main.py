@@ -1997,7 +1997,9 @@ def effective_artifact_quality_policy(record, stage):
 
 def artifact_quality_policy_snapshot(c, project_id, stage):
     record=project_artifact_quality_policy(c,project_id)
-    return {'policy':effective_artifact_quality_policy(record,stage),'stage':str(stage or '').upper(),
+    return {'policy':effective_artifact_quality_policy(record,stage),
+            'project_policy':record.get('policy') or dict(DEFAULT_ARTIFACT_QUALITY_POLICY),
+            'stage':str(stage or '').upper(),
             'policy_updated_at':record.get('updated_at'),'policy_source':record.get('source')}
 
 def enforce_required_artifact_types(c, task_id, quality_report=None):
@@ -2037,13 +2039,8 @@ def evaluate_task_quality_for_stage(c, task_id, stage):
     project_id=task_project(c,task_id)
     if not project_id:
         raise HTTPException(404,'Task not found')
-    record=project_artifact_quality_policy(c,project_id)
-    policy=effective_artifact_quality_policy(record,stage)
-    required=list(policy.get('required_artifact_types') or [])
-    if policy.get('require_test_report'):
-        required.append('test_report')
-    required=list(dict.fromkeys(str(x).lower().replace('-','_') for x in required))
-    rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,
+    current_record=project_artifact_quality_policy(c,project_id)
+    rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,v.quality_policy_snapshot,
         a.artifact_type,a.uri,a.commit_sha,a.metadata
         FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
         WHERE v.task_id=? AND v.version_number=(
@@ -2051,6 +2048,24 @@ def evaluate_task_quality_for_stage(c, task_id, stage):
             JOIN artifacts a2 ON a2.id=v2.artifact_id
             WHERE v2.task_id=v.task_id AND lower(replace(a2.artifact_type,'-','_'))=lower(replace(a.artifact_type,'-','_')))
         ORDER BY v.version_number DESC""",(task_id,)).fetchall()
+    # The newest submitted evidence establishes the immutable project-policy
+    # snapshot governing this task's subsequent stage checks.
+    governing_policy=None
+    if rows:
+        try:
+            newest_snapshot=json.loads(rows[0]['quality_policy_snapshot'] or '')
+            if isinstance(newest_snapshot,dict):
+                governing_policy=newest_snapshot.get('project_policy') or newest_snapshot.get('policy')
+        except Exception:
+            governing_policy=None
+    if not isinstance(governing_policy,dict):
+        governing_policy=current_record.get('policy') or dict(DEFAULT_ARTIFACT_QUALITY_POLICY)
+    record={'policy':governing_policy}
+    policy=effective_artifact_quality_policy(record,stage)
+    required=list(policy.get('required_artifact_types') or [])
+    if policy.get('require_test_report'):
+        required.append('test_report')
+    required=list(dict.fromkeys(str(x).lower().replace('-','_') for x in required))
     reports=[]; found=set()
     for raw in rows:
         item=dict(raw); kind=str(item['artifact_type'] or '').lower().replace('-','_'); found.add(kind)
@@ -2068,10 +2083,10 @@ def evaluate_task_quality_for_stage(c, task_id, stage):
     failed_required=failed if policy_enforced else []
     blocked=bool(missing or rejected or failed_required)
     return {'task_id':task_id,'stage':str(stage or '').upper(),'policy':policy,
+        'policy_snapshot_source':'latest-artifact-submission' if rows else current_record.get('source'),
         'artifact_count':len(reports),'missing_artifact_types':missing,
         'rejected_artifact_types':rejected,'failed_artifacts':failed,
         'failed_required_artifacts':failed_required,'blocked':blocked,'artifacts':reports}
-
 
 def enforce_task_quality_stage(c, task_id, stage):
     result=evaluate_task_quality_for_stage(c,task_id,stage)
