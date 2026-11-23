@@ -451,16 +451,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -2586,16 +2588,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -4413,16 +4417,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -6250,16 +6256,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -8183,16 +8191,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
@@ -10010,16 +10020,18 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     audit_payload=dict(payload or {})
     audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
     if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
+    # Agent actions are attributed to the Agent identity, never to its owner's member row.
+    actor_member_id=None if _agent_ctx.get() else member
     payload_json=json.dumps(audit_payload)
     if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
         prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
         if prior:
             if prior['payload'] != payload_json:
                 raise HTTPException(409,'Idempotency key was used with a different payload')
             return prior['id']
     else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,member,task,payload_json,now(),key,tenant))
+        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
 @app.get('/',include_in_schema=False)
