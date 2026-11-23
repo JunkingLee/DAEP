@@ -2739,3 +2739,36 @@ def test_agent_assignment_active_uniqueness_and_state_machine():
     with main_module.conn() as c:
         indexes=c.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_agent_task_assignments_active'").fetchall()
     assert indexes
+
+
+
+def test_product_work_function_can_create_requirements_and_tasks_but_developer_cannot():
+    pid, developer_id, developer_token, _ = setup_project_task()
+    product = client.post('/api/v1/members', headers=ADMIN, json={'name':'Product Planner'})
+    assert product.status_code == 200, product.text
+    product_id = product.json()['id']
+    added = client.post(f'/api/v1/projects/{pid}/members', headers=ADMIN, json={
+        'member_id': product_id, 'role':'member', 'work_function':'product'})
+    assert added.status_code == 200, added.text
+    product_headers = {'Authorization':'Bearer '+product.json()['token']}
+    developer_headers = {'Authorization':'Bearer '+developer_token}
+
+    requirement = client.post('/api/v1/requirements', headers=product_headers, json={
+        'project_id':pid, 'title':'Product-owned requirement',
+        'description':'Product role may define scope and acceptance criteria',
+        'acceptance_criteria':['A user-visible outcome is documented']})
+    assert requirement.status_code == 200, requirement.text
+
+    task = client.post('/api/v1/tasks', headers=product_headers, json={
+        'requirement_id':requirement.json()['id'], 'title':'Product-planned task',
+        'description':'Create an implementation task from an approved requirement',
+        'assignee_member_ids':[developer_id]})
+    assert task.status_code == 200, task.text
+
+    denied_requirement = client.post('/api/v1/requirements', headers=developer_headers, json={
+        'project_id':pid, 'title':'Developer cannot create project requirement'})
+    assert denied_requirement.status_code == 403, denied_requirement.text
+
+    denied_task = client.post('/api/v1/tasks', headers=developer_headers, json={
+        'requirement_id':requirement.json()['id'], 'title':'Developer cannot create unassigned task'})
+    assert denied_task.status_code == 403, denied_task.text
