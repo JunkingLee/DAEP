@@ -20,7 +20,8 @@ INSERT INTO members (id,name,role,token,created_at,tenant_id)
 VALUES
   ('rls-member-a','RLS A','developer','rls-token-a','2026-11-18T00:00:00+00:00','tenant-a'),
   ('rls-member-b','RLS B','developer','rls-token-b','2026-11-18T00:00:00+00:00','tenant-b'),
-  ('rls-member-a2','RLS A2','developer','rls-token-a2','2026-11-18T00:00:00+00:00','tenant-a')
+  ('rls-member-a2','RLS A2','developer','rls-token-a2','2026-11-18T00:00:00+00:00','tenant-a'),
+  ('rls-member-am','RLS AM','developer','rls-token-am','2026-11-18T00:00:00+00:00','tenant-a')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO requirements (id,project_id,title,description,acceptance_criteria,status,created_at)
@@ -38,7 +39,8 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO project_members (project_id,member_id,role,joined_at)
 VALUES ('rls-probe-a','rls-member-a','owner','2026-11-18T00:00:00+00:00'),
        ('rls-probe-b','rls-member-b','owner','2026-11-18T00:00:00+00:00'),
-       ('rls-probe-a','rls-member-a2','member','2026-11-18T00:00:00+00:00')
+       ('rls-probe-a','rls-member-a2','member','2026-11-18T00:00:00+00:00'),
+       ('rls-probe-a','rls-member-am','manager','2026-11-18T00:00:00+00:00')
 ON CONFLICT DO NOTHING;
 INSERT INTO assignments (task_id,member_id)
 VALUES ('rls-task-a','rls-member-a'),('rls-task-b','rls-member-b')
@@ -108,8 +110,8 @@ BEGIN
   IF (SELECT status FROM projects WHERE id='rls-probe-a') <> 'ACTIVE' THEN
     RAISE EXCEPTION 'RLS lifecycle authorization failed: non-owner changed project status';
   END IF;
-  PERFORM set_config('app.member_id', 'rls-member-a', true);
-
+  -- A project manager may close the project, matching the API contract.
+  PERFORM set_config('app.member_id', 'rls-member-am', true);
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
   BEGIN
     UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
@@ -122,7 +124,16 @@ BEGIN
     RAISE EXCEPTION 'RLS lifecycle freeze failed: closed project data was modified';
   END IF;
 
+  -- A manager may not reopen; owner approval is required.
   PERFORM set_config('app.lifecycle_action', 'REOPEN', true);
+  BEGIN
+    UPDATE projects SET status='ACTIVE' WHERE id='rls-probe-a';
+    RAISE EXCEPTION 'RLS lifecycle authorization failed: manager reopened project'
+      USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+  PERFORM set_config('app.member_id', 'rls-member-a', true);
   UPDATE projects SET status='ACTIVE' WHERE id='rls-probe-a';
   PERFORM set_config('app.lifecycle_action', '', true);
 
@@ -132,7 +143,7 @@ BEGIN
   IF (SELECT count(*) FROM tasks WHERE id IN ('rls-task-a','rls-task-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS task isolation failed';
   END IF;
-  IF (SELECT count(*) FROM project_members WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 2 THEN
+  IF (SELECT count(*) FROM project_members WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 3 THEN
     RAISE EXCEPTION 'RLS project membership isolation failed';
   END IF;
   IF (SELECT count(*) FROM assignments WHERE task_id IN ('rls-task-a','rls-task-b')) <> 1 THEN
