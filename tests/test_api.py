@@ -3497,3 +3497,25 @@ def test_project_quality_policy_controls_are_exposed_in_governance_ui():
     assert 'openQualityPolicyDesigner()' in source
     assert 'saveQualityPolicy()' in source
     assert "'/quality-policy'" in source
+
+
+def test_required_artifact_type_quality_is_checked_even_when_not_latest():
+    pid, _, _, tid = setup_project_task()
+    policy={'min_coverage_percent':90,'max_failed_tests':0,
+            'required_artifact_types':[],'require_test_report':True,
+            'require_commit_sha':False,'stage_overrides':{}}
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json=policy)
+    assert configured.status_code==200,configured.text
+    report=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'test_report','uri':'https://example.invalid/required-report',
+        'metadata':{'test_summary':{'total':10,'passed':10,'failed':0},'coverage_percent':75}})
+    assert report.status_code==200,report.text
+    commit=client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ADMIN,json={
+        'artifact_type':'git_commit','uri':'https://example.invalid/required-commit',
+        'commit_sha':'a123abc','metadata':{}})
+    assert commit.status_code==200,commit.text
+    with main_module.conn() as c:
+        c.execute("UPDATE tasks SET status='REVIEW',progress=90 WHERE id=?",(tid,))
+    blocked=client.post(f'/api/v1/tasks/{tid}/review',headers=ADMIN,json={'decision':'APPROVE'})
+    assert blocked.status_code==409,blocked.text
+    assert blocked.json()['detail']['failed_required_artifacts'][0]['artifact_type']=='test_report'
