@@ -1350,11 +1350,17 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
             items.append(item)
         missing=[x['id'] for x in items if x['status']!='DONE' or x['artifact_count']<1]
         missing_versions=[x['id'] for x in items if not x['latest_artifact_version'] or x['latest_artifact_review_status']!='APPROVED']
+        quality_blockers=[]
+        for item in items:
+            stage_quality=evaluate_task_quality_for_stage(c,item['id'],'ACCEPTANCE')
+            if stage_quality['blocked']:
+                quality_blockers.append(stage_quality)
         return {'requirement_id':rid,'project_id':req['project_id'],'title':req['title'],'status':req['status'],
             'acceptance_criteria':[{'index':i,'text':v} for i,v in enumerate(criteria)],'task_count':len(items),
             'tasks':items,'all_tasks_done':bool(items) and all(x['status']=='DONE' for x in items),
             'missing_delivery_evidence_task_ids':missing,'missing_artifact_version_task_ids':missing_versions,
-            'ready_for_acceptance':bool(items) and not missing and not missing_versions and bool(criteria)}
+            'quality_blockers':quality_blockers,
+            'ready_for_acceptance':bool(items) and not missing and not missing_versions and not quality_blockers and bool(criteria)}
 
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
