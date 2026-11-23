@@ -14,19 +14,22 @@
 
 - 核实时间：2026-11-23
 - 分支：`release/1.0.0-rc9`
-- 最近一次应用代码基线 HEAD：`1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`。
-- 交接文档提交：`3c98f27a0de21778a133c92f1e2e42f0dda100ea`（后续还有一次文档状态说明更新）。
-- 注意：HEAD 会随本文件自身的更新而变化，因此每次恢复必须实时查询分支 HEAD，不能把文档中记录的 SHA 当成永久最新值。
-- HEAD 提交：`Attribute Agent quality results to their owning member`
-- 最近一次应用代码 CI：run `45137113692`，对应应用代码 HEAD `1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`，状态 `completed`，结论 `success`。
-- 本次交接文档提交 `3c98f27a0de21778a133c92f1e2e42f0dda100ea` 是文档变更；核查时尚未看到对应的新 workflow run。不得把前一个应用代码提交的 CI 结果冒充为文档提交的 CI 结果。
-- 当前确认的最近质量治理提交：
+- 当前代码 HEAD（最近核实）：`d10ea324e3c405b9a5db4dceb6615351a9d903c9`。
+- 最近 CI：run `45138889286`，对应 HEAD `d10ea324e3c405b9a5db4dceb6615351a9d903c9`，状态 `completed`，结论 `success`。
+- CI 验证：Python 3.11/3.12/3.13 均为 `192 passed`；PostgreSQL migration/RLS job 成功；production compose 和容器构建成功。
+- 注意：本文件自身每次更新都会产生新 HEAD；新聊天必须实时查询分支 HEAD 和 CI，不能把这里记录的 SHA 当成永久最新值。
+- 最近质量治理实现提交：
   - `f6e35b072c741c1a141bde377fbca7e51ca3645f` — 质量 Dashboard 增加 7/30/90 天范围和多维统计 API。
   - `9c38cab3dd7b07bd636559118c43731cd5828c7e` — 前端增加 7/30/90 时间范围及任务/交付类型/Agent/成员维度。
-  - `da6fb6209023ec8246ee7fd80d4c88911f2ac077` — 趋势和重复失败统计保留所选时间范围内的全部交付版本。
-  - `6ea9e83160bb6ac203b5f5d327f692b14a441a6b` — 增加每日通过/失败/待确认分段趋势展示。
+  - `da6fb6209023ec8246ee7fd80d4c88911f2ac077` — 趋势统计保留时间范围内全部交付版本。
+  - `6ea9e83160bb6ac203b5f5d327f692b14a441a6b` — 每日通过/失败/待确认分段趋势。
   - `1e0cafbb22299d96bb9fbe106bd3c0f64479aa45` — Agent 质量记录按 Agent 所有者归属成员维度。
-- 上述实现曾进行前端脚本语法检查；不能把该检查扩大表述为完整后端集成测试。当前 HEAD 对应 CI 成功是独立的可验证结果。
+  - `e4a858158d6179087de6f57c67604b858f337b99` — 交付提交时执行质量评估，失败自动创建/归并项目风险并写审计事件。
+  - `021c9466cad22f6ea90a883bd7b1c49035905c88` — 增加风险创建、重复失败升级和 Dashboard 无副作用测试。
+  - `043cf5afc3f523640164399fd31786eae6877f4e` — 新增 PostgreSQL 风险事件/发生记录迁移及租户 RLS。
+  - `2e060091cf38ee2a28ec0923c515a7be47faf7cf` — 迁移改为兼容 bootstrap 已创建表和索引。
+  - `6a02ab816d3720bd525fe19e097732f301555e9a`、`d10ea324e3c405b9a5db4dceb6615351a9d903c9` — 更新 Alembic head/RLS 合约测试。
+- CI 首轮暴露的测试合约问题已修复；最终 CI 对最新代码 HEAD 全绿。
 
 ## 3. 当前开发阶段（不得擅自改题）
 
@@ -47,25 +50,25 @@
 |---|---|---|
 | 7/30/90 天质量趋势 | 已实现，CI 已通过 | API 参数校验和前端范围切换已提交 |
 | 按任务/交付类型/Agent/成员统计 | 已实现，CI 已通过 | Agent 提交记录可归属 Agent 所有者成员 |
-| 质量失败自动生成风险事件 | 待实现 | 先审查质量评估真实写入路径，禁止在 Dashboard 查询时产生副作用 |
-| 重复失败归并与风险升级 | 待实现 | 需要幂等键/归并规则及升级阈值 |
-| 责任人/期限/状态整改闭环 | 待实现 | 包含权限校验、状态流转和审计 |
-| 风险关联审计时间线 | 待实现 | 风险事件与任务、交付版本、审计事件建立可追溯关系 |
+| 质量失败自动生成风险事件 | 已实现，CI 已通过 | 交付提交路径执行质量评估；每个任务/交付类型/失败检查项归并一个风险 |
+| 重复失败归并与风险升级 | 已实现，CI 已通过 | 同一风险记录累计发生次数；第 1 次 LOW、第 2 次 MEDIUM、第 3 次及以上 HIGH；解决/忽略后再次失败会重新打开 |
+| 责任人/期限/状态整改闭环 | 待实现 | 表结构已预留 assignee_member_id、due_at、status、resolution_note；尚无管理 API/UI |
+| 风险关联审计时间线 | 基础已实现，待补查询界面 | 每次风险发生均写入 events 审计事件，并记录 artifact version occurrence；尚无风险列表/详情 API 和 UI |
 
 ## 4. 下一步执行顺序
 
 严格按顺序推进，不要跳回 Agent 管理或 MCP 功能优化：
 
-1. 检查 `release/1.0.0-rc9` 当前 HEAD 和最新 CI。
-2. 审查 `app/main.py` 中 artifact version 创建、质量评估写入和审计事件真实调用路径；文件历史上有重复定义/注入片段，必须精确定位，不做全局替换。
-3. 审查 `audit_events`、租户隔离、SQLite bootstrap 和 Alembic 迁移约定。
-4. 设计并实现质量失败风险事件持久化：幂等归并、活动风险复用、关闭后再次失败的策略、发生次数和首次/最近发生时间。
-5. 实现重复失败升级策略，并记录升级审计事件。
-6. 实现风险列表、责任人、整改期限、状态更新和处理备注 API；检查项目权限与跨租户隔离。
-7. 将风险事件与相关 artifact version、task、项目审计时间线关联。
-8. 补前端风险列表和整改闭环入口。
-9. 增加并运行针对性测试；如无法运行某类测试，明确标记未验证，不得声称通过。
-10. 更新本文件，记录新增提交 SHA、测试命令及真实结果、CI run 状态、剩余事项和下一步。
+1. 已完成：检查基准分支 HEAD、CI，审查 artifact version 提交路径、质量评估函数、events 审计事件、SQLite bootstrap 和 Alembic/RLS 迁移约定。
+2. 已完成：交付提交时自动评估质量；FAIL 检查项自动生成风险事件。
+3. 已完成：按 task + normalized artifact_type + quality_check_key 归并风险；每个 artifact version/check 只产生一次 occurrence；重复失败升级级别（1 LOW、2 MEDIUM、3+ HIGH）。
+4. 已完成：风险发生记录保留每次失败对应的 artifact_version_id、检查项、消息、操作者和时间；风险变化写入 events 审计时间线。
+5. 已完成并验证：SQLite/应用测试、PostgreSQL migration/RLS、Python 3.11/3.12/3.13 CI。
+6. **下一项唯一任务：实现项目风险列表/详情 API**，返回风险当前状态、严重等级、发生次数、责任人、整改期限、关联任务/交付版本、历史 occurrences；API 必须先执行 require_project_access。
+7. 随后实现风险更新 API（责任人、整改期限、OPEN/IN_PROGRESS/RESOLVED/DISMISSED、处理备注），并写入审计事件。
+8. 再补前端风险列表、详情和整改闭环 UI。
+9. 增加 API 权限、跨租户隔离、状态流转和审计关联测试。
+10. 每次提交后更新本交接文件，记录 SHA、测试命令/结果和最新 CI。
 
 ## 5. 跨聊天窗口恢复协议（每次新聊天必须执行）
 
