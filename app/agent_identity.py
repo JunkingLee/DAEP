@@ -182,7 +182,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def update_agent(agent_id: str, body: AgentUpdateIn, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            r=_agent_owner(c,agent_id,a)
+            r=_agent_owner(c,agent_id,a,is_admin)
             c.execute("UPDATE agents SET name=?,description=?,status=?,updated_at=? WHERE id=?",(body.name,body.description,body.status,now(),agent_id))
             event(c,'agent.updated',a['id'],None,{'agent_id':agent_id})
             return dict(c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE id=?",(agent_id,)).fetchone())
@@ -191,7 +191,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def rotate_agent_token(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            r=_agent_owner(c,agent_id,a)
+            r=_agent_owner(c,agent_id,a,is_admin)
             raw,token_id=_issue(c,agent_id,now(),r['tenant_id'])
             event(c,'agent.token.rotated',a['id'],None,{'agent_id':agent_id,'token_id':token_id})
             return {'agent_id':agent_id,'token':raw,'token_id':token_id,'token_once':True}
@@ -200,7 +200,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def revoke_agent_token(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            _agent_owner(c,agent_id,a)
+            _agent_owner(c,agent_id,a,is_admin)
             ts=now()
             c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",(ts,agent_id))
             event(c,'agent.token.revoked',a['id'],None,{'agent_id':agent_id})
