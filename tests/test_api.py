@@ -3083,3 +3083,49 @@ def test_agent_token_revocation_releases_active_assignments():
     assert new_assignment.status_code==200,new_assignment.text
     assert new_assignment.json()['id']!=assignment_id
 
+def test_agent_assignment_heartbeat_and_stale_recovery():
+    pid,_,_,tid=setup_project_task()
+    created=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Heartbeat Recovery Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']; token=created.json()['token']
+    agent_id=agent['id']
+    assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
+        'project_id':pid,'role':'member','work_function':'developer'}).status_code==200
+    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent_id})
+    assert assigned.status_code==200,assigned.text
+    assignment_id=assigned.json()['id']
+    ah={'Authorization':'Bearer '+token}
+    accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
+    assert accepted.status_code==200,accepted.text
+
+    # Agent heartbeats are restricted to its own accepted grant.
+    heartbeat=client.post(f'/api/v1/agent-assignments/{assignment_id}/heartbeat',headers=ah)
+    assert heartbeat.status_code==200,heartbeat.text
+    assert heartbeat.json()['status']=='ACCEPTED'
+    too_soon=client.post(f'/api/v1/agent-assignments/{assignment_id}/recover',headers=ADMIN,json={
+        'stale_after_minutes':5,'reason':'Premature recovery'})
+    assert too_soon.status_code==409,too_soon.text
+
+    # Simulate an Agent that stopped heartbeating. Recovery is an explicit
+    # manager action and preserves the old assignment as an auditable record.
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    db.execute("UPDATE agent_task_assignments SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",(assignment_id,))
+    db.commit(); db.close()
+    recovered=client.post(f'/api/v1/agent-assignments/{assignment_id}/recover',headers=ADMIN,json={
+        'stale_after_minutes':5,'reason':'Agent heartbeat timed out'})
+    assert recovered.status_code==200,recovered.text
+    assert recovered.json()['status']=='REVOKED'
+    assert recovered.json()['previous_status']=='ACCEPTED'
+    assert client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={
+        'progress':50,'note':'Old Agent must no longer write'}).status_code==403
+
+    replacement=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent_id})
+    assert replacement.status_code==200,replacement.text
+    assert replacement.json()['id']!=assignment_id
+    with main_module.conn() as c:
+        old=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()
+        audit=c.execute("SELECT 1 FROM events WHERE event_type='task.agent_assignment_recovered' AND task_id=? AND payload LIKE ?",
+            (tid,'%'+assignment_id+'%')).fetchone()
+    assert old['status']=='REVOKED'
+    assert audit is not None
+
