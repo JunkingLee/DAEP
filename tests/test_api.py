@@ -1086,6 +1086,12 @@ def test_rc26_stage4_work_package_review_reject_and_approve_gate():
     assert approved.status_code==200 and approved.json()['status']=='DONE'
     assert approved.json()['artifact_version_number']==2
     assert client.get(f'/api/v1/tasks/{child}',headers=ADMIN).json()['status']=='DONE'
+    parent_summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=ADMIN)
+    assert parent_summary.status_code==200,parent_summary.text
+    latest=next(x for x in parent_summary.json()['latest_artifact_versions'] if x['child_task_id']==child)
+    assert latest['version_number']==2 and latest['review_status']=='APPROVED'
+    assert latest['artifact_version_id']==second_artifact.json()['artifact_version_id']
+    assert parent_summary.json()['approved_latest_versions']==1
     with main_module.conn() as c:
         reviewed_versions=c.execute('SELECT version_number,review_status,review_comment FROM artifact_versions WHERE task_id=? ORDER BY version_number',(child,)).fetchall()
     assert [(x['version_number'],x['review_status']) for x in reviewed_versions]==[(1,'REJECTED'),(2,'APPROVED')]
