@@ -1115,6 +1115,7 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot approve or reject requirement acceptance')
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
@@ -1566,6 +1567,8 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
         cfg=project_workflow_config(c,pid)
         stage=next((x for x in cfg.get('stages',[]) if x.get('key')==target),None)
         if not stage: raise HTTPException(409,'Target workflow stage is not configured')
+        if a.get('actor_type')=='AGENT' and (target=='DONE' or stage.get('approval_role','none') not in ('none',None,'')):
+            raise HTTPException(403,'Agent cannot enter approval or completion stages; human review is required')
         current=c.execute('SELECT status FROM tasks WHERE id=?',(tid,)).fetchone()['status']
         if is_admin(a): pass
         elif current in ('REVIEW','DONE') or target in ('DONE',):
@@ -1595,6 +1598,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
     if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent identities cannot review or approve work')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
@@ -1629,6 +1633,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
     if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent identities cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
@@ -2973,6 +2978,7 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot approve or reject requirement acceptance')
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
@@ -3352,6 +3358,8 @@ def my_tasks(authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/progress')
 def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT' and b.progress>=100:
+        raise HTTPException(409,'Agent must submit delivery evidence and report work result; a human reviewer closes the task')
     with conn() as c:
         require_task_access(c,tid,a,assigned_only=True)
         identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
@@ -3445,6 +3453,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -3475,6 +3484,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
@@ -4812,6 +4822,7 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot approve or reject requirement acceptance')
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
@@ -5284,6 +5295,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -5314,6 +5326,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
@@ -6786,6 +6799,7 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot approve or reject requirement acceptance')
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
@@ -7258,6 +7272,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -7288,6 +7303,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
@@ -8625,6 +8641,7 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot approve or reject requirement acceptance')
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(rid,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
@@ -9097,6 +9114,7 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
 @app.post('/api/v1/tasks/{tid}/review')
 def review_task(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization); decision=b.get('decision')
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -9127,6 +9145,7 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
 @app.post('/api/v1/work-packages/{package_id}/review')
 def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
     decision=str(b.get('decision','')).strip().upper()
     comment=str(b.get('comment',''))[:4000]
     if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
