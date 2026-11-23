@@ -88,7 +88,7 @@ def _token():
 def _hash(raw):
     return hashlib.sha256(raw.encode()).hexdigest()
 
-def _agent_owner(c, agent_id, a):
+def _agent_owner(c, agent_id, a, is_admin):
     row=c.execute("SELECT * FROM agents WHERE id=? AND tenant_id=?",(agent_id,a.get('tenant_id','tenant-default'))).fetchone()
     if not row: raise HTTPException(404,'Agent not found')
     if not is_admin(a) and row['owner_member_id'] != a['id']:
@@ -171,7 +171,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     def get_agent(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
         with conn() as c:
-            r=_agent_owner(c,agent_id,a)
+            r=_agent_owner(c,agent_id,a,is_admin)
             b=c.execute("""SELECT b.project_id,p.name project_name,b.role,b.work_function,b.status
                            FROM agent_project_bindings b JOIN projects p ON p.id=b.project_id
                            WHERE b.agent_id=? ORDER BY p.name""",(agent_id,)).fetchall()
