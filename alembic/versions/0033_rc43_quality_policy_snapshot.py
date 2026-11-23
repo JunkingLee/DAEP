@@ -13,14 +13,14 @@ def upgrade():
     op.execute("ALTER TABLE artifact_versions ADD COLUMN IF NOT EXISTS quality_policy_snapshot TEXT")
     op.execute("""
         CREATE OR REPLACE FUNCTION daep_artifact_quality_snapshot_immutable()
-        RETURNS trigger AS $
-        BEGIN
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS 'BEGIN
             IF NEW.quality_policy_snapshot IS DISTINCT FROM OLD.quality_policy_snapshot THEN
-                RAISE EXCEPTION 'artifact quality policy snapshot is immutable';
+                RAISE EXCEPTION ''artifact quality policy snapshot is immutable'';
             END IF;
             RETURN NEW;
-        END;
-        $ LANGUAGE plpgsql
+        END;'
     """)
     op.execute("""
         CREATE TRIGGER trg_artifact_quality_snapshot_immutable
