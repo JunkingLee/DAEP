@@ -1328,12 +1328,23 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
         require_project_access(c,req['project_id'],a)
         criteria=json.loads(req['acceptance_criteria'] or '[]')
         tasks=c.execute("SELECT t.id,t.title,t.status,t.progress,t.updated_at,(SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count FROM tasks t WHERE t.requirement_id=? ORDER BY t.created_at,t.id",(rid,)).fetchall()
-        items=[dict(x) for x in tasks]
+        items=[]
+        for raw in tasks:
+            item=dict(raw)
+            latest=c.execute("""SELECT v.id,v.version_number,v.review_status,v.review_comment,v.reviewed_at,
+                a.id AS artifact_id,a.artifact_type,a.uri,a.commit_sha
+                FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+                WHERE v.task_id=? ORDER BY v.version_number DESC LIMIT 1""",(item['id'],)).fetchone()
+            item['latest_artifact_version']=dict(latest) if latest else None
+            item['latest_artifact_review_status']=latest['review_status'] if latest else None
+            items.append(item)
         missing=[x['id'] for x in items if x['status']!='DONE' or x['artifact_count']<1]
+        missing_versions=[x['id'] for x in items if not x['latest_artifact_version'] or x['latest_artifact_review_status']!='APPROVED']
         return {'requirement_id':rid,'project_id':req['project_id'],'title':req['title'],'status':req['status'],
             'acceptance_criteria':[{'index':i,'text':v} for i,v in enumerate(criteria)],'task_count':len(items),
             'tasks':items,'all_tasks_done':bool(items) and all(x['status']=='DONE' for x in items),
-            'missing_delivery_evidence_task_ids':missing,'ready_for_acceptance':bool(items) and not missing and bool(criteria)}
+            'missing_delivery_evidence_task_ids':missing,'missing_artifact_version_task_ids':missing_versions,
+            'ready_for_acceptance':bool(items) and not missing and not missing_versions and bool(criteria)}
 
 @app.post('/api/v1/requirements/{rid}/acceptance')
 def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorization:str=Header(None)):
@@ -1352,11 +1363,15 @@ def decide_requirement_acceptance(rid:str,b:RequirementAcceptanceIn,authorizatio
         if len(verified)!=len(b.verified_criteria): raise HTTPException(422,'verified_criteria must be unique')
         if any(i<0 or i>=len(criteria) for i in verified): raise HTTPException(422,'verified_criteria contains an unknown criterion index')
         tasks=c.execute("SELECT t.id,t.status,(SELECT COUNT(*) FROM artifacts ar WHERE ar.task_id=t.id) AS artifact_count FROM tasks t WHERE t.requirement_id=? ORDER BY t.id",(rid,)).fetchall()
+        latest_versions={x['id']:c.execute('SELECT id,version_number,review_status FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1',(x['id'],)).fetchone() for x in tasks}
         if b.decision=='APPROVE':
             if not criteria or verified!=list(range(len(criteria))): raise HTTPException(409,'Every acceptance criterion must be explicitly verified')
             pending=[x['id'] for x in tasks if x['status']!='DONE']
             missing=[x['id'] for x in tasks if x['artifact_count']<1]
-            if not tasks or pending or missing: raise HTTPException(409,detail={'message':'Requirement cannot be accepted until every task is DONE and has delivery evidence','pending_task_ids':pending,'missing_artifact_task_ids':missing})
+            pending_versions=[x['id'] for x in tasks if not latest_versions[x['id']] or latest_versions[x['id']]['review_status']!='APPROVED']
+            if not tasks or pending or missing or pending_versions:
+                raise HTTPException(409,detail={'message':'Requirement cannot be accepted until every task is DONE and its latest artifact version is approved',
+                    'pending_task_ids':pending,'missing_artifact_task_ids':missing,'pending_artifact_version_task_ids':pending_versions})
             status='ACCEPTED'
         else: status='OPEN'
         stamp=now(); c.execute('UPDATE requirements SET status=? WHERE id=?',(status,rid))
