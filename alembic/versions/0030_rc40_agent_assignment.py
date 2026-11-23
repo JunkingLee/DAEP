@@ -17,7 +17,7 @@ def upgrade():
           AND a.agent_id=b.agent_id
           AND a.status IN ('ASSIGNED','ACCEPTED')
           AND b.status IN ('ASSIGNED','ACCEPTED')
-          AND a.created_at < b.created_at
+          AND (a.created_at, a.id) < (b.created_at, b.id)
     """)
     op.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_assignments_active
