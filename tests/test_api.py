@@ -60,6 +60,12 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
     assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
     progress=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':25,'note':'Agent execution'})
     assert progress.status_code==200,progress.text
+    import json
+    with main_module.conn() as c:
+        audit=c.execute('SELECT actor_member_id,payload FROM events WHERE id=?',(progress.json()['event_id'],)).fetchone()
+    audit_payload=json.loads(audit['payload'])
+    assert audit['actor_member_id'] is None
+    assert audit_payload['actor_type']=='AGENT' and audit_payload['agent_id']==agent['id']
 
     other=client.post('/api/v1/agents',headers=ADMIN,json={'name':'Unassigned Agent'}).json()
     assert client.post(f"/api/v1/agents/{other['agent']['id']}/projects",headers=ADMIN,json={
