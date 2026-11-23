@@ -64,6 +64,8 @@ DO $$
 DECLARE
   visible_count integer;
   changed_count integer;
+  policy_check text;
+  policy_using text;
 BEGIN
   SELECT count(*) INTO visible_count
     FROM projects WHERE id IN ('rls-probe-a', 'rls-probe-b');
@@ -102,6 +104,9 @@ BEGIN
     (SELECT tenant_id FROM projects WHERE id='rls-probe-a'),
     (SELECT status FROM projects WHERE id='rls-probe-a'),
     (daep_tenant_visible((SELECT tenant_id FROM projects WHERE id='rls-probe-a')) AND daep_project_owner('rls-probe-a'));
+  SELECT qual, with_check INTO policy_using, policy_check
+    FROM pg_policies WHERE schemaname='public' AND tablename='projects' AND policyname='daep_projects_tenant';
+  RAISE NOTICE 'RLS lifecycle policy: USING=%, WITH_CHECK=%', policy_using, policy_check;
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
   UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
