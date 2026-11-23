@@ -405,11 +405,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -2570,11 +2569,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -4414,11 +4412,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -6266,11 +6263,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -8233,11 +8229,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -10075,11 +10070,10 @@ def require_project_access(c, project_id, a, write=False):
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
             (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager':
-            raise HTTPException(403,'Agent project manager role required')
+        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
