@@ -47,7 +47,7 @@ def upgrade():
 
     op.execute("DROP TRIGGER IF EXISTS daep_projects_lifecycle_owner_guard ON projects")
     op.execute("""CREATE TRIGGER daep_projects_lifecycle_owner_guard
-      BEFORE UPDATE OF status ON projects
+      BEFORE UPDATE ON projects
       FOR EACH ROW
       EXECUTE FUNCTION daep_enforce_project_lifecycle_owner()""")
 
