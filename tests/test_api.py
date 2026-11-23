@@ -3603,3 +3603,11 @@ def test_project_quality_dashboard_is_connected_to_governance_ui():
     assert 'renderQualityDashboard(qd)' in source
     assert 'qualityDashboardMetrics' in source
     assert 'qualityDashboardTrend' in source
+
+
+def test_requirement_acceptance_ui_shows_quality_blockers_and_guards_approval():
+    from pathlib import Path
+    source=Path('web/index.html').read_text(encoding='utf-8')
+    assert 'd.quality_blockers' in source
+    assert 'd.ready_for_acceptance&&' in source
+    assert '质量门禁检查' in source
