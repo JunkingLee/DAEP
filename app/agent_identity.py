@@ -16,7 +16,7 @@ class AgentUpdateIn(BaseModel):
 
 class AgentProjectBindingIn(BaseModel):
     project_id: str = Field(min_length=1, max_length=120)
-    role: str = Field(default='member', pattern='^member\\Z')
+    role: str = Field(default='member', pattern='^member$')
     work_function: str = Field(default='other', pattern='^(developer|tester|product|architect|other)$')
 
 def ensure_agent_schema(conn):
