@@ -3394,6 +3394,8 @@ def test_project_artifact_quality_policy_is_scoped_and_snapshotted():
     assert configured.status_code==200,configured.text
     assert configured.json()['policy']['min_coverage_percent']==80
     assert configured.json()['policy']['stage_overrides']['READY']['min_coverage_percent']==85
+    generic_gate_write=client.put(f'/api/v1/projects/{pid}/gates/ARTIFACT_QUALITY',headers=owner_headers,json={'enabled':True,'required_roles':[],'required_evidence':False,'required_all_tasks_done':False})
+    assert generic_gate_write.status_code==409
 
     other_pid, _, other_token, _ = setup_project_task()
     denied=client.get(f'/api/v1/projects/{pid}/quality-policy',
