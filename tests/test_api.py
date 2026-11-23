@@ -3127,6 +3127,11 @@ def test_agent_assignment_heartbeat_and_stale_recovery():
     assert recovered.json()['previous_status']=='ACCEPTED'
     assert client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={
         'progress':50,'note':'Old Agent must no longer write'}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/artifacts',headers=ah,json={
+        'artifact_type':'late-delivery','uri':'https://example.invalid/late','commit_sha':'',
+        'metadata':{'source':'revoked-agent'}}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/blocked',headers=ah,json={
+        'reason':'Late blocked report from revoked Agent'}).status_code==403
 
     replacement=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={'agent_id':agent_id})
     assert replacement.status_code==200,replacement.text
