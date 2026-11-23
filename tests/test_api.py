@@ -3260,7 +3260,9 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert rows[0]['actor_type']=='AGENT' and rows[0]['agent_id']==agent['id']
     assert rows[0]['actor_member_id'] is None
     assert rows[1]['review_comment']=='Missing integration test evidence'
-    assert rows[2]['commit_sha']=='version-one'\n    assert rows[3]['actor_type']=='MEMBER' and rows[3]['actor_member_id']=='member-admin'\n    assert rows[3]['commit_sha']=='human-version-one'
+    assert rows[2]['commit_sha']=='version-one'
+    assert rows[3]['actor_type']=='MEMBER' and rows[3]['actor_member_id']=='member-admin'
+    assert rows[3]['commit_sha']=='human-version-one'
 
     with main_module.conn() as c:
         audit=c.execute("SELECT actor_member_id,payload FROM events WHERE event_type='artifact.submitted' AND task_id=? ORDER BY created_at",(tid,)).fetchall()
