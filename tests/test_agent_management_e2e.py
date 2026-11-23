@@ -238,10 +238,10 @@ def test_agent_security_negative_browser_flows(daep_server):
                     """async ({method, path, body, bearer}) => {
                         const token = bearer || localStorage.getItem('daep.web.access_token');
                         const headers = token ? {'Authorization': 'Bearer ' + token} : {};
-                        if (body !== undefined) headers['Content-Type'] = 'application/json';
+                        if (body !== null && body !== undefined) headers['Content-Type'] = 'application/json';
                         const response = await fetch(path, {
                             method, headers,
-                            body: body === undefined ? undefined : JSON.stringify(body)
+                            body: body === null || body === undefined ? undefined : JSON.stringify(body)
                         });
                         let data = null;
                         try { data = await response.json(); } catch (_) {}
