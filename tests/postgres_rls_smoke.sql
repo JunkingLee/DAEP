@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments, artifact_versions TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -73,6 +73,14 @@ INSERT INTO task_delegations(id,task_id,project_id,tenant_id,requester_member_id
 
 INSERT INTO tasks (id,requirement_id,title,description,status,progress,created_at,updated_at) VALUES ('rls-child-a','rls-req-a','A child','','READY',0,now()::text,now()::text),('rls-child-b','rls-req-b','B child','','READY',0,now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
 INSERT INTO task_work_packages(id,parent_task_id,child_task_id,project_id,tenant_id,assignee_member_id,agent_name,status,created_at,updated_at) VALUES ('rls-work-package-a','rls-task-a','rls-child-a','rls-probe-a','tenant-a','rls-member-a','agent-a','ACTIVE',now()::text,now()::text),('rls-work-package-b','rls-task-b','rls-child-b','rls-probe-b','tenant-b','rls-member-b','agent-b','ACTIVE',now()::text,now()::text) ON CONFLICT (id) DO NOTHING;
+INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id)
+VALUES ('rls-artifact-a','rls-child-a','test_report','https://example.invalid/a','a','{}',now()::text,'tenant-a'),
+       ('rls-artifact-b','rls-child-b','test_report','https://example.invalid/b','b','{}',now()::text,'tenant-b')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO artifact_versions(id,artifact_id,task_id,work_package_id,version_number,actor_type,actor_member_id,tenant_id,review_status,created_at)
+VALUES ('rls-artifact-version-a','rls-artifact-a','rls-child-a','rls-work-package-a',1,'MEMBER','rls-member-a','tenant-a','PENDING',now()::text),
+       ('rls-artifact-version-b','rls-artifact-b','rls-child-b','rls-work-package-b',1,'MEMBER','rls-member-b','tenant-b','PENDING',now()::text)
+ON CONFLICT (id) DO NOTHING;
 INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES ('rls-approval-a','rls-probe-a','tenant-a','rls-member-a','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text),('rls-approval-b','rls-probe-b','tenant-b','rls-member-b','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text) ON CONFLICT (id) DO NOTHING;
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
@@ -178,6 +186,9 @@ BEGIN
   IF (SELECT count(*) FROM agent_task_assignments WHERE id IN ('rls-agent-assignment-a','rls-agent-assignment-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS Agent task assignment isolation failed';
   END IF;
+  IF (SELECT count(*) FROM artifact_versions WHERE id IN ('rls-artifact-version-a','rls-artifact-version-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS artifact version isolation failed';
+  END IF;
 
   IF (SELECT count(*) FROM project_agents WHERE id IN ('rls-agent-a','rls-agent-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS project Agent isolation failed';
@@ -213,6 +224,11 @@ BEGIN
   GET DIAGNOSTICS changed_count = ROW_COUNT;
   IF changed_count <> 0 THEN
     RAISE EXCEPTION 'RLS Agent task assignment update isolation failed';
+  END IF;
+  UPDATE artifact_versions SET review_status='APPROVED' WHERE id='rls-artifact-version-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS artifact version update isolation failed';
   END IF;
 
   UPDATE projects SET name = 'cross-tenant-write' WHERE id = 'rls-probe-b';
