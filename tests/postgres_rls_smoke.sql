@@ -19,7 +19,8 @@ ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id;
 INSERT INTO members (id,name,role,token,created_at,tenant_id)
 VALUES
   ('rls-member-a','RLS A','developer','rls-token-a','2026-11-18T00:00:00+00:00','tenant-a'),
-  ('rls-member-b','RLS B','developer','rls-token-b','2026-11-18T00:00:00+00:00','tenant-b')
+  ('rls-member-b','RLS B','developer','rls-token-b','2026-11-18T00:00:00+00:00','tenant-b'),
+  ('rls-member-a2','RLS A2','developer','rls-token-a2','2026-11-18T00:00:00+00:00','tenant-a')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO requirements (id,project_id,title,description,acceptance_criteria,status,created_at)
@@ -36,7 +37,8 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO project_members (project_id,member_id,role,joined_at)
 VALUES ('rls-probe-a','rls-member-a','owner','2026-11-18T00:00:00+00:00'),
-       ('rls-probe-b','rls-member-b','owner','2026-11-18T00:00:00+00:00')
+       ('rls-probe-b','rls-member-b','owner','2026-11-18T00:00:00+00:00'),
+       ('rls-probe-a','rls-member-a2','member','2026-11-18T00:00:00+00:00')
 ON CONFLICT DO NOTHING;
 INSERT INTO assignments (task_id,member_id)
 VALUES ('rls-task-a','rls-member-a'),('rls-task-b','rls-member-b')
@@ -107,6 +109,20 @@ BEGIN
   SELECT qual, with_check INTO policy_using, policy_check
     FROM pg_policies WHERE schemaname='public' AND tablename='projects' AND policyname='daep_projects_tenant';
   RAISE NOTICE 'RLS lifecycle policy: USING=%, WITH_CHECK=%', policy_using, policy_check;
+  -- A tenant member who is not the project owner must not close the project.
+  PERFORM set_config('app.member_id', 'rls-member-a2', true);
+  BEGIN
+    UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
+    RAISE EXCEPTION 'RLS lifecycle authorization failed: non-owner closed project'
+      USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+  IF (SELECT status FROM projects WHERE id='rls-probe-a') <> 'ACTIVE' THEN
+    RAISE EXCEPTION 'RLS lifecycle authorization failed: non-owner changed project status';
+  END IF;
+  PERFORM set_config('app.member_id', 'rls-member-a', true);
+
   UPDATE projects SET status='CLOSED' WHERE id='rls-probe-a';
   UPDATE projects SET name='closed-write-must-fail' WHERE id='rls-probe-a';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
