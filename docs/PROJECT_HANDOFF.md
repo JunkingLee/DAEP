@@ -14,10 +14,11 @@
 
 - 核实时间：2026-11-23
 - 分支：`release/1.0.0-rc9`
-- HEAD：`1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`
+- 当前 HEAD：`3c98f27a0de21778a133c92f1e2e42f0dda100ea`（本次新增交接文档的提交）。
+- 最近一次应用代码 HEAD：`1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`。
 - HEAD 提交：`Attribute Agent quality results to their owning member`
-- 最新 GitHub Actions：run `45137113692`，状态 `completed`，结论 `success`。
-- 该 CI 结果对应上述 HEAD SHA。后续有新提交时必须重新检查 CI，不得沿用旧结果。
+- 最近一次应用代码 CI：run `45137113692`，对应应用代码 HEAD `1e0cafbb22299d96bb9fbe106bd3c0f64479aa45`，状态 `completed`，结论 `success`。
+- 本次交接文档提交 `3c98f27a0de21778a133c92f1e2e42f0dda100ea` 是文档变更；核查时尚未看到对应的新 workflow run。不得把前一个应用代码提交的 CI 结果冒充为文档提交的 CI 结果。
 - 当前确认的最近质量治理提交：
   - `f6e35b072c741c1a141bde377fbca7e51ca3645f` — 质量 Dashboard 增加 7/30/90 天范围和多维统计 API。
   - `9c38cab3dd7b07bd636559118c43731cd5828c7e` — 前端增加 7/30/90 时间范围及任务/交付类型/Agent/成员维度。
