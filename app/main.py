@@ -414,6 +414,18 @@ def require_project_access(c, project_id, a, write=False):
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
+def require_project_planning_access(c, project_id, a):
+    """Allow project product owners to create requirements and tasks, without granting governance rights."""
+    require_project_access(c,project_id,a,write=False)
+    project=c.execute('SELECT status FROM projects WHERE id=?',(project_id,)).fetchone()
+    if project and project['status']=='CLOSED':
+        raise HTTPException(409,'Project is closed')
+    if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        raise HTTPException(403,'Agent cannot create project requirements or tasks')
+    row=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
+    if not row or (row['role'] not in ('owner','manager') and row['work_function']!='product'):
+        raise HTTPException(403,'Project manager or product work function required')
 def task_project(c, tid):
     r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
     return r['project_id'] if r else None
@@ -1426,7 +1438,7 @@ def create_requirement(b:RequirementIn,authorization:str=Header(None)):
         project=c.execute('SELECT status FROM projects WHERE id=?',(b.project_id,)).fetchone()
         if not project: raise HTTPException(404,'Project not found')
         if project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-        require_project_access(c,b.project_id,a,write=True)
+        require_project_planning_access(c,b.project_id,a)
         c.execute('INSERT INTO requirements VALUES(?,?,?,?,?,?,?)',(rid,b.project_id,b.title,b.description,json.dumps(b.acceptance_criteria),'OPEN',now()))
     return {'id':rid,'project_id':b.project_id,'title':b.title,'status':'OPEN'}
 @app.get('/api/v1/requirements/{rid}')
@@ -1443,7 +1455,7 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
     with conn() as c:
         req=c.execute('SELECT * FROM requirements WHERE id=?',(b.requirement_id,)).fetchone()
         if not req: raise HTTPException(404,'Requirement not found')
-        require_project_access(c,req['project_id'],a,write=True)
+        require_project_planning_access(c,req['project_id'],a)
         for dep in b.dependencies:
             if dep == tid: raise HTTPException(400,'A task cannot depend on itself')
             if not c.execute('SELECT 1 FROM tasks WHERE id=?',(dep,)).fetchone(): raise HTTPException(400,f'Unknown dependency {dep}')
