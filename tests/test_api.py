@@ -866,6 +866,12 @@ def test_rc15_work_packages_progress_blockers_and_artifact_aggregation():
     summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=oh).json()
     assert summary['status_counts']['BLOCKED']==1 and summary['blocked_tasks'][0]['id']==child
     assert summary['artifact_count']==1
+    parent_detail=client.get(f'/api/v1/tasks/{parent_id}',headers=oh).json()
+    assert parent_detail['status']=='BLOCKED'
+    resumed=client.post(f'/api/v1/tasks/{child}/progress',headers=rh,json={'progress':60,'note':'Dependency restored'})
+    assert resumed.status_code==200
+    parent_detail=client.get(f'/api/v1/tasks/{parent_id}',headers=oh).json()
+    assert parent_detail['status']=='IN_PROGRESS'
     listed=client.get(f'/api/v1/tasks/{parent_id}/work-packages',headers=oh).json()
     assert listed[0]['agent_name']=='worker-python' and len(listed[0]['artifacts'])==1
     events=client.get(f'/api/v1/tasks/{parent_id}/events',headers=oh).json()
@@ -909,11 +915,15 @@ def test_rc16_work_package_result_requires_artifact_and_parent_approval_gate():
     replay=client.post(f'/api/v1/tasks/{child}/work-result',headers=rh,json={
         'outcome':'COMPLETE','summary':'Implementation and tests finished','idempotency_key':'result-1'})
     assert replay.status_code==200 and replay.json()['idempotent_replay'] is True
-    assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_headers,json={'progress':100,'note':'Ready for review'}).status_code==200
-    parent_blocked=client.post(f'/api/v1/tasks/{parent_id}/review',headers=ADMIN,json={'decision':'APPROVE'})
-    assert parent_blocked.status_code==409
+    parent_request_blocked=client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_headers,json={'progress':100,'note':'Premature review request'})
+    assert parent_request_blocked.status_code==409
+    parent_detail=client.get(f'/api/v1/tasks/{parent_id}',headers=ADMIN).json()
+    assert parent_detail['status']=='IN_PROGRESS'
     child_approved=client.post(f'/api/v1/tasks/{child}/review',headers=ADMIN,json={'decision':'APPROVE'})
     assert child_approved.status_code==200 and child_approved.json()['status']=='DONE'
+    parent_detail=client.get(f'/api/v1/tasks/{parent_id}',headers=ADMIN).json()
+    assert parent_detail['status']=='IN_PROGRESS' and parent_detail['progress']==90
+    assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_headers,json={'progress':100,'note':'All work packages approved'}).status_code==200
     parent_approved=client.post(f'/api/v1/tasks/{parent_id}/review',headers=ADMIN,json={'decision':'APPROVE'})
     assert parent_approved.status_code==200 and parent_approved.json()['status']=='DONE'
     summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=ADMIN).json()
