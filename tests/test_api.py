@@ -3129,3 +3129,12 @@ def test_agent_assignment_heartbeat_and_stale_recovery():
     assert old['status']=='REVOKED'
     assert audit is not None
 
+def test_agent_assignment_recovery_controls_are_visible_in_task_detail():
+    frontend=open(os.path.join(os.path.dirname(__file__),'..','web','index.html'),encoding='utf-8').read()
+    assert "api('/api/v1/tasks/'+id+'/agent-assignments')" in frontend
+    assert 'renderAgentAssignments(agentAssignments.items||[],canManage,id)' in frontend
+    assert '最近活动/心跳' in frontend
+    assert 'recoverAgentAssignment' in frontend
+    assert '/api/v1/agent-assignments/'+assignmentId+'/recover' in frontend
+    assert 'task.agent_assignment_recovered' in frontend
+
