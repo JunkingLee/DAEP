@@ -1491,15 +1491,17 @@ def test_rc26_stage8_two_member_agent_delivery_to_requirement_acceptance_e2e():
             'outcome':'COMPLETE','summary':f'Delivered {kind}','idempotency_key':f'{sha}-result'})
         assert result.status_code==200 and result.json()['status']=='REVIEW'
 
-    # The parent cannot close while either member's package is awaiting review.
+    # The parent cannot request review until every package has passed human review.
     assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_h,json={
-        'progress':100,'note':'Both local Agents submitted their results'}).status_code==200
-    blocked=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={'decision':'APPROVE'})
-    assert blocked.status_code==409
+        'progress':100,'note':'Premature parent review request'}).status_code==409
     for child in (api_child,test_child):
         reviewed=client.post(f'/api/v1/tasks/{child}/review',headers=owner_h,json={
             'decision':'APPROVE','comment':'Artifact evidence reviewed'})
         assert reviewed.status_code==200 and reviewed.json()['status']=='DONE'
+    assert client.post(f'/api/v1/tasks/{parent_id}/progress',headers=owner_h,json={
+        'progress':100,'note':'Both work packages approved'}).status_code==200
+    parent_review=client.post(f'/api/v1/tasks/{parent_id}/review',headers=owner_h,json={'decision':'APPROVE'})
+    assert parent_review.status_code==200 and parent_review.json()['status']=='DONE'
 
     summary=client.get(f'/api/v1/tasks/{parent_id}/work-summary',headers=owner_h).json()
     assert summary['all_done'] is True and summary['work_package_count']==2
