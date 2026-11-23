@@ -1969,22 +1969,47 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
         if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
         if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
         stamp=now()
+        requested_version_id=str(b.get('artifact_version_id') or '').strip()
+        latest_version=c.execute('SELECT * FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1',(package['child_task_id'],)).fetchone()
+        selected_version=latest_version
+        if requested_version_id:
+            selected_version=c.execute('SELECT * FROM artifact_versions WHERE id=? AND task_id=?',(requested_version_id,package['child_task_id'])).fetchone()
+            if not selected_version: raise HTTPException(404,'Artifact version not found for this work package')
+            if not latest_version or selected_version['id']!=latest_version['id']:
+                raise HTTPException(409,'Work package review must target the latest submitted artifact version')
         if decision=='APPROVE':
             enforce_workflow_exit(c,pid,package['task_status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
-            if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
-                raise HTTPException(409,'Work package must have at least one artifact before approval')
+            if not selected_version:
+                raise HTTPException(409,'Work package must have an artifact version before approval')
+            if selected_version['review_status']=='REJECTED':
+                raise HTTPException(409,'The selected artifact version was rejected; submit a new version')
             status='DONE'; progress=100
         else:
             status='IN_PROGRESS'; progress=90
+        if selected_version and selected_version['review_status']=='PENDING':
+            version_status='APPROVED' if decision=='APPROVE' else 'REJECTED'
+            c.execute('UPDATE artifact_versions SET review_status=?,review_comment=?,reviewed_by_member_id=?,reviewed_at=? WHERE id=? AND review_status=\'PENDING\'',
+                (version_status,comment,a['id'],stamp,selected_version['id']))
+        elif selected_version:
+            version_status=selected_version['review_status']
+        else:
+            version_status=None
         updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
         if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
         if decision=='APPROVE':
             c.execute("UPDATE agent_task_assignments SET status='COMPLETED',updated_at=? WHERE task_id=? AND status='ACCEPTED'",(stamp,package['child_task_id']))
         sync_work_package_parent(c,package['child_task_id'],a['id'],'work_package_review_'+decision.lower())
-        sync_work_package_parent(c,package['child_task_id'],a['id'],'work_package_review_'+decision.lower())
-        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package['id'],'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
-        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
+        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{
+            'work_package_id':package['id'],'parent_task_id':package['parent_task_id'],
+            'artifact_version_id':selected_version['id'] if selected_version else None,
+            'artifact_id':selected_version['artifact_id'] if selected_version else None,
+            'artifact_version_number':selected_version['version_number'] if selected_version else None,
+            'artifact_review_status':version_status,'decision':decision,'comment':comment})
+        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,
+            'progress':progress,'event_id':eid,'decision':decision,
+            'artifact_version_id':selected_version['id'] if selected_version else None,
+            'artifact_version_number':selected_version['version_number'] if selected_version else None}
 
 @app.post('/api/v1/tasks/{parent_id}/work-packages')
 def create_work_package(parent_id:str,b:WorkPackageIn,authorization:str=Header(None)):
