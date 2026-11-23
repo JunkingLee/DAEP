@@ -2110,6 +2110,52 @@ def test_rc26_multi_project_role_isolation_and_function_navigation_contract():
     })
     assert denied.status_code == 403
 
+def test_rc36_platform_admin_project_creation_and_project_manager_scope():
+    project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC36 Manager Scope A'}).json()
+    project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC36 Manager Scope B'}).json()
+    outsider_project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC36 Outsider Project'}).json()
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC36 Multi Project Manager'}).json()
+    target=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC36 Target Member'}).json()
+    manager_h={'Authorization':'Bearer '+manager['token']}
+    target_h={'Authorization':'Bearer '+target['token']}
+    assert client.post(f"/api/v1/projects/{project_a['id']}/members",headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+    assert client.post(f"/api/v1/projects/{project_b['id']}/members",headers=ADMIN,json={
+        'member_id':manager['id'],'role':'manager'}).status_code==200
+
+    # Project creation is a platform-level operation, not a project-manager privilege.
+    denied_manager=client.post('/api/v1/projects',headers=manager_h,json={'name':'Forbidden Manager Project'})
+    assert denied_manager.status_code==403,denied_manager.text
+    denied_member=client.post('/api/v1/projects',headers=target_h,json={'name':'Forbidden Member Project'})
+    assert denied_member.status_code==403,denied_member.text
+
+    # Project managers can operate in each explicitly assigned project, but not outside them.
+    visible=client.get('/api/v1/projects',headers=manager_h)
+    assert visible.status_code==200
+    assert {p['id'] for p in visible.json()}=={project_a['id'],project_b['id']}
+    assert client.get(f"/api/v1/projects/{outsider_project['id']}/members",headers=manager_h).status_code==403
+    assert client.post(f"/api/v1/projects/{outsider_project['id']}/members",headers=manager_h,json={
+        'member_id':target['id'],'role':'member'}).status_code==403
+
+    # A manager cannot grant another manager role; only the project owner/platform admin can.
+    manager_escalation=client.post(f"/api/v1/projects/{project_a['id']}/members",headers=manager_h,json={
+        'member_id':target['id'],'role':'manager'})
+    assert manager_escalation.status_code==403,manager_escalation.text
+    regular_add=client.post(f"/api/v1/projects/{project_a['id']}/members",headers=manager_h,json={
+        'member_id':target['id'],'role':'member','work_function':'developer'})
+    assert regular_add.status_code==200,regular_add.text
+
+    # Platform account directory and lifecycle actions remain platform-admin only.
+    assert client.get('/api/v1/members',headers=manager_h).status_code==403
+    assert client.get(f"/api/v1/members/{target['id']}",headers=manager_h).status_code==403
+    assert client.post(f"/api/v1/members/{target['id']}/disable",headers=manager_h).status_code==403
+    assert client.post(f"/api/v1/members/{target['id']}/enable",headers=manager_h).status_code==403
+    assert client.post(f"/api/v1/members/{target['id']}/reset-password",headers=manager_h,
+        json={'password':'StrongPassw0rd!'}).status_code==403
+    assert client.post(f"/api/v1/members/{target['id']}/rotate-token",headers=manager_h).status_code==403
+    assert client.post(f"/api/v1/members/{target['id']}/revoke-token",headers=manager_h).status_code==403
+
+
 def test_rc26_workflow_runtime_enforces_custom_gate_and_stage_exit_approval():
     pid, developer_id, developer_token, tid = setup_project_task()
     workflow = client.put(f'/api/v1/projects/{pid}/workflow', headers=ADMIN, json={
