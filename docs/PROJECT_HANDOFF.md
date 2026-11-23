@@ -165,3 +165,17 @@
 - 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
 - 下一步唯一任务：增加 Agent 安全负向 E2E，至少覆盖非所有者读取/编辑/轮换/撤销其他用户 Agent 被拒绝、无项目管理员权限的用户不能绑定项目，以及 Token 撤销后不能再通过 MCP 身份认证。继续使用独立临时数据库和真实浏览器登录会话。
 
+
+## 12. Agent 管理安全负向浏览器 E2E（2026-11-23）
+
+- 本轮目标：在隔离 SQLite 测试服务和真实浏览器登录会话下验证 Agent 所有权、项目角色授权与 MCP Token 撤销后的认证失效。
+- 新增 test_agent_security_negative_browser_flows（位于 tests/test_agent_management_e2e.py），通过管理端创建两个普通成员和隔离项目，再分别使用两个成员的真实密码登录浏览器：
+  - 非所有者读取、PATCH 编辑、轮换 Token、撤销 Token 均必须返回 HTTP 403。
+  - 仅具备项目普通成员身份的用户，尝试绑定自己拥有的 Agent 必须返回 HTTP 403。
+  - Agent 所有者撤销 Token 后，使用该 Token 请求 GET /api/v1/mcp/context 必须返回 HTTP 401。
+  - 复核被拒绝的跨所有者编辑未改变 Agent 名称。
+- 本轮仅新增安全 E2E 测试，没有修改 Agent 授权业务逻辑；普通用户与项目成员均在临时 SQLite 数据库内创建。
+- 代码提交：f2f93f406c5104f42539a4dec8bdb4e4841ff4b7 — test: cover Agent ownership and revoked-token security in browser E2E。
+- CI：该提交触发的 workflow 运行状态待确认；浏览器用例尚未取得 CI 通过证据，不能标记为已验证。
+- 当前阶段：安全负向浏览器 E2E 正在验证中。
+- 下一步唯一任务：检查该提交的 browser-e2e 与完整 CI 结果；若失败，按日志修复并重跑；通过后更新本节的最终 HEAD、CI run ID 和验证结论。
