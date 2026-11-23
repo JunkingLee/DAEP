@@ -123,6 +123,43 @@ def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
     assert 'agent.token.revoked' in event_types
 
 
+
+def test_web_password_login_change_password_and_logout_session_lifecycle():
+    username='session.lifecycle.user'
+    old_password='Initial-Password-123!'
+    new_password='Changed-Password-456!'
+    created=client.post('/api/v1/members',headers=ADMIN,json={
+        'name':'Session Lifecycle User','username':username,'password':old_password})
+    assert created.status_code==200,created.text
+    member_id=created.json()['id']
+
+    login=client.post('/api/v1/auth/login',json={'username':username,'password':old_password})
+    assert login.status_code==200,login.text
+    access_token=login.json()['access_token']
+    headers={'Authorization':'Bearer '+access_token}
+    assert client.get('/api/v1/me',headers=headers).json()['id']==member_id
+
+    changed=client.post('/api/v1/auth/change-password',headers=headers,json={
+        'current_password':old_password,'new_password':new_password})
+    assert changed.status_code==200,changed.text
+    rotated_token=changed.json()['access_token']
+    assert rotated_token and rotated_token != access_token
+    assert client.get('/api/v1/me',headers=headers).status_code==401
+    rotated_headers={'Authorization':'Bearer '+rotated_token}
+    assert client.get('/api/v1/me',headers=rotated_headers).status_code==200
+
+    old_password_login=client.post('/api/v1/auth/login',json={
+        'username':username,'password':old_password})
+    assert old_password_login.status_code==401
+    new_password_login=client.post('/api/v1/auth/login',json={
+        'username':username,'password':new_password})
+    assert new_password_login.status_code==200
+
+    logout=client.post('/api/v1/auth/logout',headers=rotated_headers)
+    assert logout.status_code==200 and logout.json()['logged_out'] is True
+    assert client.get('/api/v1/me',headers=rotated_headers).status_code==401
+
+
 def test_project_requirement_task_message_flow():
     _,mid,token,tid=setup_project_task()
     msg=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Start','content':'Please begin'}); assert msg.status_code==200
