@@ -3577,3 +3577,25 @@ def test_requirement_acceptance_applies_acceptance_stage_quality_policy():
         'decision':'APPROVE','verified_criteria':[0],'comment':'acceptance gate test'})
     assert accepted.status_code==409,accepted.text
     assert 'quality_blockers' in accepted.json()['detail']
+
+
+def test_progress_shortcut_cannot_bypass_review_quality_stage_gate():
+    pid, _, _, tid = setup_project_task()
+    configured=client.put(f'/api/v1/projects/{pid}/quality-policy',headers=ADMIN,json={
+        'required_artifact_types':[],'require_test_report':True,
+        'stage_overrides':{'READY':{'min_coverage_percent':80,'require_test_report':True},
+                           'REVIEW':{'min_coverage_percent':80,'require_test_report':True}}
+    })
+    assert configured.status_code==200,configured.text
+    blocked=client.post(f'/api/v1/tasks/{tid}/progress',headers=ADMIN,json={'progress':100})
+    assert blocked.status_code==409,blocked.text
+    assert blocked.json()['detail']['missing_artifact_types']==['test_report']
+
+
+def test_project_quality_dashboard_is_connected_to_governance_ui():
+    from pathlib import Path
+    source=Path('web/index.html').read_text(encoding='utf-8')
+    assert '/quality-dashboard' in source
+    assert 'renderQualityDashboard(qd)' in source
+    assert 'qualityDashboardMetrics' in source
+    assert 'qualityDashboardTrend' in source
