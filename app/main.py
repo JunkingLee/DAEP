@@ -2125,12 +2125,13 @@ def project_artifact_quality_dashboard(pid:str,days:int=30,authorization:str=Hea
         require_project_access(c,pid,a)
         rows=c.execute("""SELECT v.id AS version_id,v.version_number,v.review_status,v.created_at,
             v.actor_type,v.actor_member_id,v.agent_id,
-            COALESCE(m.name,'') AS member_name,COALESCE(ag.name,'') AS agent_name,
+            COALESCE(m.name,owner_m.name,'') AS member_name,COALESCE(v.actor_member_id,ag.owner_member_id) AS effective_member_id,COALESCE(ag.name,'') AS agent_name,
             a.artifact_type,a.uri,a.commit_sha,a.metadata,t.id AS task_id,t.title AS task_title
             FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
             JOIN tasks t ON t.id=v.task_id JOIN requirements r ON r.id=t.requirement_id
             LEFT JOIN members m ON m.id=v.actor_member_id
             LEFT JOIN agents ag ON ag.id=v.agent_id
+            LEFT JOIN members owner_m ON owner_m.id=ag.owner_member_id
             WHERE r.project_id=? AND v.created_at>=?
             ORDER BY v.created_at DESC""",(pid,cutoff)).fetchall()
         totals={'PASS':0,'FAIL':0,'NEEDS_REVIEW':0}
@@ -2161,7 +2162,7 @@ def project_artifact_quality_dashboard(pid:str,days:int=30,authorization:str=Hea
                     'artifact_version_id':item['version_id'],'artifact_type':item['artifact_type'],
                     'version_number':item['version_number'],'failed_checks':report.get('failed_checks',0),
                     'actor_type':item['actor_type'],'agent_id':item['agent_id'],'agent_name':item['agent_name'],
-                    'member_id':item['actor_member_id'],'member_name':item['member_name'],
+                    'member_id':item['effective_member_id'],'member_name':item['member_name'],
                     'created_at':item['created_at']})
         breakdowns={name:sorted(values.values(),key=lambda x:(-x['FAIL'],-x['total'],x['key']))
                     for name,values in dimensions.items()}
