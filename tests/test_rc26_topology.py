@@ -87,4 +87,4 @@ def test_requirement_creation_captures_acceptance_criteria():
     assert 'id="reqCriteria"' in html
     assert "验收标准（每行一条）" in html
     assert "acceptance_criteria" in html
-    assert "split(/\\\\r?\\\\n/)" in html
+    assert "map(x=>x.trim()).filter(Boolean)" in html
