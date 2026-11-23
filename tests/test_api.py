@@ -2901,3 +2901,44 @@ def test_rc41_member_credentials_never_revive_after_disable_enable_or_disabled_r
     db.close()
     assert {'member.account.disabled','member.account.enabled',
             'member.password.reset'} <= audit_types
+
+
+def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guard():
+    pid,member_id,member_token,task_id=setup_project_task()
+    manager=client.post('/api/v1/members',headers=ADMIN,json={'name':'Removal Manager'})
+    assert manager.status_code==200,manager.text
+    added=client.post(f'/api/v1/projects/{pid}/members',headers=ADMIN,json={
+        'member_id':manager.json()['id'],'role':'manager','work_function':'developer'})
+    assert added.status_code==200,added.text
+    manager_headers={'Authorization':'Bearer '+manager.json()['token']}
+    member_headers={'Authorization':'Bearer '+member_token}
+
+    # Existing role changes must go through the independent approval workflow.
+    direct_change=client.post(f'/api/v1/projects/{pid}/members',headers=manager_headers,json={
+        'member_id':member_id,'role':'reviewer','work_function':'tester'})
+    assert direct_change.status_code==409,direct_change.text
+
+    owner_id=client.get('/api/v1/me',headers=ADMIN).json()['id']
+    owner_removal=client.delete(f'/api/v1/projects/{pid}/members/{owner_id}',headers=manager_headers)
+    assert owner_removal.status_code==403,owner_removal.text
+
+    removed=client.delete(f'/api/v1/projects/{pid}/members/{member_id}',headers=manager_headers)
+    assert removed.status_code==200,removed.text
+    assert removed.json()['removed'] is True
+    assert removed.json()['removed_assignment_count']==1
+    assert client.get('/api/v1/projects',headers=member_headers).json()==[]
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=member_headers).status_code==403
+    assert client.get('/api/v1/me/tasks',headers=member_headers).json()==[]
+
+    # A project cannot be left without an owner, even for the platform administrator.
+    last_owner=client.delete(f'/api/v1/projects/{pid}/members/{owner_id}',headers=ADMIN)
+    assert last_owner.status_code==409,last_owner.text
+
+    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
+    assert db.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',
+        (task_id,member_id)).fetchone() is None
+    assert db.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',
+        (pid,member_id)).fetchone() is None
+    assert db.execute("SELECT 1 FROM events WHERE event_type='project.member.removed' AND payload LIKE ?",
+        ('%'+member_id+'%',)).fetchone() is not None
+    db.close()
