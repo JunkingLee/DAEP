@@ -154,8 +154,8 @@ def test_rc31_mutation_endpoint_scope_matrix_is_explicit():
     # This prevents a future UI-only permission change from silently creating
     # an API privilege-escalation path.
     endpoint_guards = {
-        "@app.post('/api/v1/requirements')": ["require_project_access(c,b.project_id,a,write=True)"],
-        "@app.post('/api/v1/tasks')": ["require_project_access(c,req['project_id'],a,write=True)"],
+        "@app.post('/api/v1/requirements')": ["require_project_planning_access(c,b.project_id,a)"],
+        "@app.post('/api/v1/tasks')": ["require_project_planning_access(c,req['project_id'],a)"],
         "@app.post('/api/v1/tasks/{tid}/progress')": ["require_task_access(c,tid,a,assigned_only=True)"],
         "@app.post('/api/v1/tasks/{tid}/blocked')": ["require_task_access(c,tid,a,assigned_only=True)"],
         "@app.post('/api/v1/tasks/{tid}/artifacts')": ["require_task_access(c,tid,a,assigned_only=True)"],
@@ -223,3 +223,12 @@ def test_rc32_password_change_returns_rotated_access_token_to_web_client():
     assert "'access_token':access_token" in block
     ui = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
     assert "if(d.access_token){token=d.access_token;localStorage.setItem(AUTH_STORAGE_KEY,token)}" in ui
+
+
+
+def test_rc32_product_planning_guard_is_scoped_and_does_not_grant_governance():
+    helper = MAIN.split("def require_project_planning_access",1)[1].split("def task_project",1)[0]
+    assert "require_project_access(c,project_id,a,write=False)" in helper
+    assert "project['status']=='CLOSED'" in helper
+    assert "row['role'] not in ('owner','manager') and row['work_function']!='product'" in helper
+    assert "Agent cannot create project requirements or tasks" in helper
