@@ -194,6 +194,27 @@ BEGIN
     RAISE EXCEPTION 'RLS project approval isolation failed';
   END IF;
 
+  UPDATE agents SET name='cross-tenant-agent-write' WHERE id='rls-agent-identity-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS Agent identity update isolation failed';
+  END IF;
+  UPDATE agent_tokens SET status='REVOKED' WHERE id='rls-agent-token-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS Agent token update isolation failed';
+  END IF;
+  UPDATE agent_project_bindings SET status='DISABLED' WHERE agent_id='rls-agent-identity-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS Agent project binding update isolation failed';
+  END IF;
+  UPDATE agent_task_assignments SET status='REVOKED' WHERE id='rls-agent-assignment-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS Agent task assignment update isolation failed';
+  END IF;
+
   UPDATE projects SET name = 'cross-tenant-write' WHERE id = 'rls-probe-b';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
   IF changed_count <> 0 THEN
