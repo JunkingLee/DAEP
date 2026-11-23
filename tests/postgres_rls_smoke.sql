@@ -138,8 +138,8 @@ BEGIN
     RAISE EXCEPTION 'RLS update isolation failed: modified % foreign rows', changed_count;
   END IF;
 
-  INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
-  VALUES ('rls-probe-a-write', 'Tenant A write', '', NULL, now()::text, 'tenant-a');
+  INSERT INTO projects (id, name, description, created_by, created_at, tenant_id, status)
+  VALUES ('rls-probe-a-write', 'Tenant A write', '', NULL, now()::text, 'tenant-a', 'ACTIVE');
 
   INSERT INTO project_members (project_id,member_id,role,joined_at)
   VALUES ('rls-probe-a','rls-member-a','member',now()::text)
