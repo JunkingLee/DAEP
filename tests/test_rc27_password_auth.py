@@ -205,3 +205,21 @@ def test_rc31_read_paths_still_require_project_or_task_scope():
         next_at = MAIN.find("@app.", start + len(route))
         block = MAIN[start: next_at if next_at >= 0 else len(MAIN)]
         assert guard in block, f"{route} lost scope guard"
+
+
+def test_rc32_web_session_survives_refresh_and_explicit_logout_clears_it():
+    ui = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert "const AUTH_STORAGE_KEY='daep.web.access_token'" in ui
+    assert "localStorage.setItem(AUTH_STORAGE_KEY,token)" in ui
+    assert "async function restoreSession()" in ui
+    assert "await activateSession()" in ui
+    logout = ui.split("async function logout()", 1)[1].split("\\n", 1)[0]
+    assert "localStorage.removeItem(AUTH_STORAGE_KEY)" in logout
+
+
+def test_rc32_password_change_returns_rotated_access_token_to_web_client():
+    block = MAIN.split("@app.post('/api/v1/auth/change-password')", 1)[1].split("@app.get('/api/v1/me')", 1)[0]
+    assert "access_token=issue_member_token(a['id'])" in block
+    assert "'access_token':access_token" in block
+    ui = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert "if(d.access_token){token=d.access_token;localStorage.setItem(AUTH_STORAGE_KEY,token)}" in ui
