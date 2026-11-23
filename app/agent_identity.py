@@ -145,17 +145,23 @@ def authenticate_agent_token(conn, raw_token):
     # Subsequent reads/writes must run under the resolved Agent tenant. This
     # is also required by the direct MCP context endpoint, which does not call
     # the general member/Agent actor resolver first.
+    resets=[]
     if '_tenant_ctx' in locals():
-        _tenant_ctx.set(row['tenant_id'])
-        _member_ctx.set(row['owner_member_id'])
-        _agent_ctx.set(row['agent_id'])
-        _admin_ctx.set(False)
-
-    stamp=now()
-    with conn() as c:
-        c.execute("UPDATE agent_tokens SET last_used_at=? WHERE id=?",(stamp,row['token_id']))
-        c.execute("UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=?",
-                  (stamp,stamp,row['agent_id']))
+        resets=[
+            (_tenant_ctx,_tenant_ctx.set(row['tenant_id'])),
+            (_member_ctx,_member_ctx.set(row['owner_member_id'])),
+            (_agent_ctx,_agent_ctx.set(row['agent_id'])),
+            (_admin_ctx,_admin_ctx.set(False)),
+        ]
+    try:
+        stamp=now()
+        with conn() as c:
+            c.execute("UPDATE agent_tokens SET last_used_at=? WHERE id=?",(stamp,row['token_id']))
+            c.execute("UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=?",
+                      (stamp,stamp,row['agent_id']))
+    finally:
+        for variable,token in reversed(resets):
+            variable.reset(token)
     return dict(row)
 
 def register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now):
