@@ -640,6 +640,10 @@ def assign_task_to_agent(task_id:str, body:dict, authorization:str=Header(None))
         if not agent or agent['status']!='ACTIVE': raise HTTPException(404,'Active Agent not found in this tenant')
         binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(pid,agent_id)).fetchone()
         if not binding: raise HTTPException(409,'Agent must be actively bound to this project before assignment')
+        task_lock_sql='SELECT id FROM tasks WHERE id=?'
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            task_lock_sql += ' FOR UPDATE'
+        c.execute(task_lock_sql,(task_id,))
         existing=c.execute("""SELECT id,agent_id,status FROM agent_task_assignments
             WHERE task_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(task_id,)).fetchone()
         if existing:
