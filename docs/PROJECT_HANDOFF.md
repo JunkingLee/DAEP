@@ -184,3 +184,37 @@
 - 后续检查发现浏览器 E2E API helper 对无请求体的 GET/POST 传入了 JSON null；已修复为不为 GET/HEAD 构造 request body，避免浏览器 Fetch 规范拒绝该请求。
 - 修复提交：f200b4c458c238e9e575dc3c539edd404a31a7f1 — test: avoid GET request bodies in Agent security browser checks。
 - 本轮完整验证结果以最终交接 HEAD `411b36f7cb6b7bd592c07582cea9539644dae8c7` 和 CI run `45144971209` 为准；所有 job 成功。
+
+## 13. Agent / MCP 租户边界与授权矩阵审计（2026-11-23）
+
+- 本轮承接第 12 节唯一任务：审计 Agent/MCP 租户隔离、项目角色授权及撤销凭证在 MCP 入口的一致性。
+- 代码审计范围：
+  - `app/agent_identity.py`：Agent owner 校验、列表/详情/更新、Token rotate/revoke、项目绑定/解绑、MCP Context。
+  - `app/main.py`：`actor()` 的 Member/Agent 认证分流、`require_project_access()`、Agent task assignment/list/accept/heartbeat/revoke 入口。
+  - `daep_mcp/server.py`：MCP stdio 工具实际调用的 HTTP 路由，包括 Agent Context、Agent task inbox、任务接受、任务读写、项目发现和管理工具。
+  - Alembic Agent identity / assignment RLS 迁移和 PostgreSQL smoke test。
+- 审计发现并修复：
+  1. **Agent Token 的 PostgreSQL RLS 认证缺口**：原实现直接查询启用 RLS 的 `agent_tokens` 与 `agents`，但没有与 Member Token 对等的受限认证查询通道。新增 `0035_rc45_agent_auth_lookup`，复用 NOLOGIN/BYPASSRLS 的 `daep_authenticator`，只授予 Agent credential 表 SELECT，并新增 `SECURITY DEFINER` 函数 `daep_authenticate_agent_token`；函数只返回 token hash 精确匹配、Token ACTIVE、Agent ACTIVE 且未过期的身份字段，不向应用暴露 token hash。
+  2. **认证后的租户上下文**：`authenticate_agent_token` 在受限查询后，临时切换租户上下文更新 Token last_used / Agent last_seen，随后恢复原上下文，保持身份解析函数本身不污染调用方上下文。MCP Context 路由改为使用公共 `actor()`，由统一身份解析建立请求级 tenant/member/agent context，再读取该 Agent 已绑定的项目。
+  3. **Agent 解绑租户边界**：解绑路径原先只验证项目 tenant，没有先确认 Agent 同属该 tenant。现先按 `agent_id + project.tenant_id` 解析 Agent；任务分配撤销查询和绑定删除均增加 `tenant_id` 条件，跨租户 Agent ID 返回 404，不再触碰其他租户的授权记录。
+- 新增/更新验证：
+  - `tests/test_api.py` 增加跨租户 Agent 解绑拒绝、租户内 Agent 绑定及 MCP Context 项目范围验证；同时更新 Alembic head 合约，要求 RC45 Agent auth lookup migration 为 head。
+  - `tests/postgres_rls_smoke.sql` 增加受限数据库角色调用 `daep_authenticate_agent_token` 的验证：有效 Tenant A 凭证能解析为 Tenant A Agent，未知 hash 不返回身份；既有 Agent/Token/Binding/Assignment 直接表访问仍受租户 RLS 限制。
+  - `tests/test_agent_management_e2e.py` 在撤销 Token 后，除 `GET /api/v1/mcp/context` 返回 401 外，也验证 `GET /api/v1/agents/me/tasks` 返回 401。
+  - 现有项目角色边界复核：普通成员绑定 Agent 被拒绝（第 12 节真实浏览器负向 E2E）；项目 manager 在同租户项目中可以绑定 Agent（新增 API 矩阵测试）；Agent 不能继承 owner/manager/reviewer 的人工治理权限（既有 API 测试）。
+- 关键提交（均在 `release/1.0.0-rc9`）：
+  - `c9917362ba18a01f525ed3f4dadcd9ddcb8cd860` — 解绑时校验 Agent tenant。
+  - `d29039af718c70ec40812acae74f14c66a68b1a5` — 初版跨租户回归测试；该提交 CI 失败是测试误用平台管理员专用的项目创建 API，并非业务代码失败。
+  - `53e2f55c7e1aef1e9a4df367f20fc124882b3b0f` — 修正测试数据准备，由平台管理员在指定 tenant 创建项目并授予 manager 成员身份。
+  - `e52b9c54e8c396e1af9d0dd19ec57863999e8115` — Agent Token 使用受限数据库认证函数。
+  - `5e4514f684f97bc36f4e990ce66ac86911944363` — 新增 RC45 PostgreSQL Agent auth lookup migration。
+  - `21366019e9ecbd323807780428206768fc455bdd` — 增加 PostgreSQL RLS smoke 认证函数检查。
+  - `f23d219adb764e19dafbe86442925dd12fb65c11` — 撤销 Token 后 Agent task API 也必须认证失败。
+  - `7fea19dc1db4a8d74e4fbfc55ea5b2afc187e898` — 保持 Agent credential verification 上下文中立。
+  - `874cb1ff6186751816982af069b4e6ad177bd96b` — MCP Context 统一走 actor 认证和租户上下文。
+  - `3024b9b9a4810e1863e13e112afbe1886c8ee39f` — 更新迁移 head 合约测试。
+- CI 验证：run `45146483749`，对应 HEAD `3024b9b9a4810e1863e13e112afbe1886c8ee39f`。截至本交接更新时，Python 3.11/3.12/3.13 全部成功（每个版本 `203 passed, 1 skipped`）；PostgreSQL migrations/RLS smoke、production-compose、container-build 成功；browser-e2e 正在安装 Chromium，尚未完成，不能记为通过。此前 run `45146208600` 的失败是两项测试契约问题（认证 helper 不应污染上下文、Alembic head 断言仍指向 RC44），已分别修正并包含在当前 HEAD 中。
+- 已知验证边界：本轮 PostgreSQL RLS smoke 验证了认证函数与数据库隔离策略，但仍需等待当前 CI browser-e2e 完成；没有在本环境直接连接生产 PostgreSQL 或真实 MCP 客户端。撤销凭证验证覆盖 MCP Context 和 Agent task inbox 两类 HTTP 入口；`daep_mcp/server.py` 中其他工具最终复用这些已审计的 API actor/project authorization 路由。
+- 当前分支：`release/1.0.0-rc9`；代码 HEAD：`3024b9b9a4810e1863e13e112afbe1886c8ee39f`。
+- 下一步唯一任务：等待并核实 run `45146483749` 的 browser-e2e 最终结果；若通过，更新本节 CI 状态并结束 Agent/MCP 授权矩阵审计；若失败，先按日志修复，再继续做跨聊天交接。完成后再进入下一项产品开发，不提前宣称 Agent/MCP 安全审计全部通过。
+
