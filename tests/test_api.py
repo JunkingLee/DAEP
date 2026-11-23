@@ -3710,7 +3710,7 @@ def test_project_quality_risk_list_detail_and_remediation_workflow():
     assert resolved.json()['risk']['resolved_at']
 
     invalid=client.patch(f'/api/v1/projects/{pid}/risks/{risk_id}',headers=manager_headers,json={
-        'status':'DISMISSED'})
+        'status':'DISMISSED','resolution_note':''})
     assert invalid.status_code==422
 
 
