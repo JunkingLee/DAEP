@@ -9,7 +9,11 @@ def test_rc26_agent_topology_uses_project_scoped_registry_and_work_health():
     assert 'id="agentTopology"' in html
     assert "function renderAgentTopology()" in html
     assert "'/api/v1/projects/'+selectedProject+'/agents'" in html
-    assert "projectAgents=a.items||[]" in html
+    assert "projectAgents=agentData.items||[]" in html
+    assert "function agentPresence(status)" in html
+    assert "AVAILABLE:{label:'在线 · 空闲'" in html
+    assert "BUSY:{label:'执行中'" in html
+    assert "OFFLINE:{label:'离线'" in html
     assert "projectHealthItems=h.items||[]" in html
     assert "DAEP 不托管或唤醒 Agent Runtime" in html
 
@@ -75,3 +79,12 @@ def test_rc26_stage5_coordination_workbench_exposes_exception_triage_and_reassig
     assert "/work-packages/scan-stalled" in html
     assert "reassignCoordinationPackage" in html
     assert "/api/v1/work-packages/'+packageId+'/reassign" in html
+
+
+
+def test_requirement_creation_captures_acceptance_criteria():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert 'id="reqCriteria"' in html
+    assert "验收标准（每行一条）" in html
+    assert "acceptance_criteria" in html
+    assert "split(/\\\\r?\\\\n/)" in html
