@@ -176,10 +176,11 @@
   - 复核被拒绝的跨所有者编辑未改变 Agent 名称。
 - 本轮仅新增安全 E2E 测试，没有修改 Agent 授权业务逻辑；普通用户与项目成员均在临时 SQLite 数据库内创建。
 - 代码提交：f2f93f406c5104f42539a4dec8bdb4e4841ff4b7 — test: cover Agent ownership and revoked-token security in browser E2E。
-- CI：该提交触发的 workflow 运行状态待确认；浏览器用例尚未取得 CI 通过证据，不能标记为已验证。
-- 当前阶段：安全负向浏览器 E2E 正在验证中。
-- 下一步唯一任务：检查该提交的 browser-e2e 与完整 CI 结果；若失败，按日志修复并重跑；通过后更新本节的最终 HEAD、CI run ID 和验证结论。
+- 验证：最终交接 HEAD `411b36f7cb6b7bd592c07582cea9539644dae8c7` 对应 CI run `45144971209` 已完成并成功；`browser-e2e` job 的 `pytest -q tests/test_agent_management_e2e.py` 明确输出 `2 passed in 4.27s`。Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、production-compose、container-build 与 browser-e2e 全部成功。中间提交对应 run `45144832506`、`45144896295`、`45144953887` 均因同分支新提交触发并发取消，不作为验证依据。
+- 当前阶段：Agent 管理基础安全负向浏览器 E2E 已实现并通过 CI；服务端越权访问与撤销后 MCP 凭证失效已得到浏览器会话验证。
+- 当前分支：release/1.0.0-rc9；当前 HEAD：411b36f7cb6b7bd592c07582cea9539644dae8c7。
+- 下一步唯一任务：审计 Agent/MCP 的租户边界与项目授权矩阵，补充跨租户读取/操作拒绝、项目普通成员与 owner/manager 的授权差异，以及撤销凭证对所有 MCP 入口的一致性测试；若发现服务端缺口，先修复授权实现再补 E2E。
 
 - 后续检查发现浏览器 E2E API helper 对无请求体的 GET/POST 传入了 JSON null；已修复为不为 GET/HEAD 构造 request body，避免浏览器 Fetch 规范拒绝该请求。
 - 修复提交：f200b4c458c238e9e575dc3c539edd404a31a7f1 — test: avoid GET request bodies in Agent security browser checks。
-- 首次安全测试提交触发的 CI run 45144832506 因同分支后续提交触发 concurrency 取消/重排，尚无有效浏览器 E2E 结论；修复提交及本交接文档的最终 CI 待确认。
+- 本轮完整验证结果以最终交接 HEAD `411b36f7cb6b7bd592c07582cea9539644dae8c7` 和 CI run `45144971209` 为准；所有 job 成功。
