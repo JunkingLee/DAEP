@@ -3739,3 +3739,51 @@ def test_project_quality_risk_ui_is_connected_to_project_governance():
     assert 'function saveProjectQualityRisk(id)' in source
     assert '项目审计时间线' in source
     assert 'qualityRiskResolutionNote' in source
+
+def test_agent_unbind_enforces_project_tenant_boundary():
+    from app.agent_identity import ensure_agent_schema
+    import uuid
+    ensure_agent_schema(main_module.conn)
+    suffix=uuid.uuid4().hex[:10]
+
+    # Create an isolated second tenant and an Agent owned inside it.
+    tenant=client.post('/api/v1/tenants',headers=ADMIN,json={'name':'Agent Isolation '+suffix})
+    assert tenant.status_code==200,tenant.text
+    tenant_id=tenant.json()['id']
+    member=client.post('/api/v1/members',headers=ADMIN,json={
+        'name':'Tenant Agent Owner '+suffix,'tenant_id':tenant_id})
+    assert member.status_code==200,member.text
+    tenant_headers={'Authorization':'Bearer '+member.json()['token']}
+    tenant_project=client.post('/api/v1/projects',headers=tenant_headers,json={
+        'name':'Tenant B Agent Project '+suffix})
+    assert tenant_project.status_code==200,tenant_project.text
+    tenant_project_id=tenant_project.json()['id']
+    created=client.post('/api/v1/agents',headers=tenant_headers,json={
+        'name':'Tenant B Private Agent '+suffix})
+    assert created.status_code==200,created.text
+    agent_id=created.json()['agent']['id']
+    agent_token=created.json()['token']
+
+    # A platform admin operating in tenant-default must not unbind or even
+    # address the other tenant's Agent through a project in tenant-default.
+    local_project=client.post('/api/v1/projects',headers=ADMIN,json={
+        'name':'Tenant Default Project '+suffix})
+    assert local_project.status_code==200,local_project.text
+    local_project_id=local_project.json()['id']
+    cross_tenant_unbind=client.delete(
+        f'/api/v1/agents/{agent_id}/projects/{local_project_id}',headers=ADMIN)
+    assert cross_tenant_unbind.status_code==404,cross_tenant_unbind.text
+
+    # The legitimate tenant owner can bind the Agent only to its own tenant's
+    # project, and the MCP context must expose only that tenant's binding.
+    bound=client.post(f'/api/v1/agents/{agent_id}/projects',headers=tenant_headers,json={
+        'project_id':tenant_project_id,'role':'member','work_function':'developer'})
+    assert bound.status_code==200,bound.text
+    context=client.get('/api/v1/mcp/context',headers={'Authorization':'Bearer '+agent_token})
+    assert context.status_code==200,context.text
+    assert context.json()['tenant_id']==tenant_id
+    assert {item['project_id'] for item in context.json()['projects']}=={tenant_project_id}
+    removed=client.delete(
+        f'/api/v1/agents/{agent_id}/projects/{tenant_project_id}',headers=tenant_headers)
+    assert removed.status_code==200,removed.text
+
