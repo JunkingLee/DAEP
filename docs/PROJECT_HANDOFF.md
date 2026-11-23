@@ -218,3 +218,27 @@
 - 当前分支：`release/1.0.0-rc9`；代码 HEAD：`3024b9b9a4810e1863e13e112afbe1886c8ee39f`。
 - 下一步唯一任务：等待并核实 run `45146483749` 的 browser-e2e 最终结果；若通过，更新本节 CI 状态并结束 Agent/MCP 授权矩阵审计；若失败，先按日志修复，再继续做跨聊天交接。完成后再进入下一项产品开发，不提前宣称 Agent/MCP 安全审计全部通过。
 
+## 14. Agent 用户所有权领域模型统一（2026-11-23）
+
+- 用户明确纠正：DAEP 的 Agent 全部归属于某个用户，项目本身不拥有 Agent。本轮先冻结领域模型，不直接修改业务代码或数据库。
+- 新增权威领域模型文档：`docs/DOMAIN_MODEL_AGENT_OWNERSHIP.md`。
+- 核心原则：
+  1. Agent 的唯一业务所有者是 Member；`agents.owner_member_id` 是所有权唯一依据。
+  2. Project 是任务、成员角色、治理和审核的协作空间，不是 Agent 容器或 Agent 所有者。
+  3. Agent Token 认证 Agent 身份，不等同于 owner 的 Member Token，也不继承 owner 的项目治理角色。
+  4. 普通成员可主动授权自己的 Agent 执行分配给自己的任务，无须项目 Manager 为其绑定 Agent。
+  5. Agent 只能通过逐任务、明确、可撤销的 AgentTaskGrant 访问任务；项目成员身份、项目 Agent 在线目录、历史项目绑定都不能自动授予任务访问权。
+  6. 人对人任务委派（现有 `task_delegations`）与人对 Agent 执行授权（目标 AgentTaskGrant）是两种独立关系。
+  7. 项目 Agent 目录如保留，只是成员本地 Agent 的能力/在线状态投影，不代表项目拥有 Agent，也不授予访问权限。
+- 对现有模型的初步判断：
+  - `agents` + `owner_member_id`、`agent_tokens` 已符合用户拥有 Agent 的基本方向。
+  - `agent_project_bindings` 容易造成项目拥有/绑定 Agent 的错误语义，不能再作为任务访问授权依据；需要制定兼容迁移方案后逐步废弃或重构。
+  - `agent_task_assignments` 已有逐任务关联，但授权人、Agent owner 同意、任务人类责任人、scope/expiry 等关系尚未按新模型统一。
+  - `project_agents`（RC13）是以 project/member/agent_name 为键的能力/心跳目录，应定位为 ProjectAgentPresence，并增加稳定 agent_id 关联；目录可发现性不等于授权。
+  - `task_delegations` 是 Member 到 Member 的委派/邀请，必须与 AgentTaskGrant 分开。
+  - `/api/v1/mcp/context` 当前返回 project bindings，不应将其作为 Agent 的授权来源；`/api/v1/agents/me/tasks` 应严格由当前 Agent 的有效任务 Grant 驱动。
+- 当前完成内容仅为领域模型文档和交接记录；**尚未实施 schema/API/UI 迁移**，不能把目标设计描述成当前系统已经支持。
+- 前一阶段 CI 状态补正：run `45146836965` 对应此前代码/安全审计交接 HEAD `071a62e981e4dd71ed10ca80716ef1dd1bb0650a`，现已全部成功：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、production-compose、container-build、browser-e2e 均 success。该 CI 覆盖授权审计阶段代码，不覆盖本轮新增领域模型文档提交。
+- 领域模型文档提交：`cfcc8e7fe6dea724df9dcdc6710bf8831ece233b` — `docs: define user-owned Agent domain model`。
+- 下一步唯一任务：依据领域模型文档，完成“现有表/接口 → 目标实体/授权规则”的逐项迁移设计，明确 AgentTaskGrant 字段、Agent owner 主动授权流程、任务责任人约束、ProjectAgentPresence 与 agents 的关联方式，以及旧 `agent_project_bindings` / `agent_task_assignments` / `project_agents` 数据的兼容迁移策略。该迁移设计评审完成前，不改动生产 schema 或删除现有功能。
+
