@@ -14,9 +14,9 @@
 
 - 核实时间：2026-11-23
 - 分支：`release/1.0.0-rc9`
-- 当前代码 HEAD（最近核实）：`d10ea324e3c405b9a5db4dceb6615351a9d903c9`。
-- 最近 CI：run `45138889286`，对应 HEAD `d10ea324e3c405b9a5db4dceb6615351a9d903c9`，状态 `completed`，结论 `success`。
-- CI 验证：Python 3.11/3.12/3.13 均为 `192 passed`；PostgreSQL migration/RLS job 成功；production compose 和容器构建成功。
+- 当前代码 HEAD（最近核实）：`f0fb35526fa54df623c1ea50d359d4ae53e8f495`。
+- 最近 CI：run `45139603700`，对应 HEAD `f0fb35526fa54df623c1ea50d359d4ae53e8f495`，状态 `completed`，结论 `success`。
+- CI 验证：Python 3.11/3.12/3.13 均为 `194 passed`；PostgreSQL migration/RLS job 成功；production compose 和容器构建成功。
 - 注意：本文件自身每次更新都会产生新 HEAD；新聊天必须实时查询分支 HEAD 和 CI，不能把这里记录的 SHA 当成永久最新值。
 - 最近质量治理实现提交：
   - `f6e35b072c741c1a141bde377fbca7e51ca3645f` — 质量 Dashboard 增加 7/30/90 天范围和多维统计 API。
@@ -29,6 +29,8 @@
   - `043cf5afc3f523640164399fd31786eae6877f4e` — 新增 PostgreSQL 风险事件/发生记录迁移及租户 RLS。
   - `2e060091cf38ee2a28ec0923c515a7be47faf7cf` — 迁移改为兼容 bootstrap 已创建表和索引。
   - `6a02ab816d3720bd525fe19e097732f301555e9a`、`d10ea324e3c405b9a5db4dceb6615351a9d903c9` — 更新 Alembic head/RLS 合约测试。
+  - `8ecc75f2c516ab8d57a3766ef1be025314130cd9` — 增加项目风险列表、详情、整改更新 API。
+  - `283c36b33096e223d13ddf2711c40d7f88b7cedd`、`f0fb35526fa54df623c1ea50d359d4ae53e8f495` — 风险 API 权限/整改流程测试和关闭备注校验。
 - CI 首轮暴露的测试合约问题已修复；最终 CI 对最新代码 HEAD 全绿。
 
 ## 3. 当前开发阶段（不得擅自改题）
@@ -52,8 +54,8 @@
 | 按任务/交付类型/Agent/成员统计 | 已实现，CI 已通过 | Agent 提交记录可归属 Agent 所有者成员 |
 | 质量失败自动生成风险事件 | 已实现，CI 已通过 | 交付提交路径执行质量评估；每个任务/交付类型/失败检查项归并一个风险 |
 | 重复失败归并与风险升级 | 已实现，CI 已通过 | 同一风险记录累计发生次数；第 1 次 LOW、第 2 次 MEDIUM、第 3 次及以上 HIGH；解决/忽略后再次失败会重新打开 |
-| 责任人/期限/状态整改闭环 | 待实现 | 表结构已预留 assignee_member_id、due_at、status、resolution_note；尚无管理 API/UI |
-| 风险关联审计时间线 | 基础已实现，待补查询界面 | 每次风险发生均写入 events 审计事件，并记录 artifact version occurrence；尚无风险列表/详情 API 和 UI |
+| 责任人/期限/状态整改闭环 | API 已实现并通过 CI | PATCH API 支持责任人、整改期限、状态和处理备注；权限限定项目 owner/manager/reviewer 或平台管理员；前端 UI 待实现 |
+| 风险关联审计时间线 | API 已实现并通过 CI | 风险详情返回 occurrence 历史及对应 events 审计事件；前端 UI 待实现 |
 
 ## 4. 下一步执行顺序
 
@@ -64,11 +66,11 @@
 3. 已完成：按 task + normalized artifact_type + quality_check_key 归并风险；每个 artifact version/check 只产生一次 occurrence；重复失败升级级别（1 LOW、2 MEDIUM、3+ HIGH）。
 4. 已完成：风险发生记录保留每次失败对应的 artifact_version_id、检查项、消息、操作者和时间；风险变化写入 events 审计时间线。
 5. 已完成并验证：SQLite/应用测试、PostgreSQL migration/RLS、Python 3.11/3.12/3.13 CI。
-6. **下一项唯一任务：实现项目风险列表/详情 API**，返回风险当前状态、严重等级、发生次数、责任人、整改期限、关联任务/交付版本、历史 occurrences；API 必须先执行 require_project_access。
-7. 随后实现风险更新 API（责任人、整改期限、OPEN/IN_PROGRESS/RESOLVED/DISMISSED、处理备注），并写入审计事件。
-8. 再补前端风险列表、详情和整改闭环 UI。
-9. 增加 API 权限、跨租户隔离、状态流转和审计关联测试。
-10. 每次提交后更新本交接文件，记录 SHA、测试命令/结果和最新 CI。
+6. 已完成：项目风险列表 API，支持状态/严重等级筛选和分页上限。
+7. 已完成：项目风险详情 API，返回关联任务、交付版本、每次失败 occurrence 和风险审计事件。
+8. 已完成：风险整改 PATCH API，支持责任人、整改期限、OPEN/IN_PROGRESS/RESOLVED/DISMISSED、处理备注；关闭/忽略必须保留非空处理备注；仅项目 owner/manager/reviewer 或平台管理员可修改。
+9. **下一项唯一任务：实现前端项目质量风险列表、详情和整改闭环 UI**，将风险严重等级、发生次数、责任人、截止时间、状态、历史发生记录和审计事件展示出来，并接入上述 API。
+10. 完成 UI 后补充前端交互检查和端到端/权限回归测试，提交并更新本文件。
 
 ## 5. 跨聊天窗口恢复协议（每次新聊天必须执行）
 
