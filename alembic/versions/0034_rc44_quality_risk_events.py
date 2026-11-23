@@ -11,7 +11,7 @@ def upgrade():
     if op.get_bind().dialect.name != "postgresql":
         return
     op.execute("""
-        CREATE TABLE project_risk_events (
+        CREATE TABLE IF NOT EXISTS project_risk_events (
             id TEXT PRIMARY KEY,
             tenant_id TEXT NOT NULL,
             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -42,7 +42,7 @@ def upgrade():
         )
     """)
     op.execute("""
-        CREATE TABLE project_risk_occurrences (
+        CREATE TABLE IF NOT EXISTS project_risk_occurrences (
             id TEXT PRIMARY KEY,
             tenant_id TEXT NOT NULL,
             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -59,8 +59,8 @@ def upgrade():
             UNIQUE (risk_id, artifact_version_id, quality_check_key)
         )
     """)
-    op.execute("CREATE INDEX idx_project_risk_events_project_status ON project_risk_events(project_id,status,severity,last_seen_at DESC)")
-    op.execute("CREATE INDEX idx_project_risk_occurrences_risk ON project_risk_occurrences(risk_id,occurred_at DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_project_risk_events_project_status ON project_risk_events(project_id,status,severity,last_seen_at DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_project_risk_occurrences_risk ON project_risk_occurrences(risk_id,occurred_at DESC)")
     for table in ("project_risk_events", "project_risk_occurrences"):
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
