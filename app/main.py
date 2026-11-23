@@ -1909,6 +1909,17 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
             c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
         return {'task_id':tid,'status':target,'event_id':eid}
 
+
+def artifact_version_quality(c, version_id):
+    row=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,
+        a.artifact_type,a.uri,a.commit_sha,a.metadata
+        FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=?""",(version_id,)).fetchone()
+    if not row: return None
+    item=dict(row)
+    try: metadata=json.loads(item.get('metadata') or '{}')
+    except Exception: metadata={}
+    return assess_artifact_quality(item.get('artifact_type'),item.get('uri'),item.get('commit_sha'),metadata)
+
 @app.get('/api/v1/tasks/{tid}/artifact-quality')
 def task_artifact_quality(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -1970,6 +1981,9 @@ def review_task(tid:str,b:dict,authorization:str=Header(None)):
         task=c.execute(task_sql,(tid,)).fetchone()
         if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
         latest_version=c.execute('SELECT * FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1',(tid,)).fetchone()
+        task_approval_quality=artifact_version_quality(c,latest_version['id']) if latest_version else None
+        if decision=='APPROVE' and task_approval_quality and task_approval_quality['status']=='FAIL':
+            raise HTTPException(409,detail={'message':'Artifact quality gate failed; task approval is blocked','artifact_version_id':latest_version['id'],'quality':task_approval_quality})
         if decision=='APPROVE':
             enforce_workflow_exit(c,pid,task['status'],a['id'])
             enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
@@ -2025,6 +2039,7 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
         stamp=now()
         requested_version_id=str(b.get('artifact_version_id') or '').strip()
         latest_version=c.execute('SELECT * FROM artifact_versions WHERE task_id=? ORDER BY version_number DESC LIMIT 1',(package['child_task_id'],)).fetchone()
+        work_package_quality=artifact_version_quality(c,latest_version['id']) if latest_version else None
         selected_version=latest_version
         if requested_version_id:
             selected_version=c.execute('SELECT * FROM artifact_versions WHERE id=? AND task_id=?',(requested_version_id,package['child_task_id'])).fetchone()
@@ -2036,6 +2051,9 @@ def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
             enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
             if not selected_version:
                 raise HTTPException(409,'Work package must have an artifact version before approval')
+            selected_quality=artifact_version_quality(c,selected_version['id'])
+            if selected_quality and selected_quality['status']=='FAIL':
+                raise HTTPException(409,detail={'message':'Artifact quality gate failed; work package approval is blocked','artifact_version_id':selected_version['id'],'quality':selected_quality})
             if selected_version['review_status']=='REJECTED':
                 raise HTTPException(409,'The selected artifact version was rejected; submit a new version')
             status='DONE'; progress=100
@@ -2692,7 +2710,7 @@ def review_artifact_version(version_id:str,b:dict,authorization:str=Header(None)
         task_lock_sql='SELECT id FROM tasks WHERE id=?'
         if DATABASE_URL.startswith(('postgresql://','postgres://')): task_lock_sql += ' FOR UPDATE'
         c.execute(task_lock_sql,(version_task['task_id'],))
-        version_sql="""SELECT v.*,a.uri,a.commit_sha FROM artifact_versions v
+        version_sql="""SELECT v.*,a.uri,a.commit_sha,a.artifact_type,a.metadata FROM artifact_versions v
             JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=?"""
         if DATABASE_URL.startswith(('postgresql://','postgres://')): version_sql += ' FOR UPDATE'
         version=c.execute(version_sql,(version_id,)).fetchone()
@@ -2708,6 +2726,11 @@ def review_artifact_version(version_id:str,b:dict,authorization:str=Header(None)
         latest=c.execute('SELECT MAX(version_number) AS n FROM artifact_versions WHERE task_id=?',(version['task_id'],)).fetchone()['n']
         if decision=='APPROVE' and int(version['version_number'])!=int(latest):
             raise HTTPException(409,'Only the latest submitted artifact version can be approved')
+        try: version_metadata=json.loads(version['metadata'] or '{}')
+        except Exception: version_metadata={}
+        version_quality=assess_artifact_quality(version['artifact_type'],version['uri'],version['commit_sha'],version_metadata)
+        if decision=='APPROVE' and version_quality['status']=='FAIL':
+            raise HTTPException(409,detail={'message':'Artifact quality gate failed; version approval is blocked','artifact_version_id':version_id,'quality':version_quality})
         reviewed_at=now()
         status='APPROVED' if decision=='APPROVE' else 'REJECTED'
         updated=c.execute("UPDATE artifact_versions SET review_status=?,review_comment=?,reviewed_by_member_id=?,reviewed_at=? WHERE id=? AND review_status='PENDING'",
