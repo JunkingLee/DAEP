@@ -400,13 +400,16 @@ def require_worker(authorization):
 def require_project_access(c, project_id, a, write=False):
     project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        row=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(project_id,a['agent_id'])).fetchone()
-        if not row: raise HTTPException(403,'Agent project binding required')
-        if write and row['role'] not in ('manager',): raise HTTPException(403,'Agent project manager role required')
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -2557,13 +2560,16 @@ def require_worker(authorization):
 def require_project_access(c, project_id, a, write=False):
     project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
     if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
     if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",(project_id,a['agent_id'])).fetchone()
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
         if not binding: raise HTTPException(403,'Agent project binding required')
-        if write and binding['role']!='manager': raise HTTPException(403,'Agent project manager role required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
         return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
@@ -4391,10 +4397,19 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
@@ -6231,10 +6246,19 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
@@ -8186,10 +8210,19 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
@@ -10016,10 +10049,19 @@ def require_worker(authorization):
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(project_id,)).fetchone()
+    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
     if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a): raise HTTPException(403,'Tenant isolation violation')
+    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
+        raise HTTPException(403,'Tenant isolation violation')
+    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
     if is_admin(a): return
+    if a.get('actor_type')=='AGENT':
+        binding=c.execute("SELECT role FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
+            (project_id,a['agent_id'])).fetchone()
+        if not binding: raise HTTPException(403,'Agent project binding required')
+        if write and binding['role']!='manager':
+            raise HTTPException(403,'Agent project manager role required')
+        return
     row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
     if not row: raise HTTPException(403,'Project membership required')
     if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
