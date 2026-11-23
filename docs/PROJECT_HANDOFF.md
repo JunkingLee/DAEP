@@ -146,3 +146,22 @@
 - 验证：CI run `45142200504` 对应 HEAD `152cd2827d2bf07ffdc491ea0d7bf5dd0578e14d` 已成功；Python 3.11/3.12/3.13、pytest、`node --check web/agents.js`、PostgreSQL migration/RLS、production compose、容器构建全部通过。
 - 验证边界：当前回归为静态 UI/API 接线合约检查和 JavaScript 语法检查，未在真实浏览器中完成登录后的点击级 E2E；不能将其表述为真实浏览器端到端已通过。
 - 下一步唯一任务：增加 Playwright 浏览器 E2E，覆盖真实登录会话下的 Agent 页面加载与关键交互。
+
+## 11. Agent 管理真实浏览器 E2E（2026-11-23）
+
+- 本轮目标：按上一节唯一待办，为真实登录会话增加 Playwright 浏览器验收，而不是继续增加静态源码断言。
+- 新增 `tests/test_agent_management_e2e.py`：
+  - 仅在设置 `DAEP_RUN_BROWSER_E2E=1` 时运行；普通 pytest 默认跳过，避免要求所有开发者安装浏览器。
+  - 测试 fixture 启动独立 Uvicorn 子进程和临时 SQLite 数据库，使用专用 bootstrap 管理员密码；不连接共享/生产数据库。
+  - 使用 Chromium 真实打开登录页并登录，刷新后验证会话恢复，进入“我的 Agent”。
+  - 通过真实页面交互覆盖列表、创建 Agent、一次性 Token 展示、详情编辑、Token 轮换、项目绑定/解绑、Token 撤销。
+  - 最后调用详情读取验证响应中不包含任何 Token 明文。
+- 更新 `.github/workflows/ci.yml`，新增独立 `browser-e2e` job：Python 3.12、Playwright 1.52.0、安装 Chromium 后执行该 E2E 测试；不把浏览器依赖加入常规 Python requirements。
+- 提交：
+  - `9bb7d11a9c1e585cce09553292e77227622036a0` — `test: add Playwright Agent lifecycle browser E2E`
+  - `d970bcee7c4a17b468f9f6a1f68217c62fc0a78e` — `ci: run Agent lifecycle Playwright browser E2E`
+- 当前分支 HEAD：`d970bcee7c4a17b468f9f6a1f68217c62fc0a78e`。
+- 验证状态：本环境未直接启动 Chromium；CI run `45143047580` 对应上述 HEAD，查询时仍在运行。常规测试矩阵、迁移和新增浏览器 job 均需以该 run 最终结论为准；当前不得宣称浏览器 E2E 已通过。
+- 已知边界：浏览器测试使用平台 bootstrap 管理员身份，并通过已登录页面会话创建一个临时项目；Agent 创建/编辑/Token/绑定等关键操作由浏览器点击完成。测试数据库位于 pytest 临时目录，随测试进程结束回收。
+- 下一步唯一任务：检查 CI run `45143047580` 的 browser-e2e 和全矩阵结果；若失败，依据失败步骤修复测试 harness 或实际 UI/API 缺陷，再更新本交接文档。只有该 job 成功后，才将 Agent 管理关键流程标记为“浏览器 E2E 已验证”。
+
