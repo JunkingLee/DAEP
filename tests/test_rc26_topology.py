@@ -114,3 +114,19 @@ def test_task_detail_actions_follow_project_roles_and_human_review_boundary():
     assert "s.key!=='DONE'" in html
     assert "任务完成必须经过人工审核" in html
     assert "selectedWorkFunction==='tester'&&canOperate" in html
+
+
+
+def test_work_package_creation_requires_explicit_registered_agent_selection():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "function submitWorkPackageFromDetail(parentId)" in html
+    assert 'id="wpAgent"' in html
+    assert "assignee_member_id:selected.member_id" in html
+    assert "agent_name:selected.agent_name" in html
+    assert "请选择在线 Agent" in html
+
+
+def test_task_timeline_distinguishes_agent_actor_identity():
+    html = (ROOT / "web" / "index.html").read_text()
+    assert "payload.actor_type==='AGENT'" in html
+    assert "'Agent · '+(payload.agent_id||'未知身份')" in html
