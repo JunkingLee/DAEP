@@ -26,7 +26,7 @@ def test_rc26_task_detail_uses_existing_authorized_collaboration_apis():
         "function esc(v)",
     ):
         assert feature in html
-    assert "localStorage" not in html
+    assert "localStorage" in html  # web authentication session is intentionally restored after refresh
 
 
 def test_rc26_dependency_graph_is_interactive_and_accessible():
