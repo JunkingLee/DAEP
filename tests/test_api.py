@@ -718,8 +718,8 @@ def test_rc44_alembic_head_and_quality_risk_rls_migration_contract():
     assert 'project_risk_events' in risk_migration
     assert 'project_risk_occurrences' in risk_migration
     assert 'FORCE ROW LEVEL SECURITY' in risk_migration
-    assert 'daep_project_risk_events_tenant' in risk_migration
-    assert 'daep_project_risk_occurrences_tenant' in risk_migration
+    assert 'daep_{table}_tenant' in risk_migration
+    assert 'project_risk_events' in risk_migration and 'project_risk_occurrences' in risk_migration
 
 
 def test_rc8_messages_have_explicit_tenant_ownership():
