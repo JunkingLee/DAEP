@@ -11,6 +11,77 @@ from fastapi import APIRouter, Header, HTTPException
 def register_notification_governance_routes(app, conn, actor, now):
     router = APIRouter()
 
+    @router.get("/api/v1/me/notification-preferences")
+    def get_notification_preferences(authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        with conn() as c:
+            row = c.execute(
+                "SELECT * FROM member_notification_preferences WHERE member_id=? AND tenant_id=?",
+                (current["id"], current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not row:
+                return {
+                    "member_id": current["id"],
+                    "collaboration_grant_events": True,
+                    "collaboration_expiry_reminders": True,
+                    "reminder_days": [7, 3, 1],
+                }
+            return {
+                "member_id": row["member_id"],
+                "collaboration_grant_events": bool(row["collaboration_grant_events"]),
+                "collaboration_expiry_reminders": bool(row["collaboration_expiry_reminders"]),
+                "reminder_days": json.loads(row["reminder_days_json"]),
+                "updated_at": row["updated_at"],
+            }
+
+    @router.put("/api/v1/me/notification-preferences")
+    def update_notification_preferences(body: dict, authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        grant_events = body.get("collaboration_grant_events", True)
+        expiry_reminders = body.get("collaboration_expiry_reminders", True)
+        reminder_days = body.get("reminder_days", [7, 3, 1])
+        if not isinstance(grant_events, bool) or not isinstance(expiry_reminders, bool):
+            raise HTTPException(422, "Notification category preferences must be boolean")
+        if (not isinstance(reminder_days, list) or
+                any(type(day) is not int or day not in (1, 3, 7) for day in reminder_days) or
+                len(set(reminder_days)) != len(reminder_days)):
+            raise HTTPException(422, "reminder_days must be a unique subset of [7, 3, 1]")
+        reminder_days = sorted(reminder_days, reverse=True)
+        stamp = now()
+        with conn() as c:
+            c.execute(
+                """INSERT INTO member_notification_preferences
+                   (member_id,tenant_id,collaboration_grant_events,
+                    collaboration_expiry_reminders,reminder_days_json,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(member_id) DO UPDATE SET
+                     collaboration_grant_events=excluded.collaboration_grant_events,
+                     collaboration_expiry_reminders=excluded.collaboration_expiry_reminders,
+                     reminder_days_json=excluded.reminder_days_json,
+                     updated_at=excluded.updated_at
+                   WHERE member_notification_preferences.tenant_id=excluded.tenant_id""",
+                (current["id"], current.get("tenant_id", "tenant-default"),
+                 int(grant_events), int(expiry_reminders), json.dumps(reminder_days),
+                 stamp, stamp),
+            )
+            row = c.execute(
+                "SELECT * FROM member_notification_preferences WHERE member_id=? AND tenant_id=?",
+                (current["id"], current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not row:
+                raise HTTPException(409, "Notification preferences could not be saved")
+            return {
+                "member_id": row["member_id"],
+                "collaboration_grant_events": bool(row["collaboration_grant_events"]),
+                "collaboration_expiry_reminders": bool(row["collaboration_expiry_reminders"]),
+                "reminder_days": json.loads(row["reminder_days_json"]),
+                "updated_at": row["updated_at"],
+            }
+
     @router.get("/api/v1/me/notification-delivery")
     def notification_delivery(
         status: str = "ALL", task_id: str = None, limit: int = 50,
