@@ -97,11 +97,14 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             expect(modal).to_contain_text("已接受", timeout=15000)
 
             modal.locator("#taskCollabMessage").fill("Human collaboration message from browser E2E")
-            modal.get_by_role("button", name="发送消息").click()
-            expect(page.locator("#toast")).to_contain_text("协作消息已发送", timeout=15000)
-            # Re-open after the async POST + detail reload to avoid asserting against
-            # a modal render that is still being replaced by openTask().
-            page.evaluate("(id) => openTask(id)", setup["taskId"])
+            # Wait for the actual write request rather than the transient toast: the
+            # proposal decision and message composer both refresh this modal async.
+            with page.expect_response(
+                lambda response: "/api/v1/tasks/" + setup["taskId"] + "/collaboration-messages" in response.url
+                and response.request.method == "POST"
+            ) as message_response:
+                modal.get_by_role("button", name="发送消息").click()
+            assert message_response.value.status == 201, message_response.value.text()
             expect(modal).to_contain_text("Human collaboration message from browser E2E", timeout=15000)
 
             # The responsible Member controls the Session from the Task workspace.
