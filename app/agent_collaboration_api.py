@@ -476,8 +476,12 @@ def register_agent_collaboration_routes(
             elif current.get("actor_type") == "AGENT":
                 if not isinstance(grant_id, str) or not grant_id.strip():
                     raise HTTPException(422, "grant_id is required for Agent proposal access")
-                grant, session, task = _agent_collaboration_grant_context(
+                grant, _, _ = _agent_collaboration_grant_context(
                     c, grant_id.strip(), current, task_id=task_id, required_scope="session.read")
+                session = c.execute(
+                    "SELECT * FROM agent_collaboration_sessions WHERE id=?",
+                    (grant["session_id"],),
+                ).fetchone()
                 rows = c.execute(
                     """SELECT p.*,a.name agent_name
                        FROM agent_collaboration_proposals p
@@ -520,8 +524,20 @@ def register_agent_collaboration_routes(
         with conn() as c:
             begin_serialized_write(c)
             lock_task(c, task_id)
-            grant, session, task = _agent_collaboration_grant_context(
+            grant, _, _ = _agent_collaboration_grant_context(
                 c, grant_id.strip(), current, task_id=task_id, required_scope="session.proposal.create")
+            session = c.execute(
+                "SELECT * FROM agent_collaboration_sessions WHERE id=?",
+                (grant["session_id"],),
+            ).fetchone()
+            task = c.execute(
+                """SELECT t.id task_id,r.project_id,p.tenant_id project_tenant_id,t.status task_status
+                   FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+                   JOIN projects p ON p.id=r.project_id WHERE t.id=?""",
+                (task_id,),
+            ).fetchone()
+            if not task or task["project_tenant_id"] != grant["tenant_id"]:
+                raise HTTPException(403, "Task collaboration identity is invalid")
             if session["status"] != "OPEN":
                 raise HTTPException(409, "Only an OPEN collaboration Session accepts new proposals")
             if task["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
