@@ -3780,13 +3780,17 @@ def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
         begin_serialized_write(c)
         rows=c.execute("""SELECT g.id grant_id,g.tenant_id,g.project_id,g.task_id,g.agent_id,
                     g.owner_member_id,g.expires_at,a.name agent_name,t.title task_title,
-                    s.status session_status,p.status project_status,t.status task_status
+                    s.status session_status,p.status project_status,t.status task_status,
+                    COALESCE(np.collaboration_expiry_reminders,1) expiry_reminders_enabled,
+                    COALESCE(np.reminder_days_json,'[7,3,1]') reminder_days_json
              FROM agent_collaboration_grants g
              JOIN agents a ON a.id=g.agent_id AND a.owner_member_id=g.owner_member_id AND a.status='ACTIVE'
              JOIN members m ON m.id=g.owner_member_id AND m.tenant_id=g.tenant_id
              JOIN projects p ON p.id=g.project_id AND p.tenant_id=g.tenant_id
              JOIN tasks t ON t.id=g.task_id
              JOIN agent_collaboration_sessions s ON s.id=g.session_id
+             LEFT JOIN member_notification_preferences np
+               ON np.member_id=g.owner_member_id AND np.tenant_id=g.tenant_id
              WHERE g.status IN ('AUTHORIZED','ACCEPTED') AND g.expires_at<=?
              ORDER BY g.expires_at""",(horizon,)).fetchall()
         for row in rows:
@@ -3810,13 +3814,26 @@ def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
             # Do not remind about grants that cannot currently be used.
             if row['session_status']!='OPEN' or row['project_status']!='ACTIVE' or row['task_status'] in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
                 continue
-            if remaining<=86400:
-                window='24h'; label='24 小时内'
-            elif remaining<=3*86400:
-                window='3d'; label='3 天内'
-            else:
+            if not row['expiry_reminders_enabled']:
+                continue
+            try:
+                reminder_days = json.loads(row['reminder_days_json'] or '[7,3,1]')
+            except (TypeError, ValueError):
+                reminder_days = [7, 3, 1]
+            reminder_days = sorted(
+                {day for day in reminder_days if type(day) is int and day in (1, 3, 7)},
+                reverse=True,
+            )
+            window = None
+            if 7 in reminder_days and remaining <= 7 * 86400 and remaining > 3 * 86400:
                 window='7d'; label='7 天内'
-            reminder_key=f"agent-collaboration-grant-reminder:{row['grant_id']}:{row['expires_at']}"
+            elif 3 in reminder_days and remaining <= 3 * 86400 and remaining > 86400:
+                window='3d'; label='3 天内'
+            elif 1 in reminder_days and remaining <= 86400:
+                window='24h'; label='24 小时内'
+            if not window:
+                continue
+            reminder_key=f"agent-collaboration-grant-reminder:{row['grant_id']}:{row['expires_at']}:{window}"
             if c.execute('SELECT 1 FROM events WHERE idempotency_key=?',(reminder_key,)).fetchone():
                 continue
             event(c,'agent.collaboration_grant.reminder_sent',row['owner_member_id'],row['task_id'],
