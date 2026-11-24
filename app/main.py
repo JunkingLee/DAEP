@@ -872,13 +872,12 @@ def revoke_agent_task_grant(grant_id:str,body:dict=None,authorization:str=Header
         if row['expires_at']<=stamp:
             c.execute("UPDATE agent_task_grants SET status='EXPIRED',updated_at=? WHERE id=?",(stamp,grant_id))
             raise HTTPException(409,'Agent grant has expired')
-        task=_grant_task_context(c,row['task_id'],a)
         c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
             revoked_by_member_id=?,revoke_reason=? WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
             (stamp,stamp,a['id'],reason or None,grant_id))
         event(c,'agent.task_grant.revoked',a['id'],row['task_id'],{
             'grant_id':grant_id,'agent_id':row['agent_id'],'reason':reason or 'Owner revoked grant'},
-            tenant_override=task['project_tenant_id'])
+            tenant_override=row['tenant_id'])
         return {'id':grant_id,'status':'REVOKED','revoked_at':stamp,'revoked_by_member_id':a['id']}
 
 @app.post('/api/v1/tasks/{task_id}/agent-assignments')
