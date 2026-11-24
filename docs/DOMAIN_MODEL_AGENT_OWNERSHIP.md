@@ -287,3 +287,19 @@ AgentCollaborationSession 1 ─── N CollaborationProposal
 ```
 
 注意：Session 与 Grant 是不同边界。AgentTaskGrant 管任务执行；AgentCollaborationGrant 管 Session 协作。Session 只是把协作资源组织在同一个 Task 空间中。
+
+
+---
+
+## 13. 数据库实现校准：协作消息与通知 Inbox 分离（2026-11-24）
+
+代码检查确认，当前 `messages` 表是面向成员的收件箱/通知投递记录，只有 recipient_member_id 等投递字段，并不具备共享会话、作者身份或多参与者消息语义。因此不能把它直接扩展成 Agent 团队聊天记录。
+
+团队协作消息使用独立的 `agent_collaboration_messages` 表，并且每条记录必须关联 Session。作者身份约束：
+- MEMBER：必须有 author_member_id，Agent/Owner/CollaborationGrant 字段为空。
+- AGENT：必须有 author_agent_id、agent_owner_member_id 和 collaboration_grant_id，author_member_id 为空。
+- Agent 消息的复合外键同时绑定 collaboration_grant_id、session_id、task_id、agent_id 和 owner_member_id，防止消息伪造其他 Agent、其他 Owner 或其他 Session 的授权来源。
+
+`agent_collaboration_proposals` 同样通过复合外键绑定提议 Agent、Owner、Session、Task 和 CollaborationGrant。Task Contribution 通过复合外键绑定准确的 `(grant_id, task_id, agent_id)`。
+
+Session 参与者不另建可独立授权的 membership 表；由人类 Task 权限和有效 AgentCollaborationGrant 派生。DAEP 不存储 Agent Runtime 启动参数、运行地址或模型私钥。
