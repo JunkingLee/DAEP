@@ -1088,3 +1088,12 @@
 
 ### 下一步
 - 核验本轮完整 CI。若通过，进入 MCP 使用文档与 Agent Owner 配置/排障体验收尾；若失败，按日志修复并保持本轮端到端授权覆盖。
+
+
+## 37. MCP 端到端测试身份切换修正（2026-11-24）
+
+- CI run `45342865003` 的 Python 3.11/3.12/3.13 均运行 236 passed、1 skipped，只有新增 MCP→REST 端到端测试最后一个断言失败；PostgreSQL migrations/RLS、container-build、production-compose 已 SUCCESS，Browser E2E 仍运行中。
+- 失败根因是测试将 MCP 模块 Token 切换为只读 Agent Token 后，在后续使用主 Agent Grant 验证 PAUSED Session 拒绝发送时没有恢复主 Agent Token，REST 正确返回该只读 Agent 无权访问主 Agent Grant 的 404。
+- 修复仅在 PAUSED Session 发送断言前恢复主 Agent Token；保留只读 Agent 读取允许、发送拒绝的独立断言，不放宽任何 REST 授权逻辑。
+- 本修复提交待 CI 验证；未在本地运行 pytest，不宣称测试通过。
+- 未修改 REST API、数据库 Schema 或迁移；不做历史数据迁移、回填和利旧。

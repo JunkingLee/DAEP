@@ -4953,6 +4953,9 @@ def test_agent_mcp_collaboration_tools_round_trip_through_rest_api(monkeypatch):
         except RuntimeError as exc:
             assert "403" in str(exc)
 
+        # Restore the primary Agent identity before exercising its Grant.
+        mcp_server.TOKEN = primary_token
+
         # Session state is enforced by REST on every MCP request.
         paused = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
                               headers=owner_headers, json={"status": "PAUSED"})
