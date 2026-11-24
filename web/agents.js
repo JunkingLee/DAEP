@@ -14,7 +14,7 @@ async function loadCollaborationGrantInbox(){
   const scopeLabels={'session.read':'读取协作历史','session.message.send':'发送协作消息','session.proposal.create':'创建协作提案'};
   const rows=(data.items||[]).map(g=>{
    const active=['AUTHORIZED','ACCEPTED'].includes(g.effective_status);
-   const revoke=active?'<button class="btn danger" onclick="revokeOwnedCollaborationGrant(\\''+esc(g.grant_id)+'\\')">撤销授权</button>':'';
+   const revoke=active?'<button class="btn danger" onclick="revokeOwnedCollaborationGrant(\''+esc(g.grant_id)+'\')">撤销授权</button>':'';
    const resources=g.resource_scope?.resource_ids||[];
    return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0;flex:1"><div><b>'+esc(g.agent_name||g.agent_id)+'</b> · '+esc(g.project_name||g.project_id||'项目')+' / '+esc(g.task_title||g.task_id)+'</div><div class="muted small">状态：'+esc(labels[g.effective_status]||g.effective_status)+' · Session：'+esc(g.session_status||'未知')+'</div><div class="muted small">权限：'+esc((g.scopes||[]).map(x=>scopeLabels[x]||x).join('、'))+'</div><div class="muted small">资源：'+esc(resources.length?resources.join('、'):'当前 Task 全部协作资源')+' · 到期：'+esc(g.expires_at||'—')+'</div>'+(g.revoked_at?'<div class="muted small">撤销时间：'+esc(g.revoked_at)+' · '+esc(g.revoke_reason||'')+'</div>':'')+'</div>'+revoke+'</div>';
   }).join('')||'<div class="empty">你尚未授权任何 Agent 参与 Task 协作</div>';
