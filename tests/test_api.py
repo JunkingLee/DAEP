@@ -4485,7 +4485,7 @@ def test_agent_task_grant_concurrent_create_and_revoke_share_task_lock():
     gate=Barrier(2)
     def revoke():
         gate.wait(timeout=10)
-        return client.delete(f"/api/v1/agent-grants/{existing['id']}",headers=headers,
+        return client.request('DELETE',f"/api/v1/agent-grants/{existing['id']}",headers=headers,
             json={'reason':'Concurrent replacement'})
     def replace():
         gate.wait(timeout=10)
