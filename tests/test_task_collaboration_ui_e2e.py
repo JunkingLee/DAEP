@@ -104,7 +104,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 and response.request.method == "POST"
             ) as message_response:
                 modal.get_by_role("button", name="发送消息").click()
-            assert message_response.value.status == 201, message_response.value.text()
+            assert message_response.value.status == 200, message_response.value.text()
             expect(modal).to_contain_text("Human collaboration message from browser E2E", timeout=15000)
 
             # The responsible Member controls the Session from the Task workspace.
