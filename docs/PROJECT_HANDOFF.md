@@ -1577,3 +1577,33 @@
 ### 下一阶段建议
 - 进入 **Agent 协作通知治理与可运营性**：补充通知偏好（只控制通知渠道/频率，不改变授权本身）、到期提醒配置、按 Owner/Task 的通知审计视图，以及 Outbox 投递状态与收件箱 ACK 状态的关联展示。
 - 继续保持授权规则不变：Owner 本人授权、Owner 本人续期/撤销/重新授权；通知设置不能创建、续期、扩大或撤销 Grant。
+
+
+## 62. 通知投递可观测性 API（2026-11-24）
+
+### 本轮实现
+- 新增 `app/notification_governance_api.py`，通过现有 Member Inbox、Outbox 与 Events 提供只读关联查询；不新增通知存储表或数据库迁移。
+- `GET /api/v1/me/notification-delivery`：
+  - 仅允许 Member Token，数据严格限定为当前 Member 自己的收件箱消息。
+  - 支持 PENDING / ACKNOWLEDGED / REJECTED / ALL、Task 过滤和 1–200 条分页上限。
+  - 将 Message 与 Outbox 的 `message.created` envelope 按 message_id 关联，展示投递状态、attempts、last_error、available_at、sent_at，以及 Inbox ACK 状态/时间。
+  - 不返回 Worker lease token、lease owner 或任何 Broker 凭据。
+  - 找不到对应 Outbox 时明确返回 delivery_status=MISSING，便于发现异常。
+- `GET /api/v1/me/notification-audit`：
+  - 仅允许 Member Token，限制在当前 Tenant 且仅返回与当前 Owner 相关的通知事件。
+  - 支持 Task、事件类型和条数筛选；涵盖通知入队、ACK、授权提醒和授权过期事件。
+  - 不暴露其他 Owner 的通知审计。
+- 新增 API 回归：验证 Outbox PENDING -> SENT 与 Inbox PENDING -> ACKNOWLEDGED 的关联展示、审计查询，以及 Member 身份边界。
+- 本轮新增模块通过主应用显式注册；未更改 Agent 授权或通知生命周期。
+
+### 提交与验证
+- `f483861802236022b8effadd7ccbcc059455c16c` — 新增 Member 通知投递可观测性 API。
+- `c55375e95e8176c40802b74836814e75a12f118b` — 主应用注册新路由。
+- `5a3aac8e393a351086c2cb92626e8a072dd166e8` — 增加投递状态与 ACK 关联测试。
+- CI Run `45381720182`，HEAD `5a3aac8e393a351086c2cb92626e8a072dd166e8`：整体 SUCCESS；Python 3.11/3.12/3.13、PostgreSQL Migration/RLS、Container Build、Production Compose 和 Chromium Browser E2E 全部 SUCCESS。
+- 本轮未新增数据库 Schema、Migration 或历史数据处理。
+
+### 尚未完成与下一步
+- 本轮完成的是通知投递与 ACK 的 Member 侧 API 可观测性，不代表通知治理阶段全部结束。
+- 下一步应将 Delivery/Audit 数据接入通知收件箱 UI，并补充可配置的 Owner 通知偏好与提醒周期。偏好应采用独立的 Member 级设置模型；提醒周期应明确作用范围和默认值。不得通过通知偏好改变 Grant 状态、Scope 或授权关系。
+- 随后补齐投递失败/DEAD 状态的 Owner 可见性、管理端恢复审计和重复投递验证。
