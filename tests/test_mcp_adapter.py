@@ -88,7 +88,7 @@ def test_agent_allowlist_accepts_only_collaboration_grant_routes(monkeypatch):
     ]
     assert all(server._agent_path_allowed(method,path) for method,path in allowed)
     denied=[
-        ('GET','/api/v1/tasks/task_123/collaboration-messages/'),
+        ('GET','/api/v1/tasks/task_123/collaboration-messages/extra'),
         ('DELETE','/api/v1/tasks/task_123/collaboration-messages'),
         ('POST','/api/v1/collaboration-grants/acg_123/revoke'),
         ('GET','/api/v1/agents/other/collaboration-grants'),

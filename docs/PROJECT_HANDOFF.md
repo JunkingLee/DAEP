@@ -998,3 +998,11 @@
 - 核验本轮 MCP 工具提交对应 CI 全部 Job；若失败按日志修复。
 - 全绿后补充真实 HTTP 集成测试：Agent 仅凭有效 CollaborationGrant 读取/发送消息；缺少 Scope、错误 Agent/Owner、未接受、过期、撤销、Resource Scope 越权、PAUSED/CLOSED Session 均拒绝；Member Token 和既有 MCP 工具回归保持兼容。
 - 继续遵守：Agent 属于 Member，Runtime 自托管；DAEP 不创建/启动/调度 Agent；Owner 分别授权自己的 Agent；不扩大 Project 权限；不做数据库迁移/利旧/回填。
+
+
+### 32 节首轮 CI 反馈与测试断言修正
+- MCP 工具提交 `a5f280be9a0658f5dbad65adc0caf4ae1396eb6c` 对应 CI run `45339056341`。Python 3.11 的 pytest 为 231 passed、1 failed、1 skipped；失败仅在新增 Agent 路由 allowlist 负向测试。
+- 根因：`_agent_path_allowed` 使用 `strip('/')` 规范化路径，故协作消息路由尾部斜杠与标准路由等价；测试错误地把尾斜杠路径断言为拒绝。该行为不扩大路由范围，也不是授权绕过。
+- 修正测试为拒绝多余路径段 `/collaboration-messages/extra`，保留对真实额外路由的负向检查；未修改生产授权逻辑。
+- 首轮 CI 其余 Python 版本和 Browser E2E 在本修正前仍处于运行中；该 run 不作为完整通过依据。
+- 修正提交后的 CI 尚待验证；当前未在本地直接运行 pytest。
