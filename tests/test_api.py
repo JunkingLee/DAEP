@@ -5490,7 +5490,7 @@ def test_collaboration_grant_notifications_read_state_and_worker_reminders():
     assert pending.status_code == 200, pending.text
     created_notice = [x for x in pending.json()["items"]
                       if x["message_type"] == "AGENT_COLLABORATION_GRANT"
-                      and grant_id in x["content"]]
+                      and x["title"] == "Agent 协作授权已创建"]
     assert len(created_notice) == 1
     assert pending.json()["unread_count"] >= 1
 
