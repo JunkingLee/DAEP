@@ -35,7 +35,7 @@ def upgrade():
             revoke_reason TEXT,
             last_activity_at TEXT,
             legacy_assignment_id TEXT,
-            CHECK (expires_at > created_at),
+            UNIQUE (id, task_id, agent_id),\n            CHECK (expires_at > created_at),
             CHECK (
                 (status <> 'ACCEPTED' OR accepted_at IS NOT NULL)
                 AND (status <> 'REVOKED' OR revoked_at IS NOT NULL)
@@ -160,7 +160,7 @@ def upgrade():
             author_member_id TEXT REFERENCES members(id),
             author_agent_id TEXT REFERENCES agents(id),
             agent_owner_member_id TEXT REFERENCES members(id),
-            collaboration_grant_id TEXT REFERENCES agent_collaboration_grants(id),
+            collaboration_grant_id TEXT,
             message_type TEXT NOT NULL DEFAULT 'MESSAGE',
             content TEXT NOT NULL,
             metadata_json TEXT NOT NULL DEFAULT '{}',
