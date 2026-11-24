@@ -119,10 +119,10 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                     agent_id:agentId
                 },memberToken);
                 return {history:history.status,message:message.status,proposal:proposal.status,grant:grant.status};
-            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"]})
+            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentId":setup["agentId"],"agentToken":setup["agentToken"]})
             assert lifecycle["history"] == 200, lifecycle
             assert lifecycle["message"] == 409, lifecycle
             assert lifecycle["proposal"] == 409, lifecycle
-            # The UI's Member grant boundary is independently covered by REST API tests.
+            assert lifecycle["grant"] == 409, lifecycle
         finally:
             browser.close()
