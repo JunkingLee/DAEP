@@ -1721,7 +1721,6 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
         affected_task_ids=[x['task_id'] for x in c.execute("""SELECT a.task_id FROM assignments a
             JOIN tasks t ON t.id=a.task_id JOIN requirements r ON r.id=t.requirement_id
             WHERE a.member_id=? AND r.project_id=? ORDER BY a.task_id""",(member_id,pid)).fetchall()]
-        from app.main import _lock_agent_policy_task
         for affected_task_id in affected_task_ids:
             _lock_agent_policy_task(c,affected_task_id)
             _revoke_task_agent_grants_for_assignee_change(c,affected_task_id,a['id'],'Human task assignee removed from project',now())
