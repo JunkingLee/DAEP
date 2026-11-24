@@ -206,7 +206,27 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                            FROM agent_project_bindings b JOIN projects p ON p.id=b.project_id
                            WHERE b.agent_id=? ORDER BY p.name""",(agent_id,)).fetchall()
             t=c.execute("SELECT id,status,created_at,last_used_at,expires_at,revoked_at FROM agent_tokens WHERE agent_id=? ORDER BY created_at DESC",(agent_id,)).fetchall()
-            return {**dict(r),'projects':[dict(x) for x in b],'tokens':[dict(x) for x in t]}
+            task_grants=c.execute("""SELECT g.id,g.task_id,g.project_id,g.human_assignee_member_id,g.authorized_by_member_id,
+                    g.scope_json,g.status,g.created_at,g.updated_at,g.expires_at,g.accepted_at,g.revoked_at,
+                    g.revoked_by_member_id,g.revoke_reason,g.completed_at,t.title AS task_title,p.name AS project_name
+                    FROM agent_task_grants g
+                    JOIN tasks t ON t.id=g.task_id
+                    JOIN projects p ON p.id=g.project_id
+                    WHERE g.agent_id=? AND g.tenant_id=?
+                    ORDER BY g.created_at DESC""",(agent_id,r['tenant_id'])).fetchall()
+            collaboration_grants=c.execute("""SELECT g.id,g.task_id,g.project_id,g.session_id,g.owner_member_id,
+                    g.authorized_by_member_id,g.scopes_json,g.resource_scope_json,g.status,g.created_at,g.updated_at,
+                    g.expires_at,g.accepted_at,g.revoked_at,g.revoked_by_member_id,g.revoke_reason,
+                    s.status AS session_status,s.title AS session_title,t.title AS task_title,p.name AS project_name
+                    FROM agent_collaboration_grants g
+                    JOIN agent_collaboration_sessions s ON s.id=g.session_id
+                    JOIN tasks t ON t.id=g.task_id
+                    JOIN projects p ON p.id=g.project_id
+                    WHERE g.agent_id=? AND g.tenant_id=?
+                    ORDER BY g.created_at DESC""",(agent_id,r['tenant_id'])).fetchall()
+            return {**dict(r),'projects':[dict(x) for x in b],'tokens':[dict(x) for x in t],
+                    'task_execution_grants':[dict(x) for x in task_grants],
+                    'collaboration_grants':[dict(x) for x in collaboration_grants]}
 
     @app.patch('/api/v1/agents/{agent_id}')
     def update_agent(agent_id: str, body: AgentUpdateIn, authorization: str = Header(default='')):

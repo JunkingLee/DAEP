@@ -1213,3 +1213,21 @@
 - 实际契约是：首次 Token、第一次 rotate 后 Token、revoke 时当前 Token 均应为 `REVOKED`；Token revoke 后重新 rotate 签发的最新 Token 应为 `ACTIVE`。
 - 因此将测试从“所有 Token 都 REVOKED”修正为“恰好 1 个 ACTIVE，至少 2 个 REVOKED”，不改变后端实现。
 - 本轮其他 CI 项目已通过：container-build、migrations、browser-e2e、production-compose。
+
+
+## 46. Agent 管理页面授权状态可视化（2026-11-24）
+
+### CI 基线
+- 当前提交 `f2866a03f42e62295b664aeeb0a601bef0e54569` 对应 CI run `45347050295` 已启动。
+- Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、Container Build、Production Compose 已 SUCCESS；Browser E2E 停留在 Install Chromium，尚未完成。
+
+### 本轮实现
+- 扩展 `GET /api/v1/agents/{agent_id}` 返回 Owner 自己 Agent 的 Task Execution Grants 与 Collaboration Grants。
+- Agent 管理页分开呈现 Agent 身份、Token Credential、Task Execution Grant、Collaboration Grant 四层状态；展示 Task/Session、Scope、Resource Scope、生命周期时间和失效原因。
+- UI 明确 Credential validity、Task Execution authorization、Collaboration authorization 相互独立；Presence 不作为授权状态，也不改变授权判定。
+- 保持 Agent 私有归属与 Owner 边界：页面不提供替他人 Owner 授权/撤销 Grant 的入口，继续复用现有 REST/Grant 语义。
+- 未修改数据库 Schema、迁移、历史数据、回填或利旧逻辑。
+
+### 下一步
+- 等待 run `45347050295` 完整结束；Browser E2E 若继续卡在 Chromium 安装则记录限制，不无限等待。
+- 完整 CI 后继续补齐 disabled Agent、revoked/expired Grant 的真实浏览器交互回归。
