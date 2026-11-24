@@ -4763,7 +4763,10 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
 def task_detail(tid,authorization):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
         if not r: raise HTTPException(404,'Task not found')
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
@@ -6621,7 +6624,10 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
 def task_detail(tid,authorization):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
         if not r: raise HTTPException(404,'Task not found')
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
@@ -8611,7 +8617,10 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
 def task_detail(tid,authorization):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
         if not r: raise HTTPException(404,'Task not found')
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
@@ -10457,7 +10466,10 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
 def task_detail(tid,authorization):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
         if not r: raise HTTPException(404,'Task not found')
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
