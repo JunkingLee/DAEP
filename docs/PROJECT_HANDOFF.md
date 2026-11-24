@@ -782,3 +782,35 @@
 - 修复提交：`4375e1baba63cc363a07579c784267f76e46761f` — `test: use project admin for lifecycle fixture`。
 - 本轮新增真实 HTTP workflow 测试提交：`b76ca38cd9f36a4803fa806e7e8dacb4d761444c` — `test: cover HTTP workflow grant lifecycle`。
 - 交接文档补记之前，CI 运行 `45332129938` 只覆盖此前代码；修复提交和 HTTP 集成测试尚待新 CI 验证。
+
+## 28. Task assignee 变更与并发 Grant 集成测试（2026-11-24）
+
+### 本轮实现
+- 扩展既有真实 HTTP 工作包重新分配测试 `test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_new_agent`：
+  - 由旧 assignee Member 自己创建私有 Agent，并通过 `POST /api/v1/tasks/{task_id}/agent-grants` 授权。
+  - 通过真实 `POST /api/v1/work-packages/{package_id}/reassign` 将任务重新分配给另一 Member。
+  - 验证旧 Owner 的 Grant 被撤销，撤销原因是 `Human task assignee changed`，并记录执行重新分配的 Member。
+  - 新 assignee 创建自己的 Agent，调用策略 PUT 主动接管 Policy，再授权自己的 Agent。
+  - 旧 assignee 在重新分配后尝试继续授权会得到 403。
+- 新增 `test_agent_task_grant_concurrent_create_and_revoke_share_task_lock`：
+  - 两个并发创建请求竞争 `max_agents=1`，断言只有一个成功，另一个得到 409。
+  - 随后并发撤销当前 Grant 与创建替代 Grant，断言最终有效 Grant 数量不超过 1；如果替代授权成功，则仅替代 Agent 保持有效。
+  - 测试使用 SQLite + FastAPI HTTP TestClient；PostgreSQL 的真实并发执行仍需 CI PostgreSQL job 或专门的 PostgreSQL 并发集成环境确认，不能仅凭 SQLite 测试推断。
+- 前述 HTTP Task CANCELLED 终态测试与权限夹具修复仍保留。
+
+### 本轮提交
+- `35f50a4c98371367aa1552ceb77bf3d9b96db7fa` — test: cover assignee takeover of task agent grants。
+- `30e85cc3e5ab62041b8be119d1f89b1c8ea012bc` — test: assert assignee change audit reason。
+- `6a5ab628e75b85262b781083086af350e0cab998` — test: cover concurrent task agent grant writes。
+- `ef716f6f735127b338f4e1e8fad4e5bf209c1b56` — test: read grant list response items。
+
+### CI 与限制
+- 以上测试提交尚未在本地运行；GitHub Actions 新一轮 CI 尚待检查。
+- 前一轮 run `45332129938` 的失败是测试夹具使用普通 Member 创建 Requirement 导致 403；已在 `4375e1b` 修正为 ADMIN 创建 Requirement/Task，Agent 仍由 Owner 自己创建和授权。
+- 需要核实本轮最新 CI 的 Python 3.11/3.12/3.13、PostgreSQL migration/RLS、production Compose、container build 和 browser E2E。
+- 本轮只增加测试，没有修改生产权限逻辑、Schema 或历史迁移；不做回填、利旧或兼容。
+
+### 下一步唯一任务
+- 先核实本轮 CI；若失败，按真实日志修复并更新本交接文档。
+- 若通过，开始 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API：任务内默认 Session、Member 负责人创建/暂停/关闭、Agent Owner 独立授权加入、会话级 Scope/资源范围校验、撤销/过期处理和审计。
+- Session 不创建/启动/调度 Agent Runtime；Agent 仍属于 Member，Runtime 仍由 Owner 自己的环境运行。协作授权不得自动授予 Project 全域权限。
