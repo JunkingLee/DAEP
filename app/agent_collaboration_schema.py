@@ -182,6 +182,19 @@ def ensure_agent_collaboration_schema(conn_factory):
             ON agent_collaboration_messages(tenant_id, session_id, created_at, id);
         CREATE INDEX IF NOT EXISTS idx_agent_collaboration_proposals_session
             ON agent_collaboration_proposals(tenant_id, session_id, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS member_notification_preferences (
+            member_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            collaboration_grant_events INTEGER NOT NULL DEFAULT 1 CHECK (collaboration_grant_events IN (0,1)),
+            collaboration_expiry_reminders INTEGER NOT NULL DEFAULT 1 CHECK (collaboration_expiry_reminders IN (0,1)),
+            reminder_days_json TEXT NOT NULL DEFAULT '[7,3,1]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_member_notification_preferences_tenant
+            ON member_notification_preferences(tenant_id, member_id);
         """)
 
         # The base bootstrap defines active-grant uniqueness.
