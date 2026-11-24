@@ -4448,3 +4448,66 @@ def test_workflow_transition_http_revokes_agent_grant_on_task_cancellation():
     assert row['revoke_reason']=='Task became CANCELLED'
     assert row['revoked_by_member_id']==member_id
     assert events['n']==1
+
+def test_agent_task_grant_concurrent_create_and_revoke_share_task_lock():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _,member_id,member_token,task_id=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    agents=[]
+    for name in ('Concurrent Grant One','Concurrent Grant Two','Concurrent Grant Three'):
+        created=client.post('/api/v1/agents',headers=headers,json={'name':name})
+        assert created.status_code==200,created.text
+        agents.append(created.json()['agent'])
+
+    policy=client.put(f'/api/v1/tasks/{task_id}/agent-execution-policy',headers=headers,json={
+        'allow_multiple_agents':True,'max_agents':1})
+    assert policy.status_code==200,policy.text
+
+    gate=Barrier(2)
+    def create(index):
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+            json={'agent_id':agents[index]['id']})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=[future.result(timeout=30) for future in (
+            pool.submit(create,0),pool.submit(create,1))]
+    assert sorted(response.status_code for response in responses)==[200,409],[
+        response.text for response in responses]
+    first=next(response for response in responses if response.status_code==200)
+    active=client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers)
+    assert active.status_code==200,active.text
+    active_rows=[row for row in active.json() if row['status'] in ('AUTHORIZED','ACCEPTED')]
+    assert len(active_rows)==1
+    existing=active_rows[0]
+
+    gate=Barrier(2)
+    def revoke():
+        gate.wait(timeout=10)
+        return client.delete(f"/api/v1/agent-grants/{existing['id']}",headers=headers,
+            json={'reason':'Concurrent replacement'})
+    def replace():
+        gate.wait(timeout=10)
+        return client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+            json={'agent_id':agents[2]['id']})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        revoke_future=pool.submit(revoke)
+        replace_future=pool.submit(replace)
+        revoked,replacement=revoke_future.result(timeout=30),replace_future.result(timeout=30)
+
+    assert revoked.status_code in (200,409),revoked.text
+    assert replacement.status_code in (200,409),replacement.text
+    final_list=client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers)
+    assert final_list.status_code==200,final_list.text
+    final_active=[row for row in final_list.json() if row['status'] in ('AUTHORIZED','ACCEPTED')]
+    assert len(final_active)<=1
+    if replacement.status_code==200:
+        assert len(final_active)==1
+        assert final_active[0]['agent_id']==agents[2]['id']
+    else:
+        assert len(final_active)==0
+    with main_module.conn() as c:
+        task_grants=c.execute("SELECT COUNT(*) AS n FROM agent_task_grants WHERE task_id=? "
+            "AND status IN ('AUTHORIZED','ACCEPTED')",(task_id,)).fetchone()
+    assert task_grants['n']<=1
