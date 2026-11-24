@@ -31,3 +31,15 @@ def test_task_detail_exposes_collaboration_workspace_contract():
     assert "sendTaskCollaborationMessage" in dashboard.text
     assert "/collaboration-proposals/" in dashboard.text
     assert "/collaboration-messages" in dashboard.text
+
+
+def test_member_inbox_exposes_unread_read_and_all_views_for_collaboration_notices():
+    dashboard = client.get("/")
+    assert dashboard.status_code == 200
+    assert 'data-testid="inbox-pending"' in dashboard.text
+    assert 'data-testid="inbox-acknowledged"' in dashboard.text
+    assert 'data-testid="inbox-all"' in dashboard.text
+    assert "inboxStatus='PENDING'" in dashboard.text
+    assert "/api/v1/me/notifications?status=" in dashboard.text
+    assert "标记已读" in dashboard.text
+    assert "授权到期提醒" in dashboard.text
