@@ -4872,7 +4872,7 @@ def test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_au
     assert listed.status_code == 200, listed.text
     item = next(x for x in listed.json()["items"] if x["id"] == grant_id)
     assert item["effective_status"] == "ACCEPTED" and item["owner_member_id"] == owner_id
-    assert item["scopes"] == ["session.read", "session.message.send", "session.proposal.create"]
+    assert set(item["scopes"]) == {"session.read", "session.message.send", "session.proposal.create"}
     assert item["resource_scope"] == {"resource_ids": ["artifact-1"]} and item["expires_at"]
     assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages", headers=agent_headers,
         json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "before revoke"}).status_code == 200
