@@ -480,3 +480,102 @@ Request:
 - 废止“INDEPENDENT / LEAD_AND_SUPPORT / TEAM 由用户选择”的备选项；本次用户已确认 TEAM。
 - 废止任何默认 3、5、10 的任务级 Agent 数量限制。
 - 旧 Assignment 不能自动复制为 Grant；旧项目绑定不能作为执行/协作授权。
+
+
+---
+
+## 12. 开发阶段初始数据库 Schema 设计（2026-11-24）
+
+> **重要开发约束：DAEP 当前处于开发阶段。本项目不考虑生产数据库迁移、旧版本兼容、历史数据回填、利旧或 legacy 退役流程。** 本文原有涉及 migration、legacy、兼容过渡和旧数据处理的章节不再作为本阶段实施要求。当前工作是定义正确的初始数据库结构，并直接调整当前开发 schema/bootstrap/Alembic 初始基线，使其从干净数据库创建出目标结构。不得为尚未发布的旧开发结构设计复杂迁移链。
+
+### 12.1 初始 Schema 实体清单
+
+第一版从空数据库建立以下核心关系：
+
+1. `agent_task_execution_policies`：每个 Task 一条，保存负责人制定的 TEAM 执行策略。
+2. `agent_task_grants`：Task 1:N Agent 执行授权。
+3. `agent_task_contributions`：每个 Grant/Agent 的独立进度、阻塞和交付贡献。
+4. `agent_collaboration_sessions`：每个 Task 最多一个默认逻辑协作空间。
+5. `agent_collaboration_grants`：Agent 对 Session 的独立协作授权。
+6. 复用现有消息实体作为 Session 消息存储，增加明确的 session 归属和 Agent 作者身份字段；不要为 Agent 单独复制一套消息系统。
+7. 复用现有 Work Package / proposal 领域能力；Agent 产生的工作包/委派请求先进入 proposal，不直接改变正式治理关系。
+
+### 12.2 agent_collaboration_sessions 表
+
+建议初始字段：
+- `id` TEXT PRIMARY KEY
+- `tenant_id`, `project_id`, `task_id`
+- `responsible_member_id`
+- `status` TEXT NOT NULL DEFAULT 'OPEN'，CHECK IN ('OPEN','PAUSED','CLOSED')
+- `title` nullable；`created_by_member_id`
+- `created_at`, `updated_at`, `closed_at` nullable
+- `metadata_json` 仅保存非敏感协作元数据
+
+约束：
+- `UNIQUE(task_id)`，保证一个 Task 最多一个默认 Session。
+- tenant/project/task 复合关系必须由 FK/服务层共同保证。
+- responsible_member_id 必须与 TaskExecutionPolicy 的负责人一致；负责人变更需显式更新并写审计。
+- Session 不保存 Runtime endpoint、模型密钥、Agent 私有配置或可用于启动 Agent 的信息。
+
+### 12.3 agent_collaboration_grants 与 Session 的关系
+
+- 增加非空 `session_id`，AgentCollaborationGrant 归属一个 Session。
+- 授权记录包含 agent_id、owner_member_id、authorized_by_member_id、scopes、resource_scope_json、status、expires_at、accepted_at、revoked_at 和审计字段。
+- 唯一有效授权约束按 `(session_id, agent_id)`，不能按 session_id 单列唯一。
+- Session 是资源容器，不是授权；每次 REST/MCP 请求必须验证 CollaborationGrant 状态、scope、session_id、task_id、tenant_id、project_id、Agent Owner 和资源范围。
+- 同一 Agent 可以加入不同 Task 的不同 Session，但必须对每个 Session 分别授权。
+- AgentTaskGrant 与 AgentCollaborationGrant 相互独立：若产品流程要求 Agent 执行并协作，必须分别持有两类授权。
+
+### 12.4 消息与提议的初始 Schema
+
+复用现有 messages 表（以实际 schema 为准补齐字段）：
+- `collaboration_session_id` nullable FK（普通 Member 对话可为空；Session 消息必须非空）。
+- `author_type`：MEMBER / AGENT。
+- `author_member_id` nullable；`author_agent_id` nullable；`agent_owner_member_id` nullable。
+- `agent_collaboration_grant_id` nullable FK。
+- 约束确保 MEMBER 消息只使用 member author，AGENT 消息必须同时记录 agent_id、owner_member_id 和有效协作授权来源。
+- 读写必须按 Session + recipient/resource scope 过滤，不能因知道 session_id 就获得访问权。
+
+新增 `agent_collaboration_proposals`（如现有 proposal 实体无法承载）：
+- id、tenant_id、project_id、task_id、session_id
+- proposal_type：INVITE_AGENT / WORK_PACKAGE / MEMBER_DELEGATION / HELP_REQUEST
+- proposed_by_agent_id、owner_member_id、collaboration_grant_id
+- payload_json、status（PENDING / ACCEPTED / REJECTED / WITHDRAWN）
+- decided_by_member_id、decision_note、created_at、decided_at
+- 提议只能由有对应 scope 的 Agent 创建；接受/拒绝由有治理权限的 Member 执行。
+- INVITE_AGENT 被接受后也不会自动授予被邀请 Agent 权限；目标 Agent Owner 仍需单独授权并完成加入流程。
+
+### 12.5 初始 Schema 约束与索引
+
+- `agent_task_execution_policies`: UNIQUE(task_id)，CHECK(max_agents IS NULL OR max_agents > 0)，CHECK(collaboration_mode='TEAM')。
+- `agent_task_grants`: UNIQUE(task_id, agent_id) WHERE status IN ('AUTHORIZED','ACCEPTED')；不能建立 task_id 单列有效唯一索引。
+- `agent_task_contributions`: FK(grant_id, task_id, agent_id) 或等效复合约束，保证贡献不能挂到其他 Task/Agent 的 Grant。
+- `agent_collaboration_sessions`: UNIQUE(task_id)。
+- `agent_collaboration_grants`: UNIQUE(session_id, agent_id) WHERE status IN ('AUTHORIZED','ACCEPTED')。
+- 消息按 (collaboration_session_id, created_at) 建索引；提议按 (session_id, status, created_at) 建索引。
+- 可变 max_agents 不能只靠静态唯一索引实现；创建 Grant 时事务锁定 Task/Policy 行，在同一事务校验 allow_multiple_agents/max_agents 并插入。
+- PostgreSQL RLS 必须覆盖 tenant_id 隔离；SQLite 用于应用测试，不替代 PostgreSQL RLS 验证。
+- DB 不存储 Agent Runtime 的启动命令、私有密钥或模型凭据；Agent Token 是 DAEP 接入凭据，需按现有 token hash/secret 管理规则保存。
+
+### 12.6 从零建库的实施顺序（不是历史迁移）
+
+1. 更新 SQLAlchemy models / 初始 Alembic baseline / SQLite bootstrap schema，使空数据库直接创建上述目标表、索引和约束。
+2. 更新 tenant RLS policy 定义和 PostgreSQL schema contract tests。
+3. 实现 ORM 关系和约束测试：Task 1:0..1 Session、Task 1:N Grant、Session 1:N CollaborationGrant。
+4. 实现多 Agent 并发授权事务测试及 max_agents=NULL 行为测试。
+5. 实现 Session 与 CollaborationGrant 授权隔离测试。
+6. 实现 Message Agent identity/session foreign key contract tests。
+7. 全部数据库测试通过后，再进入策略 API、Grant API、Session API 和消息/MCP 协作能力。
+
+不执行历史数据回填、旧表迁移、旧 API 兼容、legacy 只读化、旧 Agent Assignment 转换或生产数据清理。开发数据库可重建时，直接从当前目标 schema 初始化。
+
+### 12.7 需要遵守的设计不变量
+
+- 创建 Session 不会创建 Agent。
+- 创建 Session 不会启动 Agent Runtime。
+- 加入 Session 不会自动获得 Task 执行权限。
+- 获得 AgentTaskGrant 不会自动获得 Session 消息/协作权限。
+- 每个 Agent 的 Owner 必须独立授权协作。
+- Agent 消息永远以 Agent 身份署名，不得冒充 Owner Member。
+- Agent 提议不等于治理决定；正式工作包和人类责任变更由 Member 确认。
+- 负责人不设置 max_agents 时，数据库字段为 NULL，不存在隐藏的 3/5/10 任务级数量限制。
