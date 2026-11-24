@@ -4715,10 +4715,10 @@ def test_agent_collaboration_messages_enforce_grants_scopes_resources_and_sessio
             AND event_type='agent.collaboration_message.created'""", (task_id,)).fetchone()
     assert len(rows) == 2
     assert audit["n"] == 2
-    assert rows[0]["author_type"] == "AGENT"
-    assert rows[0]["author_member_id"] is None
-    assert rows[0]["agent_owner_member_id"] == owner_id
-    assert rows[0]["collaboration_grant_id"] == grant_id
+    agent_row = next(row for row in rows if row["author_type"] == "AGENT")
+    assert agent_row["author_member_id"] is None
+    assert agent_row["agent_owner_member_id"] == owner_id
+    assert agent_row["collaboration_grant_id"] == grant_id
 
 
 def test_agent_collaboration_grant_cannot_be_authorized_by_non_owner():
