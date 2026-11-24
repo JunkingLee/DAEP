@@ -4084,7 +4084,9 @@ def test_agent_grant_accept_rechecks_current_assignee_and_expiry():
         json={'agent_id':agent.json()['agent']['id']})
     assert second.status_code==200,second.text
     with main_module.conn() as c:
-        c.execute("UPDATE agent_task_grants SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+        c.execute("""UPDATE agent_task_grants
+            SET created_at='2000-01-01T00:00:00+00:00',
+                expires_at='2000-01-02T00:00:00+00:00' WHERE id=?""",
             (second.json()['id'],))
     expired=client.post(f"/api/v1/agent-grants/{second.json()['id']}/accept",headers=agent_headers)
     assert expired.status_code==409,expired.text
