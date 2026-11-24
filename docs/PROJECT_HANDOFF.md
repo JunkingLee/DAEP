@@ -1522,3 +1522,58 @@
   - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
 - 当前分支：`release/1.0.0-rc9`。
 - 下一阶段建议：增加 Task 协作授权的批量撤销/筛选导出之前，先补齐 Owner 授权的通知和临近到期提醒；提醒只能通知 Owner，不可自动续期或扩大 Scope。
+
+
+## 61. Agent CollaborationGrant 通知、到期提醒与自动过期处理（2026-11-24）
+
+### 本轮实现
+- 复用现有 Member `messages` 收件箱与 `outbox` 投递链路，不新增通知表，不新增数据库迁移。
+- CollaborationGrant 生命周期通知进入原 Member 收件箱：
+  - Owner 创建授权后，通知 Owner 授权已创建并等待 Agent 接受。
+  - Agent 接受授权后，通知授权 Owner。
+  - Owner 续期、撤销授权后，通知 Owner 操作结果。
+  - Grant 到期后，通知 Owner 已过期以及需要重新授权的处理方式。
+- 通知类型使用 `AGENT_COLLABORATION_GRANT`；到期提醒使用 `AGENT_COLLABORATION_GRANT_REMINDER`。通知同时写入既有 `outbox`，沿用现有消息可靠投递、ACK 与死信处理能力。
+- 新增 Worker 内部接口 `POST /internal/v1/collaboration-grants/reminders/dispatch`：
+  - 只允许独立的 `DAEP_WORKER_TOKEN`，不接受普通 Member/Agent Token。
+  - `daep_worker.run_once()` 每轮 Outbox 处理后调用该接口；提醒调度失败不会阻断 Outbox 投递。
+  - 活动 Grant 在到期前 7 天范围内，且 Task/Project/Session 仍可协作时，为 Owner 生成一次到期提醒；内容根据剩余时间标记 7 天、3 天或 24 小时内。
+  - 使用 Grant ID + 当前 expires_at 构造幂等键，同一到期周期不会因 Worker 高频轮询重复发送；Owner 续期后 expires_at 变化，下一周期可重新提醒。
+  - Worker 同时扫描已经到期但状态仍为 AUTHORIZED/ACCEPTED 的 Grant，将状态持久化为 EXPIRED、写入 `agent.collaboration_grant.expired` 审计并通知 Owner；不依赖 Owner 必须先打开授权收件箱。
+  - Session 暂停/关闭、Project 非 ACTIVE 或 Task 终态时不发送“即将到期”提醒；已到期状态通知仍会完成。
+- Member 收件箱 API 扩展：
+  - `GET /api/v1/me/notifications?status=PENDING|ACKNOWLEDGED|REJECTED|ALL`。
+  - 默认仍为 PENDING；返回 `unread_count`，支持未读、已读、拒绝和全部消息视图。
+  - 通知列表与 ACK 接口显式要求 Member 身份；Agent Token 不能读取或确认 Member 通知。
+- 前端 `web/index.html`：
+  - 收件箱增加未读、已读、全部筛选和未读计数。
+  - 显示通知类型、状态、优先级与创建时间。
+  - PENDING 通知可标记为已读；沿用 `POST /api/v1/messages/{id}/ack`，不另造已读状态体系。
+- 安全与产品边界：
+  - 不自动续期，不扩大 Scope，不自动重新授权。
+  - Owner 仍只能管理自己拥有并授权的 Agent Grant。
+  - 提醒发送给 Grant 的 Agent Owner，不将 Agent Token 作为 Member 收件箱身份。
+  - 通知通过既有 Tenant/Member inbox 和 Outbox 链路；不把协作聊天消息混入 Member inbox 以外的协作消息表。
+
+### 测试与验证
+- API 测试 `test_collaboration_grant_notifications_read_state_and_worker_reminders` 覆盖创建/接受通知、PENDING 与 ACKNOWLEDGED 分流、Worker Token 鉴权、到期提醒幂等、到期 Grant 自动转 EXPIRED 与 Owner 通知。
+- Worker 测试覆盖每轮调度提醒，以及提醒接口故障时不阻断 Outbox 投递。
+- 静态 UI 契约测试覆盖未读/已读/全部视图。
+- Playwright Browser E2E 验证 Member 收件箱通知展示和标记已读，并继续覆盖 Task Collaboration Proposal、消息、Session 生命周期与 Grant 撤销。
+- 最终代码 CI Run `45380180436`，HEAD `11962e744db500a2ccbdddd028a50c116c12acc8`：整体 SUCCESS，七个 Job 全部成功。
+  - Python 3.11 / 3.12 / 3.13：每个版本 `253 passed, 2 skipped`。
+  - Browser E2E 使用 Chromium 实际执行：`3 passed in 9.01s`。
+  - PostgreSQL Migration/RLS、Container Build、Production Compose：全部 SUCCESS。
+- 关键提交：
+  - `005a3e58231210731de3532ea09aa94cac1c813d` — Member 通知持久化 helper、通知状态筛选和 Worker 提醒接口。
+  - `85029876a6c9734c64de4dcff21b8c516d5127ac` — Grant 创建/接受/续期/撤销/过期通知。
+  - `385611347b543581b18a0097f944888407cc44f4` — 收件箱未读/已读/全部视图。
+  - `1d06e4494d8f0a1a34ac671fd7d220b9d72c9882` — Worker 周期调用提醒调度。
+  - `642430a4d985eed82653d937293c75dfdafad536` — Worker 自动扫描并物化已过期 Grant。
+  - `11962e744db500a2ccbdddd028a50c116c12acc8` — 最终 Browser E2E 修正与验证 HEAD。
+- 当前分支：`release/1.0.0-rc9`。
+- 本轮不新增数据库 Schema 或迁移，不涉及历史数据迁移、回填、兼容或利旧。
+
+### 下一阶段建议
+- 进入 **Agent 协作通知治理与可运营性**：补充通知偏好（只控制通知渠道/频率，不改变授权本身）、到期提醒配置、按 Owner/Task 的通知审计视图，以及 Outbox 投递状态与收件箱 ACK 状态的关联展示。
+- 继续保持授权规则不变：Owner 本人授权、Owner 本人续期/撤销/重新授权；通知设置不能创建、续期、扩大或撤销 Grant。
