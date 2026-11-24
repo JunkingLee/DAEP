@@ -211,9 +211,16 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.patch('/api/v1/agents/{agent_id}')
     def update_agent(agent_id: str, body: AgentUpdateIn, authorization: str = Header(default='')):
         a=actor(authorization)
+        from app.main import begin_serialized_write, _lock_agent_policy_task
         with conn() as c:
+            begin_serialized_write(c)
             r=_agent_owner(c,agent_id,a,is_admin)
             stamp=now()
+            if body.status=='DISABLED':
+                task_ids=[x['task_id'] for x in c.execute("""SELECT DISTINCT task_id FROM agent_task_grants
+                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED') ORDER BY task_id""",(agent_id,)).fetchall()]
+                for task_id in task_ids:
+                    _lock_agent_policy_task(c,task_id)
             c.execute("UPDATE agents SET name=?,description=?,status=?,updated_at=? WHERE id=?",(body.name,body.description,body.status,stamp,agent_id))
             revoked_assignment_count=0
             if body.status=='DISABLED':
@@ -256,12 +263,26 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.post('/api/v1/agents/{agent_id}/tokens/revoke')
     def revoke_agent_token(agent_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
-        from app.main import begin_serialized_write
+        from app.main import begin_serialized_write, _lock_agent_policy_task
         with conn() as c:
             begin_serialized_write(c)
             _agent_owner(c,agent_id,a,is_admin)
+            task_ids=[x['task_id'] for x in c.execute("""SELECT DISTINCT task_id FROM agent_task_grants
+                WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED') ORDER BY task_id""",(agent_id,)).fetchall()]
+            for task_id in task_ids:
+                _lock_agent_policy_task(c,task_id)
             ts=now()
             c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",(ts,agent_id))
+            grants=c.execute("""SELECT id,task_id FROM agent_task_grants
+                WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(agent_id,)).fetchall()
+            for grant in grants:
+                c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
+                    revoked_by_member_id=?,revoke_reason='Agent token revoked'
+                    WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                    (ts,ts,a['id'],grant['id']))
+                event(c,'agent.task_grant.revoked',a['id'],grant['task_id'],{
+                    'grant_id':grant['id'],'agent_id':agent_id,'reason':'Agent token revoked'})
+
             assignments=c.execute("""SELECT id,task_id,project_id FROM agent_task_assignments
                 WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
             for assignment in assignments:
@@ -271,9 +292,9 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                     'assignment_id':assignment['id'],'agent_id':agent_id,
                     'reason':'Agent token explicitly revoked'})
             event(c,'agent.token.revoked',a['id'],None,{'agent_id':agent_id,
-                'revoked_assignment_count':len(assignments)})
+                'revoked_assignment_count':len(assignments),'revoked_grant_count':len(grants)})
             return {'agent_id':agent_id,'status':'REVOKED',
-                'revoked_assignment_count':len(assignments)}
+                'revoked_assignment_count':len(assignments),'revoked_grant_count':len(grants)}
 
     @app.post('/api/v1/agents/{agent_id}/projects')
     def bind_agent(agent_id: str, body: AgentProjectBindingIn, authorization: str = Header(default='')):
