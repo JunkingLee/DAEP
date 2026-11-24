@@ -819,7 +819,7 @@ def _lock_agent_policy_task(c, task_id):
     if not c.execute(sql,(task_id,)).fetchone():
         raise HTTPException(404,'Task not found')
 
-def _ensure_agent_task_policy(c, task, responsible_member_id, stamp=None):
+def _ensure_agent_task_policy(c, task, responsible_member_id, stamp=None, allow_takeover=False):
     stamp=stamp or now()
     c.execute("""INSERT INTO agent_task_execution_policies
         (id,tenant_id,project_id,task_id,responsible_member_id,allow_multiple_agents,
@@ -839,7 +839,13 @@ def _ensure_agent_task_policy(c, task, responsible_member_id, stamp=None):
     if policy['project_id']!=task['project_id']:
         raise HTTPException(409,'Task execution policy project relationship is invalid')
     if policy['responsible_member_id']!=responsible_member_id:
-        raise HTTPException(409,'Task assignee changed; the new assignee must take ownership of the Agent execution policy')
+        if not allow_takeover:
+            raise HTTPException(409,'Task assignee changed; the new assignee must take ownership of the Agent execution policy')
+        c.execute("""UPDATE agent_task_execution_policies
+            SET responsible_member_id=?,policy_version=policy_version+1,updated_at=?
+            WHERE id=? AND responsible_member_id=?""",
+            (responsible_member_id,stamp,policy['id'],policy['responsible_member_id']))
+        policy=c.execute(sql,(task['task_id'],task['project_tenant_id'])).fetchone()
     return policy
 
 def _active_agent_grants(c, task_id, stamp):
@@ -859,6 +865,8 @@ def get_agent_task_execution_policy(task_id:str,authorization:str=Header(None)):
     if a.get('actor_type')!='MEMBER':
         raise HTTPException(403,'Member authentication required')
     with conn() as c:
+        begin_serialized_write(c)
+        _lock_agent_policy_task(c,task_id)
         task=_grant_task_context(c,task_id,a)
         policy=_ensure_agent_task_policy(c,task,a['id'])
         return _agent_policy_payload(policy)
@@ -880,7 +888,7 @@ def update_agent_task_execution_policy(task_id:str,body:dict,authorization:str=H
         begin_serialized_write(c)
         _lock_agent_policy_task(c,task_id)
         task=_grant_task_context(c,task_id,a)
-        policy=_ensure_agent_task_policy(c,task,a['id'])
+        policy=_ensure_agent_task_policy(c,task,a['id'],allow_takeover=True)
         stamp=now()
         active=_active_agent_grants(c,task_id,stamp)
         effective_limit=1 if not allow_multiple else max_agents
