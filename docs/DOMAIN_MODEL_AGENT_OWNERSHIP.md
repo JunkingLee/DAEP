@@ -214,7 +214,7 @@ DAEP 可以提供项目内的 Agent 能力与在线状态目录，帮助团队�
 - `collaboration.message.send`
 - `collaboration.agent.discover`
 - `collaboration.invitation.propose`
-- `collaboration.work_package.propose)
+- `collaboration.work_package.propose
 - `collaboration.delegation.propose`
 
 第一版建议把资源范围限定在明确的 Task / Work Package / 对话参与者集合内，不开放无边界 Project 全量读取。Agent 可以发送带 Agent 身份的消息、提出邀请/工作包/委派建议；负责人或具备人类治理权限的 Member 必须确认涉及正式工作包创建、任务责任人变化、审批或验收的决定。Agent 不得创建/撤销其他 Agent 的 Grant，不得修改人类 assignee，不得审批验收，不得管理项目成员或角色。
@@ -232,3 +232,58 @@ Agent 间合作必须同时满足发起方和接收方各自的授权。发现�
 ### 11.6 旧模型修订
 
 本文旧版“同一任务仅一个有效 Agent”“以后再引入多 Agent”的建议已废止。旧 Agent Assignment 仅保留只读历史，不得静默迁移成新 Grant；旧 Project Binding 不构成执行或协作授权。
+
+
+---
+
+## 12. AgentCollaborationSession：任务级逻辑协作空间（2026-11-24）
+
+### 12.1 定义与边界
+
+`AgentCollaborationSession` 是 DAEP 内部用于组织一次 Task 团队协作的逻辑空间。它不是 Agent、不是 Agent Runtime、不是模型实例，也不是调度器。Session 不创建、启动、唤醒、托管或监督任何 Agent。
+
+- 一个 Task 在第一版最多拥有一个默认 CollaborationSession（Task 1:0..1）；Session 与 Task 同生命周期。
+- Session 可以在 Task 开始团队协作时创建；建议在负责人启用 TEAM 协作或首个协作授权创建时，由 DAEP API 创建。
+- Session 负责关联参与者、协作消息、协作提议和协作审计。
+- Agent 是否可加入、读取或发送内容，仍由独立有效的 AgentCollaborationGrant 决定。Session 本身不是授权凭证。
+- AgentTaskGrant 只授予任务执行 scope；不能因加入 Session 而扩大执行权限。反过来，AgentTaskGrant 也不自动授予 Session 访问权。
+- Session 默认限定一个 Task，不提供跨 Task/Project 的自由聊天室。跨任务协作若未来需要，必须另行设计资源范围和授权模型。
+
+### 12.2 生命周期
+
+建议状态：
+- `OPEN`：允许符合授权条件的成员和 Agent 参与。
+- `PAUSED`：暂时停止 Agent 协作写入；保留只读审计，具体读取仍需有效 scope。
+- `CLOSED`：协作结束，不再接受新消息/提议；历史内容按授权规则只读。
+
+Task 进入终态时，Session 自动转为 CLOSED；相关 AgentCollaborationGrant 按生命周期策略撤销或完成，并写审计事件。Session 暂停/关闭不得删除消息、贡献和审计历史。
+
+### 12.3 参与者模型
+
+- 人类 Task Responsible Member 是 Session 的治理负责人，拥有成员治理规则授予的管理能力。
+- Agent 参与者必须拥有指向该 Session/Task 的有效 AgentCollaborationGrant，并且其 Owner 已完成授权流程。
+- 不额外建立一份可独立授予权限的 Agent Session Membership 表，避免 membership 与 CollaborationGrant 双重授权源。Session 参与者列表由有效 CollaborationGrant + 人类参与者关系投影得出。
+- 被发现、被提议邀请或收到消息，不自动成为 Session 参与者。
+- Agent Owner 撤销授权、Agent 停用、Owner 停用或 Grant 过期后，该 Agent 立即失去 Session 的相应能力；其他参与者不受影响。
+
+### 12.4 Session 能力
+
+Session 聚合以下资源：
+- 协作消息：以 Member 或 Agent 的真实身份署名，保留 author_type、member_id/agent_id、owner_member_id、collaboration_grant_id。
+- 协作提议：邀请 Agent、请求协助、建议 Work Package、建议 Member 委派；提议不直接产生治理结果。
+- 工作包关联：正式 Work Package 仍由有权限的 Member 确认创建和分配；Agent 只能在授权 scope 内提出建议。
+- 活动与审计：加入/退出、授权/撤销、消息发送、提议、负责人确认/拒绝、Session 暂停/关闭。
+
+### 12.5 推荐关系
+
+```
+Task 1 ─── 0..1 AgentCollaborationSession
+Task 1 ─── 1 AgentTaskExecutionPolicy
+Task 1 ─── N AgentTaskGrant
+AgentTaskGrant 1 ─── N AgentTaskContribution
+AgentCollaborationSession 1 ─── N AgentCollaborationGrant
+AgentCollaborationSession 1 ─── N CollaborationMessage
+AgentCollaborationSession 1 ─── N CollaborationProposal
+```
+
+注意：Session 与 Grant 是不同边界。AgentTaskGrant 管任务执行；AgentCollaborationGrant 管 Session 协作。Session 只是把协作资源组织在同一个 Task 空间中。
