@@ -2,7 +2,7 @@
 
 from alembic import op
 
-revision = "0037_rc47_member_notification_preferences"
+revision = "0037_rc47_notify_prefs"
 down_revision = "0036_rc46_agent_task_grants"
 branch_labels = None
 depends_on = None
