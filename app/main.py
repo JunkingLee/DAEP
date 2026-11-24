@@ -241,7 +241,7 @@ def init():
             FOREIGN KEY(owner_member_id) REFERENCES members(id),
             FOREIGN KEY(human_assignee_member_id) REFERENCES members(id),
             FOREIGN KEY(authorized_by_member_id) REFERENCES members(id),
-            FOREIGN KEY(revoked_by_member_id) REFERENCES members(id),
+            FOREIGN KEY(revoked_by_member_id) REFERENCES members(id)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_one_active_per_task
             ON agent_task_grants(task_id) WHERE status IN ('AUTHORIZED','ACCEPTED');
