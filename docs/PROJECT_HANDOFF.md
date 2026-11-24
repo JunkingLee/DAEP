@@ -687,3 +687,62 @@
 - 修复提交：53d7274c2e65472258e0b90392c065e00c4e83c4 — fix: allow task assignee to take over agent policy。
 - 此修复提交触发的新 CI 运行应作为当前最终验证依据；此前 run 45330959551 可能因新提交被取消，不能据此宣称完整通过。
 
+## 26. AgentTaskGrant 生命周期与责任人变更收口（2026-11-24）
+
+### CI 状态复核
+- 上一轮执行策略提交 736b12d79ab5b235c7405f22eceacde09badbf35 对应 run 45331167815：
+  - Python 3.11/3.12/3.13：SUCCESS。
+  - PostgreSQL migrations/RLS：SUCCESS。
+  - production-compose：SUCCESS。
+  - container-build：SUCCESS。
+  - browser-e2e：后续提交触发后被 CANCELLED，未完成验证，不能宣称该 run 全绿。
+
+### 本轮审查发现
+- Task 终态转换此前只更新 Task 状态，没有同步结束有效 AgentTaskGrant。
+- Owner 主动撤销 Grant 没有先锁 Task 行，和并发授权没有统一串行化点。
+- Agent 禁用会撤销 Grant，但没有统一锁定所有关联 Task；Token 显式撤销此前只撤销旧 Assignment，不撤销新 Grant。
+- 人类 assignee 从项目移除、工作包重新分配时，没有同步撤销原 assignee Owner 授权的 Agent Grant。
+
+### 本轮实现
+- app/main.py：
+  - 新增 _close_task_agent_grants：Task 进入 DONE 时把所有有效 Grant 置为 COMPLETED；进入 CANCELLED/CLOSED/ARCHIVED 时置为 REVOKED，写入时间、撤销人、原因和审计事件。
+  - 所有五处重复定义的 transition_task_workflow 实现均在同一事务中锁 Task 行，并执行终态 Grant 收口，避免不同数据库后端路径遗漏。
+  - Owner 撤销单个 Grant 前先锁定所属 Task 行，再重新读取 Grant 并更新。
+  - 新增 _revoke_task_agent_grants_for_assignee_change：任务人类 assignee 变化/移出项目时，撤销原 Owner 授权的有效 Grant。
+  - 工作包重新分配的各后端重复实现加入 Task 锁和 Grant 撤销。
+  - 项目成员移除路径使用 SQLite BEGIN IMMEDIATE / PostgreSQL Task 行锁后，再清理关联 Grant。
+- app/agent_identity.py：
+  - Agent 禁用在同一写事务中锁定关联 Task，撤销该 Agent 的有效 Grant 和 Token。
+  - Agent Token 显式撤销现在锁定关联 Task，并撤销该 Agent 的有效 Grant；返回 revoked_grant_count。
+  - Token 轮换不撤销 Grant：Owner 只是更换凭证，Agent 身份和 Owner 授权关系仍然存在；旧 Token 失效，新 Token 可继续使用现有 Grant。
+- tests/test_api.py：
+  - 新增 Agent 禁用和 Token 显式撤销联动测试。
+  - 新增 DONE -> COMPLETED、CANCELLED -> REVOKED 的 Grant 生命周期辅助函数测试。
+
+### 本轮提交
+- 9b773262b8449bc6f534c8aa400e1955b8c34de3 — Task 终态 Grant 生命周期处理。
+- 0046022683bea8835fbae866a7ab916fb065eb94 — Token 撤销同步撤销 Grant。
+- 494b6b34a2ff6261dd485231bf35cbecb12d641e — Task 终态转换串行化。
+- fb5df6ada063c127f480484aa6f52e66cd520cdc — Agent 禁用/Token 撤销生命周期测试。
+- 24ef0cbc16016a2ab648da0f0728f5cad2886949 — 所有 workflow 实现统一终态收口。
+- 349430340e95abc8d2f1ef06ab832e18940de4a9 — assignee 变化时撤销旧 Grant。
+- 2f9d8968e42323fbc23f8bb4eeca20284b446042 — 使用本地 Task 锁 helper。
+- ae455c4baa988160ad0ef7dc076625bd722cbf65 — 项目成员移除路径串行化。
+- a114cfbb3df2ba4ee87cd5af9f668ec99d1fcf36 — 补齐各 workflow 后端锁。
+- 098f45595ad20fe55b372a5beaa651762dcf8ea8 — 补齐所有 workflow 实现的终态 Grant 关闭。
+- 本节文档更新前代码 HEAD：098f45595ad20fe55b372a5beaa651762dcf8ea8。
+
+### 验证状态与限制
+- 本轮没有在当前执行环境直接运行 pytest。
+- 最新代码提交触发的 CI 需以本节文档提交后最新 workflow run 为准；当前不能宣称本轮新增测试、PostgreSQL 并发锁或浏览器 E2E 已通过。
+- test_task_terminal_lifecycle_completes_or_revokes_agent_grants 直接覆盖生命周期 helper 的 DONE/CANCELLED 分支；真实 workflow HTTP 端到端路径仍需 CI/后续集成测试确认。
+- Token 显式撤销会终止 Grant；Token 轮换保留 Grant 是有意设计。
+- 本轮不做数据库历史迁移、回填或利旧。
+
+### 下一步唯一任务
+检查本节最新提交触发的 CI：
+1. Python 3.11/3.12/3.13，重点新增长生命周期测试和原 Grant 测试。
+2. PostgreSQL migrations/RLS、production-compose、container-build。
+3. browser-e2e 是否完整成功。
+4. 若失败先定位修复；通过后增加真实 workflow HTTP 终态路径、Task assignee 变更和并发 Grant 撤销/授权的集成测试，再进入 AgentCollaborationSession / AgentCollaborationGrant 服务 API。
+
