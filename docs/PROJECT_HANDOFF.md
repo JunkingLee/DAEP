@@ -1237,8 +1237,17 @@
 
 ## 48. Authorization-state test collection fix（2026-11-24）
 
-- CI run 45350956647 对提交 6fc4247b878c072637c1eaa5fcddab5e1de699f6 的 Python 3.12 Job 暴露测试文件插入时把换行写成字面量 \\n，导致 tests/test_agent_management_ui.py 与 tests/test_api.py 在 collection 阶段 SyntaxError。
+- CI run 45350956647 对提交 6fc4247b878c072637c1eaa5fcddab5e1de699f6 的 Python 3.12 Job 暴露测试文件插入时把换行写成字面量 \
+，导致 tests/test_agent_management_ui.py 与 tests/test_api.py 在 collection 阶段 SyntaxError。
 - 已修正为真实换行；这是测试文件格式问题，不改变 Agent 详情 API 或 UI 运行逻辑。
 - 同一 CI run 中 node --check web/agents.js、Python compile 已通过；其他 Job 尚在运行或已通过，最终结论以修复提交后的完整 CI 为准。
 - 下一步唯一任务：核验修复提交的完整 CI。
-\n\n## 49. Agent 授权状态真实浏览器回归（2026-11-24）\n\n- 在现有 Agent 管理 Browser E2E 中补充真实 Task Execution Grant 与 Collaboration Grant 生命周期：由浏览器会话创建任务、授权并接受两个 Grant，再通过既有 Owner 治理 API 分别撤销。\n- 重新打开「Agent 管理」详情，验证页面同时展示 Task Execution Grants、Collaboration Grants 和 REVOKED 状态，确认授权状态展示与实际 REST 生命周期一致。\n- 该回归不新增 UI 授权入口，不改变 Agent Owner / Task 负责人治理边界；Agent 详情页仍只读展示授权状态。\n- EXPIRED Grant 的时间边界仍由现有 API 集成测试覆盖，本轮浏览器回归避免人为等待过期时间。\n- 提交后需验证完整 CI；当前 run 45351131519 的 Python 3.11/3.12/3.13、migrations、container-build、production-compose 已 SUCCESS，Browser E2E 仍停留在 Install Chromium。\n
+
+
+## 49. Agent 授权状态真实浏览器回归（2026-11-24）
+
+- 在现有 Agent 管理 Browser E2E 中补充真实 Task Execution Grant 与 Collaboration Grant 生命周期：由浏览器会话创建任务、授权并接受两个 Grant，再通过既有 Owner 治理 API 分别撤销。
+- 重新打开「Agent 管理」详情，验证页面同时展示 Task Execution Grants、Collaboration Grants 和 REVOKED 状态，确认授权状态展示与实际 REST 生命周期一致。
+- 该回归不新增 UI 授权入口，不改变 Agent Owner / Task 负责人治理边界；Agent 详情页仍只读展示授权状态。
+- EXPIRED Grant 的时间边界仍由现有 API 集成测试覆盖，本轮浏览器回归避免人为等待过期时间。
+- 提交后需验证完整 CI；当前 run 45351131519 的 Python 3.11/3.12/3.13、migrations、container-build、production-compose 已 SUCCESS，Browser E2E 仍停留在 Install Chromium。
