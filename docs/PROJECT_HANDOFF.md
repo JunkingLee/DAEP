@@ -1607,3 +1607,39 @@
 - 本轮完成的是通知投递与 ACK 的 Member 侧 API 可观测性，不代表通知治理阶段全部结束。
 - 下一步应将 Delivery/Audit 数据接入通知收件箱 UI，并补充可配置的 Owner 通知偏好与提醒周期。偏好应采用独立的 Member 级设置模型；提醒周期应明确作用范围和默认值。不得通过通知偏好改变 Grant 状态、Scope 或授权关系。
 - 随后补齐投递失败/DEAD 状态的 Owner 可见性、管理端恢复审计和重复投递验证。
+
+
+## 63. Member 通知偏好、到期提醒节奏与投递状态 UI（2026-11-24）
+
+### 本轮实现
+- 增加 Member 级通知偏好 API：
+  - `GET /api/v1/me/notification-preferences`：读取当前 Member 的偏好。
+  - `PUT /api/v1/me/notification-preferences`：更新授权事件通知、授权到期提醒开关，以及提醒天数。
+  - 默认授权事件通知开启、到期提醒开启，提醒节点为 7 天、3 天、1 天。
+  - 提醒天数只允许从 7、3、1 中选择，去重并按从大到小保存；不合法输入返回验证错误。
+  - 仅 Member Token 可访问；Agent Token 不具备管理 Member 通知偏好的权限。
+- 增加 `member_notification_preferences` 持久化模型及 PostgreSQL Alembic 迁移 `0037_rc47_notify_prefs`，按 Tenant 启用并强制 RLS。SQLite 测试/本地 schema 同步包含该表。
+- 通知入队阶段尊重 Member 偏好：关闭授权事件通知或到期提醒时，不创建对应 Member Inbox/Outbox 通知；不影响 Grant 本身的授权、接受、撤销、续期和过期状态。
+- Worker 到期提醒按 Owner 配置的 7/3/1 天节点发送，并为每个 Grant 到期周期及提醒窗口构造独立幂等键；续期改变 expires_at 后允许新周期提醒。
+- 收件箱 UI 增加偏好设置区域，可启停授权事件、到期提醒并选择提醒节点；同时展示消息对应的 Outbox 投递状态、重试次数和最近错误信息。
+- 通知投递 API 与 UI 继续遵守 Member Owner 隔离；不向浏览器暴露 Worker lease owner/token。
+
+### 关键提交
+- `70982336ff3898b8804bc139bd25f6672ca503fa` — Worker 按 Member 配置提醒节奏。
+- `f90f341c3db6949a7bf43a625259b520d6857ff8` — 偏好布尔值跨数据库持久化处理。
+- `225da791fa870fceb83fd26a46b3d2358a0b7fe6` — 新增 Member 通知偏好迁移。
+- `d6794d8a492e7cf3a58f51450be0990de5a73129` — 增加偏好 API 测试。
+- `8fe07cf4b6a3c1cf7ba2826a06270c651d22d69a` — 收件箱偏好和投递状态 UI。
+- `f6499eaaa5193bb70abe02371a7d5d2a0aa93313` — 修正 Alembic revision 长度，使用 `0037_rc47_notify_prefs`。
+- `16d1bfd9cd642a8fd8611b884b8327cda37bfc56` — 更新迁移 head 契约测试。
+
+### 验证
+- 最终代码 CI Run `45385781196`，HEAD `16d1bfd9cd642a8fd8611b884b8327cda37bfc56`：整体 SUCCESS。
+- 七个 Job 全部 SUCCESS：Python 3.11、3.12、3.13；PostgreSQL Migration/RLS；Chromium Browser E2E；Container Build；Production Compose。
+- 首轮 CI 曾发现 Alembic revision 超过 PostgreSQL `alembic_version.version_num` 32 字符上限，以及两处旧 head 断言；已缩短 revision 并修正断言，最终 CI 已验证通过。
+
+### 领域约束与下一步
+- 通知偏好只控制 Member 通知的生成与提醒节奏，不创建、接受、续期、撤销或扩大任何 Agent Grant。
+- Grant 的授权权仍属于 Agent Owner；Task 负责人不能替其他 Owner 授权。
+- 当前仍需补齐 Worker 投递失败与 DEAD 状态的可见性、恢复/重试审计，以及重复投递与偏好变更边界测试。
+- 下一阶段建议：完善通知运维闭环，重点覆盖 Outbox RETRY/DEAD、Owner 可见失败原因、受控重试与审计；再验证通知偏好关闭/重新开启时不补发历史通知、不漏发后续新事件。
