@@ -5547,6 +5547,33 @@ def test_collaboration_grant_notifications_read_state_and_worker_reminders():
     assert reminder_events == 1
     assert outbox_count >= 1
 
+    # The same worker cycle also materializes already-expired Grants and notifies their Owner.
+    second_agent = client.post("/api/v1/agents", headers=owner_headers,
+                               json={"name": "Expired Grant Notification Agent"})
+    assert second_agent.status_code == 200, second_agent.text
+    second_id = second_agent.json()["agent"]["id"]
+    second_grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": second_id, "scopes": ["session.read"],
+        "expires_in_days": 10})
+    assert second_grant.status_code == 200, second_grant.text
+    expired_id = second_grant.json()["id"]
+    expired_at = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=1)).isoformat()
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  (expired_at, expired_id))
+    swept = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                        headers=WORKER, json={})
+    assert swept.status_code == 200, swept.text
+    assert swept.json()["expired_dispatched"] == 1
+    with main_module.conn() as c:
+        expired_status = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                                   (expired_id,)).fetchone()["status"]
+    assert expired_status == "EXPIRED"
+    expired_notices = client.get("/api/v1/me/notifications", headers=owner_headers,
+                                 params={"status": "PENDING"})
+    assert any(x["title"] == "Agent 协作授权已过期"
+               and second_id in x["content"] for x in expired_notices.json()["items"])
+
     invalid_filter = client.get("/api/v1/me/notifications", headers=owner_headers,
                                 params={"status": "UNREAD"})
     assert invalid_filter.status_code == 422
