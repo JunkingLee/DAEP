@@ -1309,3 +1309,16 @@
 
 ### 下一步
 - 补 Task Collaboration Browser E2E：实际创建 Agent Grant / Proposal / Message，并从 Task 详情验证展示与 Human Decision。
+
+
+## 54. Task Collaboration Workspace 浏览器闭环回归（2026-11-24）
+
+- 新增独立真实浏览器 E2E：浏览器登录后创建隔离 Project、Requirement、Task 和 Owner Agent；创建 Task Collaboration Session / Grant，并由 Agent Token 接受授权。
+- Agent 通过真实 REST API 创建 HELP_REQUEST Proposal 并发送协作消息；随后浏览器实际打开 Task 详情，验证 Session、Agent 消息、Proposal payload 与 Owner 决策入口均显示。
+- 浏览器点击“接受建议”，验证 Proposal 状态更新为“已接受”；再从 Task 详情发送 Member 消息，验证消息回显。
+- 测试复用现有隔离 SQLite 服务 fixture，不触碰共享/生产数据库；不修改 REST API、数据库 Schema 或迁移，不做历史数据迁移、回填或利旧。
+- 当前功能提交 `e148ddf4ab6f1b25febf43f215a9d62712bb4363` 已新增测试文件；本轮完整 CI 尚未观察到结果。本地未运行 pytest，不宣称通过。
+- 注意：该测试要求 `DAEP_RUN_BROWSER_E2E=1`、Playwright 与 Chromium 可用；若 CI 长时间停留在 Chromium 安装，按实际 Job 状态记录，不无限等待。
+
+### 下一步
+- 核验新提交 CI；若失败，按实际失败日志修复测试数据/浏览器选择器或接口契约，不放宽授权规则。
