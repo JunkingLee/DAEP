@@ -4357,10 +4357,10 @@ def test_task_terminal_lifecycle_completes_or_revokes_agent_grants():
     created2=client.post('/api/v1/agents',headers=headers,json={'name':'Lifecycle Cancelled Agent'})
     assert created2.status_code==200,created2.text
     # Create a second task because terminal tasks reject new Agent grants.
-    req=client.post('/api/v1/requirements',headers=headers,json={
+    req=client.post('/api/v1/requirements',headers=ADMIN,json={
         'project_id':pid,'title':'Lifecycle cancellation requirement','description':'','acceptance_criteria':[]})
     assert req.status_code==200,req.text
-    task=client.post('/api/v1/tasks',headers=headers,json={
+    task=client.post('/api/v1/tasks',headers=ADMIN,json={
         'requirement_id':req.json()['id'],'title':'Lifecycle cancellation task',
         'description':'','assignee_member_ids':[member_id],'dependencies':[]})
     assert task.status_code==200,task.text
