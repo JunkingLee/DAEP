@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: daep
+      POSTGRES_USER: daep
+      POSTGRES_PASSWORD: ${DAEP_POSTGRES_PASSWORD:?Set DAEP_POSTGRES_PASSWORD}
+    volumes:
+      - daep-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daep -d daep"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  daep-api:
+    build: .
+    command: ["sh", "-c", "python -c 'import app.main as m; m.bootstrap()' && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    environment:
+      DAEP_ADMIN_TOKEN: ${DAEP_ADMIN_TOKEN:?Set DAEP_ADMIN_TOKEN}
+      DAEP_WORKER_TOKEN: ${DAEP_WORKER_TOKEN:?Set DAEP_WORKER_TOKEN}
+      DAEP_POSTGRES_PASSWORD: ${DAEP_POSTGRES_PASSWORD:?Set DAEP_POSTGRES_PASSWORD}
+      DATABASE_URL: postgresql://daep:${DAEP_POSTGRES_PASSWORD}@postgres:5432/daep
+      DAEP_PRIVILEGED_DATABASE_URL: ${DAEP_PRIVILEGED_DATABASE_URL:?Set DAEP_PRIVILEGED_DATABASE_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      DAEP_GIT_WEBHOOK_SECRET: ${DAEP_GIT_WEBHOOK_SECRET:-}
+      DAEP_GITHUB_WEBHOOK_SECRET: ${DAEP_GITHUB_WEBHOOK_SECRET:-}
+      DAEP_GITLAB_WEBHOOK_SECRET: ${DAEP_GITLAB_WEBHOOK_SECRET:-}
+      DAEP_OIDC_ISSUER: ${DAEP_OIDC_ISSUER:-}
+      DAEP_OIDC_CLIENT_ID: ${DAEP_OIDC_CLIENT_ID:-}
+      DAEP_OIDC_CLIENT_SECRET: ${DAEP_OIDC_CLIENT_SECRET:-}
+      DAEP_OIDC_REDIRECT_URI: ${DAEP_OIDC_REDIRECT_URI:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  daep-worker:
+    profiles: ["broker"]
+    build: .
+    command: ["python", "-m", "daep_worker.worker"]
+    environment:
+      DAEP_API_URL: http://daep-api:8000
+      DAEP_WORKER_TOKEN: ${DAEP_WORKER_TOKEN:?Set DAEP_WORKER_TOKEN}
+      DAEP_BROKER_WEBHOOK_URL: ${DAEP_BROKER_WEBHOOK_URL:-}
+      DAEP_BROKER_WEBHOOK_TOKEN: ${DAEP_BROKER_WEBHOOK_TOKEN:-}
+      DAEP_WORKER_ID: ${DAEP_WORKER_ID:-worker-1}
+    depends_on: [daep-api]
+    restart: unless-stopped
+
+volumes:
+  daep-postgres:
