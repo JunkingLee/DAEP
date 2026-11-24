@@ -42,6 +42,13 @@ def run_once():
         except Exception as exc:
             try: call('POST',f"/internal/v1/outbox/{item['id']}/fail",{'worker_id':WORKER_ID,'lease_token':item['lease_token'],'error':str(exc)[:2000]})
             except Exception: pass
+    try:
+        reminders=call('POST','/internal/v1/collaboration-grants/reminders/dispatch',{})
+        if reminders.get('dispatched'):
+            print(f"[daep-worker] queued {reminders['dispatched']} collaboration grant reminder(s)",flush=True)
+    except Exception as exc:
+        # Reminder scheduling must not block durable outbox delivery.
+        print(f'[daep-worker] collaboration reminder dispatch failed: {exc}',flush=True)
     return result.get('count',0)
 
 
