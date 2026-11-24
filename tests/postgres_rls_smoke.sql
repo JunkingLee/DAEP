@@ -1,11 +1,11 @@
 -- Exercise RLS as a non-owner, non-superuser role. Run after Alembic migrations.
-DO $
+DO $grant_priv_check$
 BEGIN
   IF has_table_privilege('daep_authenticator', 'agent_task_grants', 'SELECT') THEN
     RAISE EXCEPTION 'Agent authenticator role must not read task grants';
   END IF;
 END
-$;
+$grant_priv_check$;
 
 DO $$
 BEGIN
