@@ -63,3 +63,11 @@ def test_agent_detail_authorization_state_ui_contract():
     assert 'Credential validity' in source
     assert 'resource_scope_json' in source
     assert 'Presence' in source
+
+def test_member_collaboration_grant_inbox_ui_is_owner_scoped_and_supports_revoke():
+    assert "协作授权收件箱" in AGENTS
+    assert "api('/api/v1/members/me/collaboration-grants')" in AGENTS
+    assert "revokeOwnedCollaborationGrant" in AGENTS
+    assert "window.loadCollaborationGrantInbox=loadCollaborationGrantInbox" in AGENTS
+    assert "window.revokeOwnedCollaborationGrant=revokeOwnedCollaborationGrant" in AGENTS
+    assert "撤销后 Agent 将立即失去该 Task 的协作访问权限" in AGENTS or "撤销后 Agent 将立即失去该 Task 的协作访问权限" in AGENTS
