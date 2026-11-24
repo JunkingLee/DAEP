@@ -3852,7 +3852,7 @@ def test_agent_unbind_enforces_project_tenant_boundary():
 
 
 
-def test_rc46_agent_task_grants_schema_and_migration_contract():
+def test_rc46_agent_task_grants_initial_schema_contract():
     import sqlite3
     from pathlib import Path
     import subprocess
@@ -3868,7 +3868,7 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
 
     db=sqlite3.connect(':memory:')
     db.execute('PRAGMA foreign_keys=ON')
-    # Execute the exact additive DDL used by the SQLite bootstrap.
+    # Exercise the target initial grant schema contract.
     db.executescript("""
       CREATE TABLE projects(id TEXT PRIMARY KEY);
       CREATE TABLE tasks(id TEXT PRIMARY KEY);
@@ -3882,7 +3882,7 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
         status TEXT NOT NULL DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED','ACCEPTED','REVOKED','COMPLETED','EXPIRED')),
         created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
         accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
-        revoke_reason TEXT,last_activity_at TEXT,legacy_assignment_id TEXT,
+        revoke_reason TEXT,last_activity_at TEXT,\n        UNIQUE(id,task_id,agent_id),
         CHECK(expires_at>created_at),
         CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
           AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
@@ -3906,9 +3906,9 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
     columns={row[1] for row in db.execute('PRAGMA table_info(agent_task_grants)')}
     assert {'tenant_id','project_id','task_id','agent_id','owner_member_id',
             'human_assignee_member_id','authorized_by_member_id','scope_json',
-            'status','expires_at','legacy_assignment_id'} <= columns
+            'status','expires_at'} <= columns
     indexes={row[1] for row in db.execute('PRAGMA index_list(agent_task_grants)')}
-    assert 'uq_agent_task_grants_one_active_per_task' in indexes
+    assert 'uq_agent_task_grants_active_task_agent' in indexes
     db.close()
 
     # Verify the real application bootstrap, not only a detached DDL fixture.
@@ -3917,9 +3917,9 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
         app_columns={row['name'] for row in app_db.execute('PRAGMA table_info(agent_task_grants)').fetchall()}
         assert {'tenant_id','project_id','task_id','agent_id','owner_member_id',
                 'human_assignee_member_id','authorized_by_member_id','scope_json',
-                'status','expires_at','legacy_assignment_id'} <= app_columns
+                'status','expires_at'} <= app_columns
         app_indexes={row['name'] for row in app_db.execute('PRAGMA index_list(agent_task_grants)').fetchall()}
-        assert 'uq_agent_task_grants_one_active_per_task' in app_indexes
+        assert 'uq_agent_task_grants_active_task_agent' in app_indexes
     finally:
         app_db.close()
 
