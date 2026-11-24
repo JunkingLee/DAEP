@@ -1431,3 +1431,49 @@
   - 首轮 CI 曾暴露测试层的 Scope 顺序断言和 DELETE JSON 调用方式问题，均已修复；最终成功 CI 覆盖修复后的 HEAD。
 - 当前分支：`release/1.0.0-rc9`。
 - 下一步唯一任务：继续补齐 Task 协作授权的管理体验与安全回归，重点核查 Grant 到期后的状态刷新/权限失效、Agent Owner 视角的授权收件箱，以及授权列表在非负责人 Task Member 下的可见性边界；不要改变“Owner 授权自己的 Agent、Task 负责人不代替其他 Owner 授权”的领域规则。
+
+
+## 59. CollaborationGrant 到期、Owner 收件箱与可见性边界（2026-11-24）
+
+- 本轮目标：补齐授权到期状态的持久化识别、Agent Owner 的集中授权视图，以及 Task 授权列表的最小可见范围。
+- 到期处理（`app/agent_collaboration_api.py`）：
+  - Task Grant 列表和 Member Owner 收件箱在读取时识别 `expires_at <= now` 的 AUTHORIZED/ACCEPTED Grant。
+  - 将数据库状态实际更新为 `EXPIRED`，不只在响应中临时显示有效状态。
+  - 写入 `agent.collaboration_grant.expired` 审计事件，记录 Grant、Agent 和触发来源。
+  - 已有 Agent Grant 鉴权仍独立校验有效期；过期不会继续允许 Agent 访问。
+- 新增 Member Owner 授权收件箱：
+  - `GET /api/v1/members/me/collaboration-grants`，只允许 Member Token。
+  - 仅返回当前 Member 本人拥有、本人授权且 Agent 当前仍归属该 Member 的 Grant。
+  - 返回 Agent/Task/Project/Session、Scopes、Resource Scope、有效状态、到期与撤销信息。
+  - Agent 页面新增“协作授权收件箱”，Owner 可以集中查看并撤销自己的有效授权；不显示或操作其他 Member 的 Agent。
+  - 原有 `GET /api/v1/agents/me/collaboration-grants` 继续保留为 Agent Token 视角，不混用两种身份。
+- Task Grant 列表可见性：
+  - Task 负责人（Session responsible Member）可以查看 Task 范围全部 Grant。
+  - 其他有项目成员资格的 Member 只能查看自己授权的 Grant，响应标记 `OWNER_ONLY`。
+  - 非项目成员且非 Task assignee 的 Member 无法通过该接口探测 Task 授权信息。
+  - 读取列表不再调用 Session 初始化/接管逻辑，不创建 Session，也不改变 Session responsible Member。
+  - Grant 列表读取不改变 Agent Owner 主动授权、负责人管理 Session 的既定领域规则。
+- UI/测试：
+  - `web/agents.js` 新增 Owner 授权收件箱、状态/Scope/资源范围展示和 Owner-only revoke。
+  - `tests/test_api.py` 新增 `test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_task_roster`，覆盖到期落库、审计、Owner Inbox 隔离、Task 负责人和普通项目成员可见性差异。
+  - `tests/test_agent_management_ui.py` 增加收件箱前端契约。
+  - Browser E2E 覆盖 Agent 页面新增入口和 Task 协作工作区中的 Owner 授权收件箱。
+  - 修正原 Agent 管理 E2E 对页面头部按钮的唯一性假设，明确定位“创建 Agent”按钮。
+- 主要代码提交：
+  - `ef2e27b536e44f675a10ca1d2be94aabcff00baf` — Member Owner 授权收件箱 API、到期状态落库与审计、Task Grant 可见性规则。
+  - `baf6cc12324175e0b08468c203655839d067839f` — Agent 页面 Owner 授权收件箱。
+  - `15b5cebe66d240b61b4e50ea82418917bdc5df88` — 导出收件箱 UI 操作。
+  - `b60cec188c6bbf5b6a729db81cce4f0285155ca5` — Grant 到期、Owner Inbox 与可见性 API 测试。
+  - `998b23fcfe2515d7c4c0a70679289104c621a5be` — 前端契约测试。
+  - `0383f458977259440ba9dafdef16e2eace915724` — Browser E2E 授权收件箱覆盖。
+  - `e594706c0b8f1f6fbdc0967fd624dbbcee68b61f` — 允许项目成员读取自己授权的 Grant，其他 Owner 授权仍隔离。
+  - `5396c5c0cf930f9014a0594a4648678933ee1c97` — 修正过期测试数据的时间约束。
+  - `0adadb2ed9283b7e76b9b4f5bdfadd65df7d70f8` — 修正收件箱 E2E 的 modal body 断言。
+  - `6ac4d1602d906fe051a1c0713897da9c7c885ad7` — 修正 Agent 管理 E2E 的创建按钮断言。
+- 最终代码 CI：
+  - Run `45363910701`，HEAD `6ac4d1602d906fe051a1c0713897da9c7c885ad7`，结论 SUCCESS。
+  - Python 3.11/3.12/3.13 均为 `247 passed, 2 skipped`。
+  - Browser E2E 使用 Chromium 实际运行，`3 passed in 8.13s`。
+  - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
+- 当前分支：`release/1.0.0-rc9`。
+- 后续建议：补齐 Grant 的主动续期/重新授权体验，以及跨 Task 授权审计查询；不要让 Task 负责人代替 Agent Owner 续期或重新授权。
