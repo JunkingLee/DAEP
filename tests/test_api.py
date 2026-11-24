@@ -5619,9 +5619,10 @@ def test_disabling_expiry_reminders_does_not_disable_grant_expiration():
 
     # Even with reminders disabled, an actually expired grant is still expired.
     past = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=1)).isoformat()
+    created_before_expiry = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=3)).isoformat()
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  (past, grant_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  (created_before_expiry, past, grant_id))
     expiry_run = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
                              headers=WORKER, json={})
     assert expiry_run.status_code == 200, expiry_run.text
