@@ -142,9 +142,8 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             page.get_by_role("button", name="创建并获取 Token").click()
             expect(page.locator("#modal")).to_be_visible()
             expect(page.locator("#modalBody")).to_contain_text("MCP Token")
-            first_token = page.evaluate("window.__daepLastAgentToken")
-            assert first_token and first_token.startswith("daep_at_")
-            expect(page.locator(".token-box")).to_contain_text(first_token)
+            first_token = page.locator(".token-box").inner_text().strip()
+            assert first_token.startswith("daep_at_")
             page.locator("#modal .modal-head button").click()
 
             agent_card = page.locator("#agentGrid .agent-card").filter(has_text="Browser E2E Agent")
@@ -167,8 +166,8 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             page.once("dialog", lambda dialog: dialog.accept())
             agent_card.get_by_role("button", name="重新生成 Token").click()
             expect(page.locator("#modal")).to_be_visible()
-            rotated_token = page.evaluate("window.__daepLastAgentToken")
-            assert rotated_token and rotated_token.startswith("daep_at_")
+            rotated_token = page.locator(".token-box").inner_text().strip()
+            assert rotated_token.startswith("daep_at_")
             assert rotated_token != first_token
             page.locator("#modal .modal-head button").click()
 
