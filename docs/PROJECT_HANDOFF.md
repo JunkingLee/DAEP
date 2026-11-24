@@ -564,3 +564,63 @@
 5. AgentCollaborationGrant 绑定 Session；
 6. 消息 Agent identity/session 关联和 proposal 表（先确认现有消息/工作包结构是否可直接复用）。
 同步实现干净数据库初始化、SQLite schema contract tests、PostgreSQL RLS/schema tests 和并发授权测试。完成数据库层后再开发 API/MCP。
+
+
+---
+
+## 24. TEAM 协作初始数据库 Schema 第一轮实现（2026-11-24）
+
+### 本轮目标与边界
+- 承接第 23 节：实际检查并实现 TEAM 协作的初始数据库结构。
+- 用户明确：当前仍是开发阶段，不做历史数据库迁移、生产数据迁移、旧数据回填、利旧或旧版本兼容。
+- 未新增 Alembic revision 文件；修改当前开发版 PostgreSQL schema 定义 `0036_rc46_agent_task_grants.py`，SQLite 使用当前 Bootstrap + Agent Identity 初始化。面向干净数据库建库，不做旧数据库转换脚本。
+- 当前仓库没有独立 SQLAlchemy declarative Models 层；实际结构由 `app/main.py` SQLite Bootstrap、`app/agent_identity.py` Agent 身份初始化和 Alembic PostgreSQL DDL 维护。不要再按不存在的 ORM 层组织实现。
+
+### 代码审查发现并处理
+1. 旧有效 Grant 唯一索引是 `UNIQUE(task_id)`，与 TEAM 多 Agent 冲突；已改为 `UNIQUE(task_id, agent_id)`，同一 Task 可有多个不同 Agent，同一 Agent 同一 Task 不可重复有效授权。
+2. 新 Grant schema 不再包含 `legacy_assignment_id`。
+3. 现有 `messages` 是成员收件箱/通知投递记录，只有 recipient 语义，不是共享会话；因此没有把它错误扩展成聊天表，新增 `agent_collaboration_messages`。
+4. Session 不另建可独立授权的 Agent membership 表；Agent 的 Session 权限由 AgentCollaborationGrant 唯一决定。
+5. Contribution、Agent 消息和 Agent proposal 使用复合外键绑定 Grant、Task、Session、Agent、Owner，避免仅凭 grant_id 或 session_id 形成错误归属。
+
+### 已实现的初始 Schema
+- `agent_task_execution_policies`：每 Task 唯一；TEAM 固定；allow_multiple_agents；max_agents nullable，NULL 无任务级固定数量上限。
+- `agent_task_grants`：有效唯一键调整为 (task_id, agent_id)。
+- `agent_task_contributions`：按 grant/task/agent 保存独立贡献。
+- `agent_collaboration_sessions`：每 Task 最多一个默认 Session，OPEN/PAUSED/CLOSED。
+- `agent_collaboration_grants`：按 Session + Agent 独立授权，具备 scopes/resource scope/有效期/撤销字段。
+- `agent_collaboration_messages`：Member/Agent 明确作者身份；Agent 消息强制带 Owner 和 CollaborationGrant 来源。
+- `agent_collaboration_proposals`：邀请、工作包、Member 委派、帮助请求等提议。
+- SQLite 由新增 `app/agent_collaboration_schema.py` 创建协作表；`app/agent_identity.py` 初始化 Agent 身份后调用。
+- PostgreSQL 在现有开发 schema 定义 `alembic/versions/0036_rc46_agent_task_grants.py` 中定义相同实体和索引；对所有新租户表 ENABLE + FORCE RLS，使用 `daep_tenant_visible(tenant_id)`，并撤销 `daep_authenticator` 直接表权限。
+- `tests/postgres_rls_smoke.sql` 增加双 Tenant 的 Policy、Contribution、Session、CollaborationGrant、Message、Proposal 夹具和隔离断言。
+- 新增 `tests/test_agent_collaboration_schema.py`，检查 SQLite 表/索引/字段、TEAM + max_agents=NULL，以及同一 Task 多个不同 Agent Grant 可并存、同一 Agent 不可重复有效授权。
+
+### 本轮提交
+- `04185f72716bb85ee68261601f43c2a86cbd8860` — 新增 SQLite 协作 Schema 模块。
+- `cc9f5eb8a2b6dcc01a498d2dcc287b5b0e638a1b` — Task Grant 唯一索引按 Task + Agent。
+- `c1e3f106a627aeb5d2cfcf0bbcf17a7e2a58ce01` — Agent Identity 初始化后创建协作 Schema。
+- `bcb0c080c564d725afabd517d28e1f35692915c7` — PostgreSQL 初始 schema 加入协作实体和 RLS。
+- `c5d4a03ddbb8cf0292f39bdc76c2e945a2586007` — PostgreSQL RLS smoke 增加协作表租户隔离覆盖。
+- `71425748408e4ece11da1edc6e57194f26bb4169` — 新增 SQLite schema contract tests。
+- `3e670ce8d0b11603af8c6e02e081ad98ff0085d3` — 新增多 Agent Grant 数据库约束测试。
+- `b5d89a4cae673ab3d57556ae9f17b80341be936b` — PostgreSQL 复合外键完整性约束。
+- `dc506ff426c4d98f9587b2c4d0a33cc17df5a4fe` — SQLite Grant 复合唯一键。
+- `8c8bf0d1fadd46da31e39f40e60fb9a9c86caa20` — SQLite CollaborationGrant 复合唯一键。
+- `363bbbbb3b52a5a492d8d84457412e57d4933004` — 修订领域模型，明确协作消息与通知 Inbox 分离。
+- `fb3fef6332194599b04bc6cdd93159e85dde096a` — 更新 Schema 设计与实际代码实现一致。
+- 本节提交 SHA 是本轮 handoff 更新前 HEAD；handoff 文件更新会生成新的最终 HEAD。
+
+### 验证状态与限制
+- 本环境本轮未执行本地 pytest，也未连接 PostgreSQL 实际运行 RLS smoke。
+- 对提交 `fb3fef6332194599b04bc6cdd93159e85dde096a` 查询 combined status 返回空 statuses，workflow runs 查询返回空列表；不能宣称 CI 通过。
+- SQLite schema contract tests 已写入但未执行；PostgreSQL RLS smoke 已更新但未执行。
+- 当前只完成数据库初始结构；没有实现策略 API、事务级 max_agents/allow_multiple_agents 并发校验、Session/CollaborationGrant API、消息 API/MCP 或前端。
+- `allow_multiple_agents` 和 `max_agents` 的业务数量校验必须在后续 Grant 写入服务中锁定 Policy/Task 行事务内实现；静态唯一索引只负责同一 Agent 同一 Task 不重复授权。
+
+### 下一步唯一任务
+先以最新提交的 CI 结果验证本轮数据库结构：
+1. 检查 Python 测试矩阵中的 `tests/test_agent_collaboration_schema.py`。
+2. 检查 PostgreSQL Alembic 干净建库和 `tests/postgres_rls_smoke.sql`，重点检查复合 FK、RLS 和 authenticator 权限。
+3. 修复 CI 暴露的 schema/test 问题；不要在 CI 结果未知时宣称数据库层已验证通过。
+4. 数据库层验证完成后，下一阶段才实现 AgentTaskExecutionPolicy 和 AgentTaskGrant 事务服务/API；在同一事务锁定 Policy 行校验 allow_multiple_agents/max_agents，随后再实现 Session/CollaborationGrant API。仍不做历史迁移或利旧。
