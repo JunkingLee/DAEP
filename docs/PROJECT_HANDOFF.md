@@ -1394,3 +1394,40 @@
 - 进入 **Task Collaboration 授权与治理可观测性**：在 Task 协作空间增加 CollaborationGrant 状态/Scope/有效期/撤销信息展示，以及仅 Agent Owner 可执行的授权撤销入口；补齐撤销后 Agent 消息、Proposal、历史读取权限即时失效的 API 与浏览器回归。
 - 继续保持 Agent 提案、人类治理决策和正式 Task/Work Package/审批/验收操作分离。
 - 当前功能验证基准 HEAD：`dc533f2206e9d708a623b6bfd1349b80862f4771`；本交接更新提交后，以新 HEAD 和新 CI 为准。
+
+
+## 58. Task CollaborationGrant 可观测性与 Owner 撤销闭环（2026-11-24）
+
+- 本轮目标：在 Task 协作工作区中呈现 CollaborationGrant 的授权状态和权限范围，并将 Agent Owner 撤销授权的服务端能力接入 UI；验证撤销后 Agent 的协作读取和写入立即失效。
+- UI（`web/index.html`）：
+  - Task 协作空间新增“Agent 授权”面板，列出本 Task 的 Grant 历史。
+  - 展示 Agent、有效状态（待 Agent 接受/已生效/已撤销/已过期）、授权人、创建时间、到期时间、Scope、资源范围和撤销时间。
+  - 只有当前登录用户等于 Grant 的 `owner_member_id`，且 Grant 状态为 AUTHORIZED/ACCEPTED 时，才显示“撤销我的授权”。
+  - 撤销前确认并要求输入原因；调用 `DELETE /api/v1/collaboration-grants/{grant_id}` 后重新加载 Task 工作区。
+  - 明确提示 Session 关闭与 Grant 撤销是独立生命周期；Session CLOSED 不会自动撤销 Grant。
+- REST/API：
+  - 复用既有 Grant list 与 revoke endpoint，不增加重复 API。
+  - 新增 `test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_audited`：
+    - 验证授权列表返回状态、Owner、Scopes、Resource Scope 和 expires_at。
+    - 非 Agent Owner 撤销返回 403；授权该 Agent 的 Owner 撤销成功。
+    - 撤销后 Agent 历史读取、消息发送、Proposal 创建均返回 403；重复撤销返回 409。
+    - 验证 revoked_at、revoked_by_member_id 和 `agent.collaboration_grant.revoked` 审计事件及原因。
+- Browser E2E（`tests/test_task_collaboration_ui_e2e.py`）：
+  - 登录后打开 Task 工作区，验证授权面板、已生效状态和 Scope 文案。
+  - Session CLOSED 后仍能看到独立的活动 Grant，并由 Owner 在工作区撤销。
+  - 撤销后 Agent 的历史读取、消息发送、Proposal 创建均返回 403。
+  - CI Browser E2E job 实际运行 Chromium，结果 `3 passed in 7.87s`（包含 Agent 管理和 Task 协作浏览器测试）。
+- 代码提交：
+  - `a309332358dcc560ee3a06232092fbcc1c8ca580` — Task 工作区展示 Grant 并提供 Owner-only revoke 操作。
+  - `cb47cd33eb8b9d14dee320b330bf336252732b69` — 增加 Grant Owner 撤销 API 生命周期和审计测试。
+  - `de0662e11a0e2ec4f93909556b465a344d8683c6` — 增加浏览器授权展示/撤销回归。
+  - `caa9c32e3241669d2f8b2c03297b8e48266d31b5` — 修正 Browser E2E confirm/prompt 对话框处理。
+  - `1401a03c43bbdfb3d47a496bbf8b75c1fa48dbdc` — 修正 Scope 集合断言，不依赖数据库序列化顺序。
+  - `12f8237c9e602c6bf472d51c8560f1606adf74df` — 修正 Starlette TestClient 的 DELETE JSON body 调用。
+- 验证：
+  - CI run `45360811722` 对应代码 HEAD `12f8237c9e602c6bf472d51c8560f1606adf74df` 已完成，结论 SUCCESS。
+  - Python 3.11/3.12/3.13 全部通过；Dashboard JavaScript 检查通过；PostgreSQL migration/RLS、container build、production compose 全部通过。
+  - Browser E2E 使用 Chromium 实际执行，`3 passed in 7.87s`，未跳过。
+  - 首轮 CI 曾暴露测试层的 Scope 顺序断言和 DELETE JSON 调用方式问题，均已修复；最终成功 CI 覆盖修复后的 HEAD。
+- 当前分支：`release/1.0.0-rc9`。
+- 下一步唯一任务：继续补齐 Task 协作授权的管理体验与安全回归，重点核查 Grant 到期后的状态刷新/权限失效、Agent Owner 视角的授权收件箱，以及授权列表在非负责人 Task Member 下的可见性边界；不要改变“Owner 授权自己的 Agent、Task 负责人不代替其他 Owner 授权”的领域规则。
