@@ -555,6 +555,58 @@ def require_task_access(c, tid, a, assigned_only=False):
         if not ok: raise HTTPException(403,'Task assignment required')
     else: require_project_access(c,pid,a)
 
+def require_agent_task_grant(c, a, task_id, action):
+    """Authorize one narrowly scoped Agent action using its accepted owner-issued grant."""
+    if a.get('actor_type') != 'AGENT' or not a.get('agent_id'):
+        raise HTTPException(403,'Agent identity required')
+    allowed_actions={'task.read','task.progress.report','task.blocked.report','task.artifact.submit'}
+    if action not in allowed_actions:
+        raise HTTPException(403,'Agent action is not delegable')
+    sql="""SELECT g.*,ag.status AS agent_status,ag.owner_member_id AS current_owner_member_id,
+        ag.tenant_id AS agent_tenant_id,owner.password_status AS owner_status,
+        owner.tenant_id AS owner_tenant_id,p.status AS project_status,
+        p.tenant_id AS project_tenant_id,t.status AS task_status
+        FROM agent_task_grants g
+        JOIN agents ag ON ag.id=g.agent_id
+        JOIN members owner ON owner.id=g.owner_member_id
+        JOIN tasks t ON t.id=g.task_id
+        JOIN requirements r ON r.id=t.requirement_id AND r.project_id=g.project_id
+        JOIN projects p ON p.id=g.project_id
+        WHERE g.task_id=? AND g.agent_id=? AND g.tenant_id=?"""
+    if DATABASE_URL.startswith(('postgresql://','postgres://')):
+        sql += " FOR UPDATE OF g,t"
+    grant=c.execute(sql,(task_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()
+    if not grant:
+        raise HTTPException(403,'No AgentTaskGrant authorizes this task')
+    stamp=now()
+    if grant['status']!='ACCEPTED' or grant['expires_at']<=stamp:
+        raise HTTPException(403,'An active accepted AgentTaskGrant is required')
+    if grant['agent_status']!='ACTIVE' or grant['current_owner_member_id']!=grant['owner_member_id']:
+        raise HTTPException(403,'Agent identity or ownership is no longer valid')
+    if grant['owner_status']!='ACTIVE' or grant['owner_tenant_id']!=grant['tenant_id']:
+        raise HTTPException(403,'Agent owner account is not active')
+    if grant['owner_member_id']!=a.get('id') or grant['agent_tenant_id']!=grant['tenant_id']:
+        raise HTTPException(403,'Agent owner or tenant relationship mismatch')
+    if grant['project_tenant_id']!=grant['tenant_id'] or grant['tenant_id']!=a.get('tenant_id'):
+        raise HTTPException(403,'Agent task grant tenant mismatch')
+    if grant['project_status']!='ACTIVE':
+        raise HTTPException(409,'Project is not active')
+    if grant['task_status'] in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+        raise HTTPException(409,'Task is not available for Agent execution')
+    assignees=c.execute("""SELECT a.member_id,m.tenant_id FROM assignments a
+        JOIN members m ON m.id=a.member_id WHERE a.task_id=?""",(task_id,)).fetchall()
+    if len(assignees)!=1 or assignees[0]['member_id']!=grant['human_assignee_member_id']:
+        raise HTTPException(403,'Task human assignee changed or is ambiguous')
+    if assignees[0]['tenant_id']!=grant['tenant_id'] or grant['owner_member_id']!=grant['human_assignee_member_id']:
+        raise HTTPException(403,'Grant owner is not the current human task assignee')
+    try:
+        scope=json.loads(grant['scope_json'] or '[]')
+    except (TypeError,ValueError):
+        raise HTTPException(403,'Agent grant scope is invalid')
+    if not isinstance(scope,list) or action not in scope:
+        raise HTTPException(403,'Agent grant does not include the requested action')
+    return grant
+
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
     tenant=tenant_override or 'tenant-default'
@@ -2072,7 +2124,10 @@ def create_task(b:TaskIn,authorization:str=Header(None)):
 def task_detail(tid,authorization):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
         if not r: raise HTTPException(404,'Task not found')
         d=dict(r); d['assignees']=[dict(x) for x in c.execute('SELECT m.id,m.name FROM assignments a JOIN members m ON m.id=a.member_id JOIN tasks t ON t.id=a.task_id JOIN requirements rq ON rq.id=t.requirement_id JOIN projects p ON p.id=rq.project_id WHERE a.task_id=? AND m.tenant_id=p.tenant_id',(tid,))]; d['dependencies']=[x['depends_on_task_id'] for x in c.execute('SELECT depends_on_task_id FROM dependencies WHERE task_id=?',(tid,))]; return d
@@ -2159,7 +2214,12 @@ def sync_work_package_parent(c,child_task_id,actor_member_id,trigger):
 def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.progress.report')
+            if b.progress==100:
+                raise HTTPException(403,'Agent cannot request task review')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         if b.progress==100:
             enforce_task_review_request(c,tid,a)
             enforce_task_quality_stage(c,tid,'REVIEW')
@@ -2189,8 +2249,14 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
 def blocked(tid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
-        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid)); sync_work_package_parent(c,tid,a['id'],'blocked'); eid=event(c,'task.blocked',a['id'],tid,b)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.blocked.report')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
+        c.execute("UPDATE tasks SET status='BLOCKED',updated_at=? WHERE id=?",(now(),tid))
+        if a.get('actor_type')!='AGENT':
+            sync_work_package_parent(c,tid,a['id'],'blocked')
+        eid=event(c,'task.blocked',a['id'],tid,b)
     return {'event_id':eid,'status':'BLOCKED'}
 @app.post('/api/v1/tasks/{tid}/work-result')
 def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
