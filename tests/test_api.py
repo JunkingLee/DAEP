@@ -5579,3 +5579,51 @@ def test_collaboration_grant_notifications_read_state_and_worker_reminders():
     invalid_filter = client.get("/api/v1/me/notifications", headers=owner_headers,
                                 params={"status": "UNREAD"})
     assert invalid_filter.status_code == 422
+
+
+def test_member_notification_delivery_view_correlates_outbox_and_inbox_ack():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {'Authorization': f'Bearer {owner_token}'}
+    with main_module.conn() as c:
+        message_id = main_module.enqueue_member_notification(
+            c, owner_id, 'tenant-default', task_id, pid,
+            'AGENT_COLLABORATION_GRANT', 'Delivery observability test',
+            'A notification used to verify outbox and inbox correlation.',
+            'NORMAL', 'test-notification-delivery-observability:' + task_id)
+    assert message_id
+
+    pending = client.get('/api/v1/me/notification-delivery',
+                         headers=owner_headers, params={'status':'PENDING'})
+    assert pending.status_code == 200, pending.text
+    item = next(x for x in pending.json()['items'] if x['id'] == message_id)
+    assert item['delivery_status'] == 'PENDING'
+    assert item['delivery']['event_type'] == 'message.created'
+    assert item['delivery']['attempts'] == 0
+
+    with main_module.conn() as c:
+        c.execute("UPDATE outbox SET status='SENT',sent_at=? WHERE id IN "
+                  "(SELECT id FROM outbox WHERE payload LIKE ?)",
+                  (main_module.now(), '%' + message_id + '%'))
+    ack = client.post(f'/api/v1/messages/{message_id}/ack',
+                      headers=owner_headers, json={'status':'ACKNOWLEDGED'})
+    assert ack.status_code == 200, ack.text
+
+    acknowledged = client.get('/api/v1/me/notification-delivery',
+                              headers=owner_headers, params={'status':'ACKNOWLEDGED'})
+    assert acknowledged.status_code == 200, acknowledged.text
+    item = next(x for x in acknowledged.json()['items'] if x['id'] == message_id)
+    assert item['status'] == 'ACKNOWLEDGED'
+    assert item['delivery_status'] == 'SENT'
+    assert item['acked_at']
+    assert item['delivery']['sent_at']
+
+    audit = client.get('/api/v1/me/notification-audit',
+                       headers=owner_headers, params={'task_id':task_id})
+    assert audit.status_code == 200, audit.text
+    assert any(x['event_type'] == 'notification.queued'
+               and x['payload'].get('message_id') == message_id
+               for x in audit.json()['items'])
+
+    agent_denied = client.get('/api/v1/me/notification-delivery',
+                              headers={'Authorization':'Bearer invalid-agent-token'})
+    assert agent_denied.status_code == 401
