@@ -43,7 +43,7 @@ def ensure_agent_collaboration_schema(conn_factory):
             created_at TEXT NOT NULL,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-            FOREIGN KEY (grant_id) REFERENCES agent_task_grants(id) ON DELETE CASCADE,
+            FOREIGN KEY (grant_id, task_id, agent_id) REFERENCES agent_task_grants(id, task_id, agent_id) ON DELETE CASCADE,
             FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
         );
 
