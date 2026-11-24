@@ -70,18 +70,6 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 },agentToken);
                 return {taskId:task.id,proposalId:proposal.id,sessionId:session.id,grantId:grant.id,agentId,agentToken};
             }""")
-            # Grant lifecycle events appear in the durable Member inbox and can be marked read.
-            page.evaluate("go('inbox'); loadInbox('ALL')")
-            inbox = page.locator("#inbox")
-            notice_button = inbox.get_by_role("button", name="标记已读").first
-            expect(notice_button).to_be_visible()
-            notice_button.click()
-            expect(page.locator("#toast")).to_contain_text("消息已标记为已读", timeout=10000)
-            page.evaluate("loadInbox('ACKNOWLEDGED')")
-            expect(inbox).to_contain_text("已读")
-            expect(inbox).to_contain_text("Agent")
-            page.evaluate("go('work')")
-
             page.evaluate("(id) => openTask(id)", setup["taskId"])
             modal = page.locator("#modalBody")
             expect(modal).to_contain_text("Task 协作空间")
@@ -167,5 +155,16 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 return {history,message,proposal};
             }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"]})
             assert revoked_access == {"history":403,"message":403,"proposal":403}, revoked_access
+
+            # Validate the durable Member inbox after the Task workspace flow is complete.
+            page.evaluate("go('inbox'); loadInbox('ALL')")
+            inbox = page.locator("#inbox")
+            notice_button = inbox.get_by_role("button", name="标记已读").first
+            expect(notice_button).to_be_visible()
+            notice_button.click()
+            expect(page.locator("#toast")).to_contain_text("消息已标记为已读", timeout=10000)
+            page.evaluate("loadInbox('ACKNOWLEDGED')")
+            expect(inbox).to_contain_text("已读")
+            expect(inbox).to_contain_text("Agent")
         finally:
             browser.close()
