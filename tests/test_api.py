@@ -4895,6 +4895,69 @@ def test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_au
     assert any(json.loads(payload).get("grant_id") == grant_id and
         json.loads(payload).get("reason") == "Owner withdrew authorization" for _, payload in events)
 
+def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_task_roster():
+    pid, owner_id, owner_token, _ = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    observer = client.post("/api/v1/members", headers=ADMIN, json={"name": "Task Observer"})
+    assert observer.status_code == 200, observer.text
+    observer_id, observer_token = observer.json()["id"], observer.json()["token"]
+    observer_headers = {"Authorization": "Bearer " + observer_token}
+    requirement = client.post("/api/v1/requirements", headers=ADMIN,
+        json={"project_id": pid, "title": "Grant visibility requirement"})
+    assert requirement.status_code == 200, requirement.text
+    task = client.post("/api/v1/tasks", headers=ADMIN, json={
+        "requirement_id": requirement.json()["id"], "title": "Grant visibility task",
+        "assignee_member_ids": [owner_id, observer_id]})
+    assert task.status_code == 200, task.text
+    task_id = task.json()["id"]
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Owner Inbox Agent"})
+    assert created.status_code == 200, created.text
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": created.json()["agent"]["id"],
+        "scopes": ["session.read"], "expires_in_days": 30})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+
+    owner_list = client.get(f"/api/v1/tasks/{task_id}/collaboration-grants",
+                            headers=owner_headers)
+    assert owner_list.status_code == 200, owner_list.text
+    assert owner_list.json()["visibility"] == "TASK_WIDE"
+    assert any(x["id"] == grant_id for x in owner_list.json()["items"])
+
+    observer_list = client.get(f"/api/v1/tasks/{task_id}/collaboration-grants",
+                               headers=observer_headers)
+    assert observer_list.status_code == 200, observer_list.text
+    assert observer_list.json()["visibility"] == "OWNER_ONLY"
+    assert observer_list.json()["items"] == []
+
+    inbox = client.get("/api/v1/members/me/collaboration-grants", headers=owner_headers)
+    assert inbox.status_code == 200, inbox.text
+    inbox_item = next(x for x in inbox.json()["items"] if x["grant_id"] == grant_id)
+    assert inbox_item["agent_name"] == "Owner Inbox Agent"
+    assert inbox_item["effective_status"] == "AUTHORIZED"
+    assert inbox_item["task_title"] == "Grant visibility task"
+    assert client.get("/api/v1/members/me/collaboration-grants",
+                      headers=observer_headers).json()["items"] == []
+
+    expired_at = "2000-01-01T00:00:00+00:00"
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  (expired_at, grant_id))
+    expired_inbox = client.get("/api/v1/members/me/collaboration-grants",
+                               headers=owner_headers)
+    assert expired_inbox.status_code == 200, expired_inbox.text
+    expired_item = next(x for x in expired_inbox.json()["items"] if x["grant_id"] == grant_id)
+    assert expired_item["effective_status"] == "EXPIRED"
+    with main_module.conn() as c:
+        stored = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                           (grant_id,)).fetchone()
+        audit = c.execute("SELECT payload FROM events WHERE event_type=?",
+                          ("agent.collaboration_grant.expired",)).fetchall()
+    assert stored["status"] == "EXPIRED"
+    assert any(json.loads(row["payload"]).get("grant_id") == grant_id for row in audit)
+
+
 def test_collaboration_session_pause_close_history_and_owner_boundaries():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
