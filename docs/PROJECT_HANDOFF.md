@@ -469,6 +469,6 @@
 - Member Token 的原有工具调用行为保持兼容。MCP adapter allowlist 属于纵深防御；REST API 仍为最终权限边界。
 - 新增 `tests/test_mcp_adapter.py`，覆盖 Agent allowlist 允许/拒绝矩阵、Agent Token 阻断 owner Member 权限、Grant inbox/accept endpoint 映射、Member Token 兼容。
 - 文档更新：`docs/MCP_INTEGRATION.md`、`daep_mcp/README.md`。
-- 本轮代码变更提交后必须等待 GitHub CI；不在未执行的情况下声称 MCP 测试已通过。
+- 本轮代码提交：`fbbb99fb2ee24808f2422ee679c77e8357eccdeb`（MCP Grant 切换）；随后修正 allowlist 的 task progress/blocked 路由段位判断，代码提交 `f82c613e6bf599f52cf488667f08a91be0b70577`。最新代码 HEAD 为该修正提交；本轮没有本地运行 pytest，必须以最新 HEAD 对应 CI 验证为准。
 - 已知限制：Agent Task events 读取仍未开放；MCP 不提供 Agent 对项目审计、审批、治理、消息/通知、委派或 work-package 操作。旧 Member Token MCP 工具保留兼容，但 Agent Token 无法调用。
 - 下一步唯一任务：Stage B 后续安全收口——将 `GET /api/v1/tasks/{tid}/events` 改为 Agent 仅持有 `task.read` Grant 才能读取，确认事件 payload 不泄露无关项目/成员敏感信息；随后实现 Task 完成/关闭/撤销时 AgentTaskGrant 自动 COMPLETED/REVOKED 的生命周期联动，并补充跨租户与多责任人负向测试。禁止 Agent 访问项目级审计 API。
