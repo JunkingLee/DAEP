@@ -1260,3 +1260,25 @@
 - 当前 CI run：45352042969，对应当前分支功能提交链；container-build、production-compose 已 SUCCESS；Python 3.11/3.12/3.13、migrations、Browser E2E 尚未全部结束，其中 Browser E2E 当前仍在 Install Chromium。
 - 当前未观察到新的失败步骤；不能提前宣称完整 CI 或新的 Browser E2E 通过。
 - 下一步：等待当前 run 收敛；若 Python 测试失败，优先修复新增浏览器回归；若 Browser E2E 长时间停留在 Chromium 安装，则保留该限制并以已完成的 Python/静态验证结果为准，不无限等待。
+
+
+## 51. Agent Collaboration Proposal 闭环（2026-11-24）
+
+### 本轮实现
+- 补齐既有 `agent_collaboration_proposals` 表对应的 REST 生命周期：Agent 在有效 CollaborationGrant 且具备 `session.proposal.create` Scope 时，可创建 Task 级 Proposal；可通过 `session.read` 读取自己 Grant 范围内的 Proposal。
+- Member 侧可读取 Task Proposal，并由 Agent Owner 对自己 Agent 发起的 Proposal 做 ACCEPTED/REJECTED 决策；Agent 可撤回仍处于 PENDING 的 Proposal。
+- Proposal 决策只记录人类治理结果，不直接修改 Task assignee、Work Package、审批或验收状态；返回 `formal_mutation_required=true`，保持“Agent 提案、Human 决策、正式业务变更独立”的边界。
+- 所有创建、决策、撤回均产生独立审计事件；Proposal 与 Session/Task/Agent/Owner/Grant 继续通过既有复合关系绑定。
+- MCP 新增 Proposal 查询、创建、撤回工具；Agent Token allowlist 只增加 Task Proposal GET/POST，不开放 Member 决策接口。
+- 新增 REST 生命周期、权限边界、重复决策、审计以及 MCP allowlist 回归测试。
+
+### 变更边界
+- 未修改数据库 Schema、迁移或历史数据；既有开发期 Schema 直接使用，不考虑迁移/利旧/回填。
+- DAEP 仍不创建、启动或托管 Agent Runtime；Proposal 只是协作治理记录。
+
+### 验证状态
+- 本轮代码与测试提交后等待 CI 验证；当前未在本环境直接运行 pytest，不宣称测试通过。
+- Browser E2E 仍按当前 CI 实际状态记录，不因本轮后端/MCP 测试完成而提前宣称通过。
+
+### 下一步
+- CI 通过后进入 Task Collaboration UI：展示 Session、消息、Proposal 状态，并提供仅限当前 Task 负责人/Agent Owner 的人类决策入口；继续补充浏览器回归。
