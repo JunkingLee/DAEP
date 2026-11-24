@@ -13,14 +13,12 @@ def _agent_path_allowed(method, path):
     if method=='GET' and route in ('/api/v1/mcp/context','/api/v1/agents/me/grants'):
         return True
     parts=route.strip('/').split('/')
-    if method=='POST' and len(parts)==4 and parts[:3]==['api','v1','agent-grants'] and parts[3].endswith('/accept'):
-        return False
     if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','agent-grants'] and parts[4]=='accept' and parts[3]:
         return True
     if len(parts)==4 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
-        return method=='GET' or (method=='POST' and parts[3] in ('progress','blocked'))
+        return method=='GET'
     if len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
-        return (method=='POST' and parts[4]=='artifacts') or (method=='GET' and parts[4] in ('artifacts','artifact-versions','artifact-quality'))
+        return (method=='POST' and parts[4] in ('progress','blocked','artifacts')) or (method=='GET' and parts[4] in ('artifacts','artifact-versions','artifact-quality'))
     return False
 
 
