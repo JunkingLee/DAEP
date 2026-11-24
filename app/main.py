@@ -230,7 +230,7 @@ def init():
             status TEXT NOT NULL DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED','ACCEPTED','REVOKED','COMPLETED','EXPIRED')),
             created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
             accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
-            revoke_reason TEXT,last_activity_at TEXT,legacy_assignment_id TEXT,
+            revoke_reason TEXT,last_activity_at TEXT,
             CHECK(expires_at>created_at),
             CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
               AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
@@ -243,8 +243,8 @@ def init():
             FOREIGN KEY(authorized_by_member_id) REFERENCES members(id),
             FOREIGN KEY(revoked_by_member_id) REFERENCES members(id)
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_one_active_per_task
-            ON agent_task_grants(task_id) WHERE status IN ('AUTHORIZED','ACCEPTED');
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_active_task_agent
+            ON agent_task_grants(task_id,agent_id) WHERE status IN ('AUTHORIZED','ACCEPTED');
         CREATE INDEX IF NOT EXISTS idx_agent_task_grants_agent_status_expiry
             ON agent_task_grants(tenant_id,agent_id,status,expires_at);
         CREATE INDEX IF NOT EXISTS idx_agent_task_grants_task_status
