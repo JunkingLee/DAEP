@@ -3882,7 +3882,8 @@ def test_rc46_agent_task_grants_initial_schema_contract():
         status TEXT NOT NULL DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED','ACCEPTED','REVOKED','COMPLETED','EXPIRED')),
         created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
         accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
-        revoke_reason TEXT,last_activity_at TEXT,\n        UNIQUE(id,task_id,agent_id),
+        revoke_reason TEXT,last_activity_at TEXT,
+        UNIQUE(id,task_id,agent_id),
         CHECK(expires_at>created_at),
         CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
           AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
