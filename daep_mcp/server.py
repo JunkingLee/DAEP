@@ -10,14 +10,20 @@ mcp=FastMCP('DAEP Engineering Platform')
 def _agent_path_allowed(method, path):
     # Agent credentials never inherit the owner's Member permissions.
     route=urllib.parse.urlsplit(path).path
-    if method=='GET' and route in ('/api/v1/mcp/context','/api/v1/agents/me/grants'):
+    if method=='GET' and route in (
+        '/api/v1/mcp/context',
+        '/api/v1/agents/me/grants',
+        '/api/v1/agents/me/collaboration-grants',
+    ):
         return True
     parts=route.strip('/').split('/')
-    if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','agent-grants'] and parts[4]=='accept' and parts[3]:
+    if method=='POST' and len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='collaboration-grants' and parts[4]=='accept' and parts[3]:
         return True
     if len(parts)==4 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
         return method=='GET'
     if len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
+        if parts[4]=='collaboration-messages':
+            return method in ('GET','POST')
         return (method=='POST' and parts[4] in ('progress','blocked','artifacts')) or (method=='GET' and parts[4] in ('artifacts','artifact-versions','artifact-quality'))
     return False
 
@@ -266,6 +272,45 @@ def submit_agent_task_artifact(task_id: str, artifact_type: str, uri: str, commi
     if not artifact_type.strip() or not uri.strip(): raise ValueError('artifact_type and uri are required')
     return call('POST',f'/api/v1/tasks/{task_id}/artifacts',{
         'artifact_type':artifact_type,'uri':uri,'commit_sha':commit_sha or None,'metadata':{}})
+
+
+@mcp.tool()
+def list_my_agent_collaboration_grants() -> dict:
+    """List collaboration invitations and active grants explicitly addressed to this Agent."""
+    return call('GET','/api/v1/agents/me/collaboration-grants')
+
+
+@mcp.tool()
+def accept_agent_collaboration_grant(grant_id: str) -> dict:
+    """Accept a collaboration invitation addressed to this Agent identity."""
+    if not grant_id.strip():
+        raise ValueError('grant_id is required')
+    return call('POST',f'/api/v1/collaboration-grants/{urllib.parse.quote(grant_id, safe="")}/accept',{})
+
+
+@mcp.tool()
+def get_task_collaboration_messages(task_id: str, grant_id: str, limit: int = 50) -> dict:
+    """Read task collaboration history using this Agent's accepted session.read grant."""
+    if not task_id.strip() or not grant_id.strip():
+        raise ValueError('task_id and grant_id are required')
+    if isinstance(limit, bool) or not 1 <= limit <= 100:
+        raise ValueError('limit must be between 1 and 100')
+    query=urllib.parse.urlencode({'grant_id':grant_id,'limit':limit})
+    return call('GET',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-messages?{query}')
+
+
+@mcp.tool()
+def send_task_collaboration_message(task_id: str, grant_id: str, content: str,
+                                    resource_id: str = '', metadata: dict = None) -> dict:
+    """Send a task collaboration message using this Agent's accepted session.message.send grant."""
+    if not task_id.strip() or not grant_id.strip() or not content.strip():
+        raise ValueError('task_id, grant_id and content are required')
+    if len(content) > 10000:
+        raise ValueError('content must be at most 10000 characters')
+    payload={'grant_id':grant_id,'content':content,'metadata':metadata or {}}
+    if resource_id:
+        payload['resource_id']=resource_id
+    return call('POST',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-messages',payload)
 
 
 if __name__=='__main__':

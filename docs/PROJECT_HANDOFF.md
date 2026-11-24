@@ -1016,3 +1016,28 @@
 - 提交前复核发现成员创建 API 返回的成员 ID 位于顶层 `id`，并非 `member.id`；已修正 Owner 关系漂移测试使用 `other.json()["id"]`。该更正先于本轮 CI 结果，后续 CI 将验证最终测试版本。
 
 - 后续 CI（run `45340136793`，基于提交 `e5b83676f0f687fca58b3187beac4040febf1feb`）在新增测试中暴露两个夹具问题：SQLite Grant 表要求 `expires_at > created_at`，过期模拟需同时回拨创建时间；成员创建 API 的 ID 顶层字段修正已进入下一提交 `88cdf4292648ae8aff1b0d8a1020c2ac15aff4e3`。当前进一步修复过期夹具，将 `created_at` 设为 1999、`expires_at` 设为 2000，保证约束成立且相对当前时间已过期。
+
+
+## 33. Agent Collaboration MCP 工具实际接线与 HTTP 传输验证（2026-11-24）
+
+### 加速审计发现
+- 对当前分支 HEAD `ff400858f855a4f0acdad1d017e13dec37e2bd0a` 重新核对 `daep_mcp/server.py` 后，发现上一节交接记录描述了四个 Collaboration MCP 工具，但该分支文件实际缺少对应函数，Agent 路由白名单也未包含 Collaboration REST 路由。
+- 因此此前的 MCP 工具“已接入”记录与当前代码不一致；本节以本次实际代码提交为准，纠正这一差异，不把旧交接描述当作验证证据。
+
+### 本轮实现
+- `daep_mcp/server.py` 增加四个 MCP 工具：`list_my_agent_collaboration_grants`、`accept_agent_collaboration_grant`、`get_task_collaboration_messages`、`send_task_collaboration_message`。
+- Agent Token 精确白名单只放行协作授权 Inbox、接受 Grant、Task 协作消息 GET/POST；不开放 Session 管理、Grant 创建/撤销或其他 Member 治理接口。
+- 所有协作操作仍通过 REST API 执行；MCP 白名单只限制可调用路径，REST 每次请求继续校验 Agent、Owner、Tenant、Project、Task、Session、Grant 状态、Scope、Resource Scope 和 Session 状态。
+- 消息读取显式携带 `grant_id`，limit 限制为 1-100；发送显式携带 `grant_id`，可选 resource_id 和 metadata。工具不将 Agent Token 转换为 Owner Member Token。
+- `tests/test_mcp_adapter.py` 增加路由正/负向测试、工具参数映射/校验，以及本地 TCP HTTP Server 传输测试，验证 MCP adapter 的 urllib 请求确实携带 Agent Bearer Token、路径、查询参数和消息 JSON。
+- REST 层真实 FastAPI 集成测试仍独立覆盖未接受、错误 Agent、过期和 Owner 关系漂移拒绝；两层测试组合验证 MCP 传输与 REST 授权边界。
+
+### 验证状态
+- 本轮代码/测试尚待 CI 验证；本地 pytest 未执行，不宣称测试通过。
+- CI run `45340387898` 的 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose 已 SUCCESS；Browser E2E 仍在 Install Chromium 阶段，未完成。
+- 本轮未修改 REST API、数据库 Schema 或历史迁移；不做数据回填、利旧或兼容处理。
+
+### 下一步
+- 核验本轮提交 CI；若 Python 测试失败，优先修复 MCP HTTP 传输测试或路由映射。
+- CI 通过后，继续补充真实 MCP 工具到 REST API 的完整授权场景联测（Grant scope、撤销、Resource Scope、PAUSED/CLOSED），并回归 Member Token 既有工具。
+- 继续保持 Agent 私有归属、Owner 分别授权、DAEP 不创建/启动/托管 Agent Runtime 的边界。
