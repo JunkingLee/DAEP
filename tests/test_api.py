@@ -4094,6 +4094,51 @@ def test_disabling_agent_revokes_owner_authorized_task_grants():
     assert row['revoke_reason']=='Agent identity disabled'
 
 
+
+def test_agent_disable_revokes_accepted_collaboration_grants_without_revival():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _, owner_id, owner_token, task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+owner_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Collaboration Disable Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    agent_headers={'Authorization':'Bearer '+created.json()['token']}
+    session=client.get(f'/api/v1/tasks/{task_id}/collaboration-session',headers=owner_headers)
+    assert session.status_code==200,session.text
+    grant=client.post(f'/api/v1/tasks/{task_id}/collaboration-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'scopes':['session.read','session.message.send']})
+    assert grant.status_code==200,grant.text
+    grant_id=grant.json()['id']
+    accepted=client.post(f'/api/v1/collaboration-grants/{grant_id}/accept',headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+
+    disabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
+        'name':agent['name'],'description':'','status':'DISABLED'})
+    assert disabled.status_code==200,disabled.text
+    with main_module.conn() as c:
+        row=c.execute("""SELECT status,revoked_at,revoked_by_member_id,revoke_reason
+            FROM agent_collaboration_grants WHERE id=?""",(grant_id,)).fetchone()
+        audit=c.execute("""SELECT COUNT(*) n FROM events
+            WHERE event_type='agent.collaboration_grant.revoked' AND task_id=?""",(task_id,)).fetchone()
+    assert row['status']=='REVOKED' and row['revoked_at']
+    assert row['revoked_by_member_id']==owner_id
+    assert row['revoke_reason']=='Agent identity disabled'
+    assert audit['n']==1
+
+    enabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
+        'name':agent['name'],'description':'','status':'ACTIVE'})
+    assert enabled.status_code==200,enabled.text
+    rotated=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=owner_headers)
+    assert rotated.status_code==200,rotated.text
+    new_agent_headers={'Authorization':'Bearer '+rotated.json()['token']}
+    inbox=client.get('/api/v1/agents/me/collaboration-grants',headers=new_agent_headers)
+    assert inbox.status_code==200,inbox.text
+    assert not any(item['grant_id']==grant_id for item in inbox.json()['items'])
+    assert client.get(f'/api/v1/tasks/{task_id}/collaboration-messages',
+        headers=new_agent_headers,params={'grant_id':grant_id}).status_code==404
+
+
 def test_agent_grant_inbox_and_accept_without_project_binding():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)

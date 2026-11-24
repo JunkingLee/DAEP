@@ -1150,3 +1150,28 @@
 ### 验证状态
 - 前一轮 MCP 接入文档/UI 提交 `fef5971c254b600576faeae93d92f366b1bc001a` 对应 CI run `45343938237` 七个 Job 全部 SUCCESS。
 - 当前二次确认变更待 CI 验证；本地 pytest 未执行，不宣称测试通过。
+
+
+## 42. Agent 身份停用同步撤销协作授权（2026-11-24）
+
+### 生命周期审计发现
+- Agent 停用会撤销活动 Token、旧 Agent Assignment 和 AgentTaskGrant，但此前未把已授权/已接受的 AgentCollaborationGrant 从活动状态转为 REVOKED。
+- REST 调用期间因 Agent 状态为 DISABLED，协作 Grant helper 会 fail-closed；但若 Owner 随后重新启用同一 Agent 并轮换 Token，旧的 ACCEPTED CollaborationGrant 仍可能恢复可用。这会让已停用身份的协作授权被意外复活。
+- Owner Member 账户停用路径直接将其 Agent 标记为 DISABLED，也存在同样的历史协作授权残留。
+
+### 本轮修复
+- Agent 身份停用时，先合并锁定其有效 Task Execution Grant 和 CollaborationGrant 所涉及的 Task，再撤销全部 AUTHORIZED/ACCEPTED CollaborationGrant。
+- 每条协作授权写入 REVOKED、revoked_at、revoked_by_member_id、revoke_reason，并产生 agent.collaboration_grant.revoked 审计事件。
+- Owner Member 账户停用导致其 Agent 停用时，同步撤销该 Agent 的有效 CollaborationGrant，并写入相同的授权审计。
+- Agent 重新启用只恢复身份状态，不恢复旧 Task/Collaboration Grant；Owner 必须重新授权，Agent 必须重新接受。
+- Token 单纯轮换不撤销 CollaborationGrant：轮换只替换认证凭证，既有身份授权保持有效；显式撤销 Token 仍按既有策略撤销 Task Execution Grant，但不会把授权治理与凭证轮换混为一谈。
+- 项目解除绑定仍不自动撤销 Owner 已明确授予的 Task/Collaboration Grant；项目绑定不是授权本身，执行和协作接口继续按各自 Grant 与 Project 状态判定。
+- 新增集成测试覆盖接受后的 CollaborationGrant 在 Agent 停用后被撤销、重新启用和轮换 Token 后不复活。
+- 未修改数据库 Schema、初始结构或迁移；未增加历史数据回填/兼容逻辑。
+
+### 验证状态
+- 上一阶段提交 `c27281c6be8c358d1fbfc6436968b2fdb2c9b9cc` 对应 CI run `45344307938` 七个 Job 全部 SUCCESS。
+- 本轮代码和测试尚待 CI；未在执行环境直接运行 pytest，不宣称通过。
+
+### 下一步
+- 核验本轮 CI；通过后继续补充 Owner 账户停用对 CollaborationGrant 的专项回归，以及 Agent Token 撤销/轮换、项目解绑的生命周期契约测试。

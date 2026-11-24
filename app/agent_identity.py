@@ -217,8 +217,11 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
             r=_agent_owner(c,agent_id,a,is_admin)
             stamp=now()
             if body.status=='DISABLED':
-                task_ids=[x['task_id'] for x in c.execute("""SELECT DISTINCT task_id FROM agent_task_grants
-                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED') ORDER BY task_id""",(agent_id,)).fetchall()]
+                task_ids=[x['task_id'] for x in c.execute("""SELECT task_id FROM agent_task_grants
+                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')
+                    UNION SELECT task_id FROM agent_collaboration_grants
+                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')
+                    ORDER BY task_id""",(agent_id,agent_id)).fetchall()]
                 for task_id in task_ids:
                     _lock_agent_policy_task(c,task_id)
             c.execute("UPDATE agents SET name=?,description=?,status=?,updated_at=? WHERE id=?",(body.name,body.description,body.status,stamp,agent_id))
@@ -244,11 +247,24 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                     event(c,'agent.task_grant.revoked',a['id'],grant['task_id'],{
                         'grant_id':grant['id'],'agent_id':agent_id,'reason':'Agent identity disabled'})
                 revoked_grant_count=len(grants)
+                collaboration_grants=c.execute("""SELECT id,task_id,session_id FROM agent_collaboration_grants
+                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(agent_id,)).fetchall()
+                for grant in collaboration_grants:
+                    c.execute("""UPDATE agent_collaboration_grants SET status='REVOKED',revoked_at=?,
+                        updated_at=?,revoked_by_member_id=?,revoke_reason='Agent identity disabled'
+                        WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                        (stamp,stamp,a['id'],grant['id']))
+                    event(c,'agent.collaboration_grant.revoked',a['id'],grant['task_id'],{
+                        'grant_id':grant['id'],'session_id':grant['session_id'],'agent_id':agent_id,
+                        'reason':'Agent identity disabled'})
+                revoked_collaboration_grant_count=len(collaboration_grants)
             else:
                 revoked_grant_count=0
+                revoked_collaboration_grant_count=0
             event(c,'agent.updated',a['id'],None,{'agent_id':agent_id,'status':body.status,
                 'revoked_assignment_count':revoked_assignment_count,
-                'revoked_grant_count':revoked_grant_count})
+                'revoked_grant_count':revoked_grant_count,
+                'revoked_collaboration_grant_count':revoked_collaboration_grant_count})
             return dict(c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE id=?",(agent_id,)).fetchone())
 
     @app.post('/api/v1/agents/{agent_id}/tokens/rotate')
