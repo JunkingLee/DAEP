@@ -5627,3 +5627,40 @@ def test_member_notification_delivery_view_correlates_outbox_and_inbox_ack():
     agent_denied = client.get('/api/v1/me/notification-delivery',
                               headers={'Authorization':'Bearer invalid-agent-token'})
     assert agent_denied.status_code == 401
+
+
+def test_member_notification_preferences_defaults_validation_and_scope():
+    _, owner_id, owner_token, task_id = setup_project_task()
+    headers = {'Authorization': f'Bearer {owner_token}'}
+
+    defaults = client.get('/api/v1/me/notification-preferences', headers=headers)
+    assert defaults.status_code == 200, defaults.text
+    assert defaults.json()['member_id'] == owner_id
+    assert defaults.json()['collaboration_grant_events'] is True
+    assert defaults.json()['collaboration_expiry_reminders'] is True
+    assert defaults.json()['reminder_days'] == [7, 3, 1]
+
+    updated = client.put('/api/v1/me/notification-preferences', headers=headers, json={
+        'collaboration_grant_events': False,
+        'collaboration_expiry_reminders': True,
+        'reminder_days': [3, 1],
+    })
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['collaboration_grant_events'] is False
+    assert updated.json()['collaboration_expiry_reminders'] is True
+    assert updated.json()['reminder_days'] == [3, 1]
+
+    invalid = client.put('/api/v1/me/notification-preferences', headers=headers, json={
+        'collaboration_grant_events': 'false',
+        'collaboration_expiry_reminders': True,
+        'reminder_days': [2],
+    })
+    assert invalid.status_code == 422, invalid.text
+
+    persisted = client.get('/api/v1/me/notification-preferences', headers=headers)
+    assert persisted.json()['reminder_days'] == [3, 1]
+    assert persisted.json()['collaboration_grant_events'] is False
+
+    denied = client.get('/api/v1/me/notification-preferences',
+                        headers={'Authorization': 'Bearer invalid-agent-token'})
+    assert denied.status_code == 401, denied.text
