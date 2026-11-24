@@ -128,8 +128,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             assert lifecycle["proposal"] == 409, lifecycle
             assert lifecycle["grant"] == 409, lifecycle
             # Owner revocation from the Task workspace removes history and write access.
-            page.once("dialog", lambda dialog: dialog.accept())
-            page.once("dialog", lambda dialog: dialog.accept("Owner revoked from browser E2E"))
+            page.on("dialog", lambda dialog: dialog.accept("Owner revoked from browser E2E") if dialog.type == "prompt" else dialog.accept())
             modal.get_by_role("button", name="撤销我的授权").click()
             expect(modal).to_contain_text("已撤销", timeout=15000)
             revoked_access = page.evaluate("""async ({taskId,grantId,agentToken}) => {
