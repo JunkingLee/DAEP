@@ -1322,3 +1322,15 @@
 
 ### 下一步
 - 核验新提交 CI；若失败，按实际失败日志修复测试数据/浏览器选择器或接口契约，不放宽授权规则。
+
+
+## 55. Collaboration Message 类型契约修正（2026-11-24）
+
+- 复核 REST `POST /api/v1/tasks/{task_id}/collaboration-messages` 后确认当前接口只接受 `message_type=MESSAGE`；Task 详情 UI 与新浏览器 E2E 原先使用 `TEXT`，会被后端以 422 拒绝。
+- 已将 `web/index.html` 的 Member 消息发送 payload 和 `tests/test_task_collaboration_ui_e2e.py` 的 Agent 消息 payload 统一改为 `MESSAGE`，不放宽后端校验。
+- UI 修正提交：`f3151a3e845c0aa348974a80e102b623019a75cc`；E2E payload 修正提交：`0f68af39aae46a8ccb29d2542604d5d6209dc767`。
+- 本地未运行 pytest；修正后的完整 CI 尚未观察到结果，不宣称通过。
+- 不修改 REST API、数据库 Schema 或迁移；不涉及历史数据迁移、回填或利旧。
+
+### 下一步
+- 核验当前分支最新 CI，重点关注新浏览器测试的 Proposal 决策按钮、消息回显，以及 Python 测试收集是否正常。
