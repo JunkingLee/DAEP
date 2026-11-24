@@ -1063,3 +1063,11 @@
 ### 下一步
 - 核验修复提交的完整 CI。
 - CI 通过后继续做 REST 授权场景与 MCP Agent Token 真实调用链的端到端验证，重点补足 scope 不足、撤销、资源范围和 Session 暂停/关闭场景。
+
+
+## 35. MCP allowlist 回归测试结构修正（2026-11-24）
+
+- 修复提交 `9f4dc552823645650df899ea08043b32e9875a9a` 对应 CI run `45342319869`：Browser E2E、PostgreSQL migrations/RLS、container-build、production-compose SUCCESS；三个 Python 版本在收集 `tests/test_mcp_adapter.py` 时出现 SyntaxError。
+- 根因是新增 Task Grant / CollaborationGrant 独立路由回归测试时，插入位置落在原有 `allowed=[...]` 列表内部，破坏 Python 语法。不是产品逻辑错误。
+- 已将新增测试移动到原有 allowlist 测试函数结束之后，保留原始 allowed 列表内容和测试断言。
+- 本轮修正提交后需重新验证完整 CI；未在本地运行 pytest，不宣称通过。

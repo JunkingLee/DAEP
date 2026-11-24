@@ -15,14 +15,6 @@ def test_agent_allowlist_accepts_only_grant_scoped_task_routes(monkeypatch):
         ('GET','/api/v1/mcp/context'),
         ('GET','/api/v1/agents/me/grants'),
         ('POST','/api/v1/agent-grants/grant_123/accept'),
-def test_agent_allowlist_keeps_task_grant_acceptance_and_collaboration_separate(monkeypatch):
-    server=load_server(monkeypatch)
-    assert server._agent_path_allowed('POST','/api/v1/agent-grants/task-grant-1/accept')
-    assert server._agent_path_allowed('POST','/api/v1/collaboration-grants/collab-grant-1/accept')
-    assert not server._agent_path_allowed('POST','/api/v1/agent-grants/task-grant-1/revoke')
-    assert not server._agent_path_allowed('POST','/api/v1/collaboration-grants/collab-grant-1/revoke')
-
-
         ('GET','/api/v1/tasks/task_123'),
         ('POST','/api/v1/tasks/task_123/progress'),
         ('POST','/api/v1/tasks/task_123/blocked'),
@@ -32,6 +24,16 @@ def test_agent_allowlist_keeps_task_grant_acceptance_and_collaboration_separate(
         ('GET','/api/v1/tasks/task_123/artifact-quality'),
     ]
     assert all(server._agent_path_allowed(method,path) for method,path in allowed)
+
+
+def test_agent_allowlist_keeps_task_grant_acceptance_and_collaboration_separate(monkeypatch):
+    server=load_server(monkeypatch)
+    assert server._agent_path_allowed('POST','/api/v1/agent-grants/task-grant-1/accept')
+    assert server._agent_path_allowed('POST','/api/v1/collaboration-grants/collab-grant-1/accept')
+    assert not server._agent_path_allowed('POST','/api/v1/agent-grants/task-grant-1/revoke')
+    assert not server._agent_path_allowed('POST','/api/v1/collaboration-grants/collab-grant-1/revoke')
+
+
 
 
 def test_agent_allowlist_rejects_member_and_governance_routes(monkeypatch):
