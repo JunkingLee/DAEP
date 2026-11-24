@@ -499,7 +499,7 @@ Request:
 3. `agent_task_contributions`：每个 Grant/Agent 的独立进度、阻塞和交付贡献。
 4. `agent_collaboration_sessions`：每个 Task 最多一个默认逻辑协作空间。
 5. `agent_collaboration_grants`：Agent 对 Session 的独立协作授权。
-6. 复用现有消息实体作为 Session 消息存储，增加明确的 session 归属和 Agent 作者身份字段；不要为 Agent 单独复制一套消息系统。
+6. 当前 `messages` 是成员收件箱/通知投递表，不是共享对话；新增 `agent_collaboration_messages` 作为 Session 消息表，保留现有通知语义不变。
 7. 复用现有 Work Package / proposal 领域能力；Agent 产生的工作包/委派请求先进入 proposal，不直接改变正式治理关系。
 
 ### 12.2 agent_collaboration_sessions 表
@@ -561,7 +561,7 @@ Request:
 
 ### 12.6 从零建库的实施顺序（不是历史迁移）
 
-1. 更新 SQLAlchemy models / 初始 Alembic baseline / SQLite bootstrap schema，使空数据库直接创建上述目标表、索引和约束。
+1. 当前项目使用 `app/main.py` SQLite Bootstrap、`app/agent_identity.py` 身份初始化模块和 Alembic PostgreSQL DDL，并没有独立 SQLAlchemy Models 层。直接更新这些开发初始建库定义，使空数据库创建目标结构；不新增历史迁移链。
 2. 更新 tenant RLS policy 定义和 PostgreSQL schema contract tests。
 3. 实现 ORM 关系和约束测试：Task 1:0..1 Session、Task 1:N Grant、Session 1:N CollaborationGrant。
 4. 实现多 Agent 并发授权事务测试及 max_agents=NULL 行为测试。
@@ -581,3 +581,18 @@ Request:
 - Agent 消息永远以 Agent 身份署名，不得冒充 Owner Member。
 - Agent 提议不等于治理决定；正式工作包和人类责任变更由 Member 确认。
 - 负责人不设置 max_agents 时，数据库字段为 NULL，不存在隐藏的 3/5/10 任务级数量限制。
+
+
+---
+
+## 13. 本阶段实际数据库实现口径（2026-11-24）
+
+- 当前代码并无 SQLAlchemy declarative model 层；SQLite schema 由 `app/main.py` Bootstrap 创建，Agent 身份初始化在 `app/agent_identity.py`，PostgreSQL 由现有 Alembic 开发建库定义创建。
+- 不新增一条历史数据库迁移、不做数据回填或旧结构兼容；修改当前未发布开发 schema 定义，面向干净数据库初始化。
+- `agent_task_grants` 的有效唯一索引是 `(task_id, agent_id)`，同一 Task 可有多个不同 Agent 的有效 Grant；同一 Agent 同 Task 不可重复有效授权。
+- `agent_task_execution_policies`：每 Task 唯一；`max_agents=NULL` 表示不设任务级固定上限；`collaboration_mode=TEAM`。
+- 新增 `agent_task_contributions`、`agent_collaboration_sessions`、`agent_collaboration_grants`、`agent_collaboration_messages`、`agent_collaboration_proposals`。
+- Task Contribution 和 Agent 协作消息/提议使用复合外键，绑定 Grant、Task、Session、Agent 和 Owner，避免单列 FK 导致错误归属。
+- 当前消息 Inbox 不是团队对话，故协作消息单独建表，不混淆成员通知投递。
+- PostgreSQL 为全部新租户表启用并强制 RLS，使用现有 `daep_tenant_visible(tenant_id)`；Agent authenticator 角色不获得这些表的直接权限。
+- SQLite schema contract tests 已新增；PostgreSQL RLS smoke 已增加跨租户 Session/Grant/Message/Proposal/Contribution 检查。测试是否通过以 CI 实际结果为准。
