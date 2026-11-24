@@ -4876,9 +4876,9 @@ def test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_au
     assert item["resource_scope"] == {"resource_ids": ["artifact-1"]} and item["expires_at"]
     assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages", headers=agent_headers,
         json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "before revoke"}).status_code == 200
-    denied = client.delete(f"/api/v1/collaboration-grants/{grant_id}", headers=other_headers, json={"reason": "not my Agent"})
+    denied = client.request("DELETE", f"/api/v1/collaboration-grants/{grant_id}", headers=other_headers, json={"reason": "not my Agent"})
     assert denied.status_code == 403, denied.text
-    revoked = client.delete(f"/api/v1/collaboration-grants/{grant_id}", headers=owner_headers, json={"reason": "Owner withdrew authorization"})
+    revoked = client.request("DELETE", f"/api/v1/collaboration-grants/{grant_id}", headers=owner_headers, json={"reason": "Owner withdrew authorization"})
     assert revoked.status_code == 200 and revoked.json()["status"] == "REVOKED", revoked.text
     assert revoked.json()["revoked_by_member_id"] == owner_id
     assert client.get(f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}", headers=agent_headers).status_code == 403
