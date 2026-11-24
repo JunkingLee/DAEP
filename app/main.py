@@ -298,7 +298,12 @@ def init():
             schema=schema.replace('INTEGER PRIMARY KEY AUTOINCREMENT','BIGSERIAL PRIMARY KEY')
             schema=schema.replace('CREATE TABLE IF NOT EXISTS messages(seq INTEGER PRIMARY KEY AUTOINCREMENT','CREATE TABLE IF NOT EXISTS messages(seq BIGSERIAL PRIMARY KEY')
             schema=schema.replace('CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY','CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY')
-            for stmt in [x.strip() for x in schema.split(';') if x.strip()]: c.execute(stmt)
+            for stmt in [x.strip() for x in schema.split(';') if x.strip()]:
+                # PostgreSQL creates this table only in Alembic RC46, after
+                # the referenced Agent identity tables have been migrated.
+                if stmt.startswith('CREATE TABLE IF NOT EXISTS agent_task_grants') or stmt.startswith('CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_') or stmt.startswith('CREATE INDEX IF NOT EXISTS idx_agent_task_grants_'):
+                    continue
+                c.execute(stmt)
         else: c.executescript(schema)
         if not DATABASE_URL.startswith(('postgresql://','postgres://')):
             artifact_version_cols={r['name'] for r in c.execute('PRAGMA table_info(artifact_versions)').fetchall()}
