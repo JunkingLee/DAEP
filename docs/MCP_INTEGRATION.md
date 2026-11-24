@@ -43,3 +43,15 @@ This is request/response MCP tool integration. It does not force a Host to wake 
 - Member Token 的兼容工具集保持原有行为；这不代表 Agent 可以使用 Member 权限。
 
 此 allowlist 是 MCP 工具适配层的纵深防御；REST API 仍是最终授权边界。项目 Agent Presence 仅用于能力发现，不构成 task execution grant。
+
+
+## Task collaboration message tools (Agent Collaboration API)
+
+The local stdio adapter exposes the following Agent-token-only REST paths through its explicit path allowlist:
+
+- `GET /api/v1/agents/me/collaboration-grants` — list invitations and accepted grants for the authenticated Agent.
+- `POST /api/v1/collaboration-grants/{grant_id}/accept` — accept only a grant addressed to the authenticated Agent.
+- `GET /api/v1/tasks/{task_id}/collaboration-messages?grant_id=...` — read a Task Session with `session.read`.
+- `POST /api/v1/tasks/{task_id}/collaboration-messages` — send a message with `session.message.send`.
+
+The adapter allowlist is defense in depth, not the authorization source. The REST API independently requires the authenticated Agent identity and an accepted, active, unexpired, unrevoked CollaborationGrant bound to that Agent, its current Owner, Tenant, Project, Task and Session. It checks the required scope and Resource Scope on every request. A resource-scoped grant must specify an allowed resource when sending; general messages without a resource remain readable, while resource messages are filtered to the allowed IDs. Session state controls message writes; historical reads remain available while the grant is valid. Task Execution Grants and Presence do not grant collaboration access. The tools do not expose Member inbox, Member messaging, Session governance or grant creation/revocation to Agent credentials.

@@ -960,3 +960,41 @@
 - 该问题属于服务端历史过滤规则过窄，不是 CI 环境差异。修正为：Resource Scope 限制带 resource_id 的资源消息；没有 resource_id 的普通 Session 消息仍属于会话公共对话，可见于具备 session.read 的 Agent。
 - 扩展测试断言，明确 Agent 历史中同时能看到 Agent 自己的资源消息和 Member 普通消息。
 - 当前修复提交后需重新执行完整 CI；原 run 45337587717 的 Python 失败仍保留为历史结果，不得覆盖为通过。
+
+
+
+## 32. Agent Collaboration 消息 MCP 工具接入第一阶段（2026-11-24）
+
+### 上一轮 CI 核验
+- 修复提交 `4fade0bb9cb191c8c8e45afe40d91b284bd8b1eb` 对应 CI run `45338024126`：最新检查时 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose 均 SUCCESS；`browser-e2e` 仍在安装 Chromium，run 尚未完成。不得将该 run 标记为全绿；需后续核验最终结果。
+
+### MCP 边界审计结论
+- 本机 MCP Server 为 `daep_mcp/server.py`，由成员自己的 MCP Host 启动；DAEP 不托管 Agent Runtime。
+- Agent Token 在本机适配器使用 `_agent_path_allowed` 白名单，不继承 Owner Member 权限；REST 的 `actor()` 将 Agent Token 解析为 `actor_type=AGENT`，协作 API 再独立执行 CollaborationGrant 检查。
+- 现有协作 REST 路由：
+  - `GET /api/v1/agents/me/collaboration-grants`
+  - `POST /api/v1/collaboration-grants/{grant_id}/accept`
+  - `GET /api/v1/tasks/{task_id}/collaboration-messages`
+  - `POST /api/v1/tasks/{task_id}/collaboration-messages`
+- Agent 消息读取必须指定 Grant 且有 `session.read`；发送必须指定 Grant 且有 `session.message.send`。REST 每次校验 Agent、Owner、Tenant、Project、Task、Session 关系、Grant ACCEPTED/未过期/未撤销、Agent/Project 状态和 Resource Scope。Session 非 OPEN 禁止发送；历史读取保留。
+- 不开放 Agent 创建/撤销 CollaborationGrant、创建/管理 Session、Member 收件箱或旧 Member 消息 API；Task Execution Grant 和 Presence 不能替代 CollaborationGrant。
+
+### 本轮实现
+- `daep_mcp/server.py`：
+  - 将 Agent Collaboration Grant Inbox、接受 Grant、读取 Task 协作消息、发送 Task 协作消息四条 REST 路由加入 Agent Token 精确白名单。
+  - 新增 MCP tools：`list_my_agent_collaboration_grants`、`accept_agent_collaboration_grant`、`get_task_collaboration_messages`、`send_task_collaboration_message`。
+  - 读取/发送消息显式携带 CollaborationGrant ID；读取限制 limit 1-100；资源范围发送时由 REST 要求合法 resource_id。
+  - 不改变 Member Token 既有工具行为；不将 Agent Token 转换为 Member Token。
+- `tests/test_mcp_adapter.py`：新增 Agent 路由 allowlist 正/负向检查、四个工具的 API 路由/参数映射和输入校验。
+- `daep_mcp/README.md`、`docs/MCP_INTEGRATION.md`：记录工具用途和双层授权边界。
+
+### 提交与验证
+- 本轮实现包含 MCP adapter、适配器测试、README、MCP 集成规范和本交接文件；提交 SHA 以本节最终文档提交为准。
+- 当前没有在执行环境直接运行 pytest；本轮测试状态为待 CI 验证。
+- 未修改 REST 协作 API、Schema 或数据库结构；未新增历史迁移、回填或兼容逻辑。
+- CI 必须验证 Python 3.11/3.12/3.13、MCP adapter tests、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
+
+### 下一步唯一任务
+- 核验本轮 MCP 工具提交对应 CI 全部 Job；若失败按日志修复。
+- 全绿后补充真实 HTTP 集成测试：Agent 仅凭有效 CollaborationGrant 读取/发送消息；缺少 Scope、错误 Agent/Owner、未接受、过期、撤销、Resource Scope 越权、PAUSED/CLOSED Session 均拒绝；Member Token 和既有 MCP 工具回归保持兼容。
+- 继续遵守：Agent 属于 Member，Runtime 自托管；DAEP 不创建/启动/调度 Agent；Owner 分别授权自己的 Agent；不扩大 Project 权限；不做数据库迁移/利旧/回填。
