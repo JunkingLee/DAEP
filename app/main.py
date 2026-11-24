@@ -880,6 +880,19 @@ def _close_task_agent_grants(c, task_id, target_status, actor_member_id, stamp=N
             'agent_id':grant['agent_id'],'reason':reason})
     return len(grants)
 
+def _revoke_task_agent_grants_for_assignee_change(c, task_id, actor_member_id, reason, stamp=None):
+    stamp=stamp or now()
+    grants=c.execute("""SELECT id,agent_id FROM agent_task_grants
+        WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(task_id,)).fetchall()
+    for grant in grants:
+        c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
+            revoked_by_member_id=?,revoke_reason=?
+            WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+            (stamp,stamp,actor_member_id,reason,grant['id']))
+        event(c,'agent.task_grant.revoked',actor_member_id,task_id,{
+            'grant_id':grant['id'],'agent_id':grant['agent_id'],'reason':reason})
+    return len(grants)
+
 def _agent_policy_payload(policy):
     return {**dict(policy),'allow_multiple_agents':bool(policy['allow_multiple_agents'])}
 
@@ -1705,6 +1718,13 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
             if owner_count<=1:
                 raise HTTPException(409,'A project must retain at least one owner')
         project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        affected_task_ids=[x['task_id'] for x in c.execute("""SELECT a.task_id FROM assignments a
+            JOIN tasks t ON t.id=a.task_id JOIN requirements r ON r.id=t.requirement_id
+            WHERE a.member_id=? AND r.project_id=? ORDER BY a.task_id""",(member_id,pid)).fetchall()]
+        from app.main import _lock_agent_policy_task
+        for affected_task_id in affected_task_ids:
+            _lock_agent_policy_task(c,affected_task_id)
+            _revoke_task_agent_grants_for_assignee_change(c,affected_task_id,a['id'],'Human task assignee removed from project',now())
         removed_assignments=c.execute("""
             DELETE FROM assignments
             WHERE member_id=? AND task_id IN (
@@ -3458,6 +3478,9 @@ def reassign_work_package(package_id:str,b:WorkPackageReassignIn,authorization:s
                     'task_id':package['child_task_id'],'work_package_id':package_id,
                     'previous_status':agent_assignment['status'],'reason':'work_package_reassigned',
                     'takeover_reason':b.reason})
+        from app.main import _lock_agent_policy_task
+        _lock_agent_policy_task(c,package['child_task_id'])
+        _revoke_task_agent_grants_for_assignee_change(c,package['child_task_id'],a['id'],'Human task assignee changed',stamp)
         c.execute('DELETE FROM assignments WHERE task_id=? AND member_id=?',(package['child_task_id'],package['assignee_member_id']))
         c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(package['child_task_id'],b.assignee_member_id))
         c.execute('UPDATE task_work_packages SET assignee_member_id=?,agent_name=?,needs_attention=0,stalled_at=NULL,stall_reason=NULL,updated_at=? WHERE id=?',(b.assignee_member_id,agent_name,stamp,package_id))
