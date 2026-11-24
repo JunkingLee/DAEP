@@ -1251,3 +1251,12 @@
 - 该回归不新增 UI 授权入口，不改变 Agent Owner / Task 负责人治理边界；Agent 详情页仍只读展示授权状态。
 - EXPIRED Grant 的时间边界仍由现有 API 集成测试覆盖，本轮浏览器回归避免人为等待过期时间。
 - 提交后需验证完整 CI；当前 run 45351131519 的 Python 3.11/3.12/3.13、migrations、container-build、production-compose 已 SUCCESS，Browser E2E 仍停留在 Install Chromium。
+
+
+## 50. 授权状态浏览器回归提交与 CI 交接（2026-11-24）
+
+- 功能测试提交：82e141320214112054776b5a9e13be11c85040f9，新增真实浏览器对 Task Execution Grant / Collaboration Grant 创建、接受、撤销以及 Agent 详情 REVOKED 状态展示的回归。
+- 随后文档格式修复提交：7d7c4225a54ffac5ff75352fbabc0569310a649c，将本节交接记录中的字面 \\n 修正为真实换行。
+- 当前 CI run：45352042969，对应当前分支功能提交链；container-build、production-compose 已 SUCCESS；Python 3.11/3.12/3.13、migrations、Browser E2E 尚未全部结束，其中 Browser E2E 当前仍在 Install Chromium。
+- 当前未观察到新的失败步骤；不能提前宣称完整 CI 或新的 Browser E2E 通过。
+- 下一步：等待当前 run 收敛；若 Python 测试失败，优先修复新增浏览器回归；若 Browser E2E 长时间停留在 Chromium 安装，则保留该限制并以已完成的 Python/静态验证结果为准，不无限等待。
