@@ -2242,7 +2242,8 @@ def progress(tid:str,b:ProgressIn,authorization:str=Header(None),idempotency_key
                 if prior_payload != b.model_dump(): raise HTTPException(409,'Idempotency-Key was already used with a different payload')
                 return {'event_id':prior['id'],'task_id':tid,'progress':b.progress,'idempotent_replay':True}
         c.execute('UPDATE tasks SET progress=?,status=?,updated_at=? WHERE id=?',(b.progress,'REVIEW' if b.progress==100 else ('IN_PROGRESS' if b.progress>0 else 'READY'),now(),tid))
-        sync_work_package_parent(c,tid,a['id'],'progress_updated')
+        if a.get('actor_type')!='AGENT':
+            sync_work_package_parent(c,tid,a['id'],'progress_updated')
         eid=event(c,'task.progress.updated',a['id'],tid,b.model_dump(),scoped_key)
     return {'event_id':eid,'task_id':tid,'progress':b.progress}
 @app.post('/api/v1/tasks/{tid}/blocked')
