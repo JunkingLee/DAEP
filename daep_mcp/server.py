@@ -7,9 +7,28 @@ TOKEN=os.getenv('DAEP_AGENT_TOKEN','')
 if not TOKEN: TOKEN=os.getenv('DAEP_MEMBER_TOKEN','')  # backwards-compatible fallback
 mcp=FastMCP('DAEP Engineering Platform')
 
+def _agent_path_allowed(method, path):
+    # Agent credentials never inherit the owner's Member permissions.
+    route=urllib.parse.urlsplit(path).path
+    if method=='GET' and route in ('/api/v1/mcp/context','/api/v1/agents/me/grants'):
+        return True
+    parts=route.strip('/').split('/')
+    if method=='POST' and len(parts)==4 and parts[:3]==['api','v1','agent-grants'] and parts[3].endswith('/accept'):
+        return False
+    if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','agent-grants'] and parts[4]=='accept' and parts[3]:
+        return True
+    if len(parts)==4 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
+        return method=='GET' or (method=='POST' and parts[3] in ('progress','blocked'))
+    if len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
+        return (method=='POST' and parts[4]=='artifacts') or (method=='GET' and parts[4] in ('artifacts','artifact-versions','artifact-quality'))
+    return False
+
+
 def call(method, path, payload=None):
     if not TOKEN:
         raise RuntimeError('Set DAEP_AGENT_TOKEN in the MCP process environment')
+    if TOKEN.startswith('daep_at_') and not _agent_path_allowed(method, path):
+        raise RuntimeError('Agent tokens may only use Grant-scoped task tools; owner Member permissions are not inherited')
     data=None if payload is None else json.dumps(payload).encode()
     req=urllib.request.Request(API+path,data=data,method=method,headers={
         'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Accept':'application/json'})
@@ -33,13 +52,23 @@ def get_agent_context() -> dict:
 
 @mcp.tool()
 def list_my_agent_tasks() -> dict:
-    """List tasks explicitly assigned to this Agent identity."""
-    return call('GET','/api/v1/agents/me/tasks')
+    """List owner-authorized task grants addressed to this Agent identity."""
+    return call('GET','/api/v1/agents/me/grants')
 
 @mcp.tool()
-def accept_agent_task(assignment_id: str) -> dict:
-    """Accept a task assignment addressed to this Agent identity."""
-    return call('POST',f'/api/v1/agent-assignments/{assignment_id}/accept',{})
+def list_my_agent_grants() -> dict:
+    """List active owner-authorized task grants for this Agent identity."""
+    return call('GET','/api/v1/agents/me/grants')
+
+@mcp.tool()
+def accept_agent_task(grant_id: str) -> dict:
+    """Accept an owner-authorized task grant addressed to this Agent identity."""
+    return call('POST',f'/api/v1/agent-grants/{grant_id}/accept',{})
+
+@mcp.tool()
+def accept_agent_task_grant(grant_id: str) -> dict:
+    """Accept an owner-authorized task grant addressed to this Agent identity."""
+    return call('POST',f'/api/v1/agent-grants/{grant_id}/accept',{})
 
 @mcp.tool()
 def get_my_tasks() -> list:
