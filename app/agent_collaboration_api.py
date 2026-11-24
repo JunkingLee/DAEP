@@ -365,4 +365,155 @@ def register_agent_collaboration_routes(
             )
             return {"id": grant_id, "status": "ACCEPTED", "accepted_at": stamp}
 
+
+    def _agent_collaboration_grant_context(c, grant_id, current, task_id=None, required_scope=None, resource_id=None):
+        row = c.execute(
+            """SELECT g.*,a.status agent_status,a.owner_member_id current_owner,a.tenant_id agent_tenant,
+                      s.status session_status,s.project_id session_project,s.task_id session_task,
+                      p.status project_status,p.tenant_id project_tenant,t.status task_status
+               FROM agent_collaboration_grants g
+               JOIN agents a ON a.id=g.agent_id
+               JOIN agent_collaboration_sessions s ON s.id=g.session_id
+               JOIN projects p ON p.id=g.project_id
+               JOIN tasks t ON t.id=g.task_id
+               WHERE g.id=? AND g.tenant_id=? AND g.agent_id=?""",
+            (grant_id, current.get("tenant_id", "tenant-default"), current.get("agent_id")),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Collaboration grant not found")
+        if (row["agent_tenant"] != row["tenant_id"] or row["project_tenant"] != row["tenant_id"]
+            or row["session_project"] != row["project_id"] or row["session_task"] != row["task_id"]
+            or (task_id is not None and row["task_id"] != task_id)
+            or row["current_owner"] != row["owner_member_id"] or row["agent_status"] != "ACTIVE"):
+            raise HTTPException(403, "Agent collaboration identity or resource relationship is invalid")
+        stamp = now()
+        if row["status"] != "ACCEPTED" or row["revoked_at"] is not None or row["expires_at"] <= stamp:
+            raise HTTPException(403, "An accepted active CollaborationGrant is required")
+        if row["project_status"] != "ACTIVE":
+            raise HTTPException(403, "Project is not active")
+        scopes = set(json.loads(row["scopes_json"] or "[]"))
+        if required_scope and required_scope not in scopes:
+            raise HTTPException(403, "CollaborationGrant does not include the required scope")
+        resource_scope = json.loads(row["resource_scope_json"] or "{}")
+        allowed_resources = set(resource_scope.get("resource_ids", []))
+        if allowed_resources and resource_id is not None and resource_id not in allowed_resources:
+            raise HTTPException(403, "Resource is outside the CollaborationGrant scope")
+        if allowed_resources and required_scope == "session.message.send" and not resource_id:
+            raise HTTPException(403, "A resource_id within the CollaborationGrant scope is required")
+        return row, scopes, allowed_resources
+
+    def _message_payload(row):
+        return {
+            "id": row["id"], "task_id": row["task_id"], "session_id": row["session_id"],
+            "author_type": row["author_type"], "author_member_id": row["author_member_id"],
+            "author_agent_id": row["author_agent_id"], "agent_owner_member_id": row["agent_owner_member_id"],
+            "collaboration_grant_id": row["collaboration_grant_id"],
+            "message_type": row["message_type"], "content": row["content"],
+            "metadata": json.loads(row["metadata_json"] or "{}"), "created_at": row["created_at"],
+        }
+
+    @router.get("/api/v1/tasks/{task_id}/collaboration-messages")
+    def list_task_collaboration_messages(task_id: str, grant_id: str = None, limit: int = 50,
+                                         authorization: str = Header(None)):
+        current = actor(authorization)
+        if isinstance(limit, bool) or limit < 1 or limit > 100:
+            raise HTTPException(422, "limit must be between 1 and 100")
+        with conn() as c:
+            if current.get("actor_type") == "MEMBER":
+                begin_serialized_write(c)
+                lock_task(c, task_id)
+                _, session = _member_task_session(c, task_id, current, now())
+                allowed_resources = None
+            elif current.get("actor_type") == "AGENT":
+                if not grant_id:
+                    raise HTTPException(422, "grant_id is required for Agent message access")
+                grant, _, allowed_resources = _agent_collaboration_grant_context(
+                    c, grant_id, current, task_id=task_id, required_scope="session.read")
+                session = c.execute("SELECT * FROM agent_collaboration_sessions WHERE id=?",
+                                     (grant["session_id"],)).fetchone()
+                if not session:
+                    raise HTTPException(404, "Collaboration Session not found")
+            else:
+                raise HTTPException(403, "Member or Agent authentication required")
+            rows = c.execute(
+                """SELECT * FROM agent_collaboration_messages
+                   WHERE tenant_id=? AND task_id=? AND session_id=?
+                   ORDER BY created_at DESC,id DESC LIMIT ?""",
+                (session["tenant_id"], task_id, session["id"], limit)).fetchall()
+            messages = [_message_payload(row) for row in rows]
+            if allowed_resources:
+                messages = [item for item in messages
+                            if item["metadata"].get("resource_id") in allowed_resources]
+            messages.reverse()
+            return {"task_id": task_id, "session_id": session["id"],
+                    "session_status": session["status"], "items": messages}
+
+    @router.post("/api/v1/tasks/{task_id}/collaboration-messages")
+    def create_task_collaboration_message(task_id: str, body: dict, authorization: str = Header(None)):
+        current = actor(authorization)
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip() or len(content) > 10000:
+            raise HTTPException(422, "content must be a non-empty string of at most 10000 characters")
+        message_type = str(body.get("message_type", "MESSAGE")).upper()
+        if message_type != "MESSAGE":
+            raise HTTPException(422, "Only MESSAGE collaboration entries are currently supported")
+        resource_id = body.get("resource_id")
+        if resource_id is not None and (not isinstance(resource_id, str) or not resource_id or len(resource_id) > 120):
+            raise HTTPException(422, "resource_id must be a non-empty string of at most 120 characters")
+        metadata = body.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise HTTPException(422, "metadata must be an object")
+        if "resource_id" in metadata and metadata["resource_id"] != resource_id:
+            raise HTTPException(422, "resource_id must be supplied through the top-level field")
+        stored_metadata = dict(metadata)
+        if resource_id is not None:
+            stored_metadata["resource_id"] = resource_id
+        metadata_json = json.dumps(stored_metadata, separators=(",", ":"), ensure_ascii=False)
+        if len(metadata_json) > 16000:
+            raise HTTPException(422, "metadata must be at most 16000 encoded characters")
+        with conn() as c:
+            begin_serialized_write(c)
+            lock_task(c, task_id)
+            stamp = now()
+            if current.get("actor_type") == "MEMBER":
+                _, session = _member_task_session(c, task_id, current, stamp)
+                if session["status"] != "OPEN":
+                    raise HTTPException(409, "Only an OPEN collaboration Session accepts new messages")
+                author_type, author_member_id, author_agent_id = "MEMBER", current["id"], None
+                owner_member_id = collaboration_grant_id = None
+                audit_actor = current["id"]
+            elif current.get("actor_type") == "AGENT":
+                grant_id = body.get("grant_id")
+                if not isinstance(grant_id, str) or not grant_id:
+                    raise HTTPException(422, "grant_id is required for Agent message sending")
+                grant, _, _ = _agent_collaboration_grant_context(
+                    c, grant_id, current, task_id=task_id,
+                    required_scope="session.message.send", resource_id=resource_id)
+                session = c.execute("SELECT * FROM agent_collaboration_sessions WHERE id=?",
+                                    (grant["session_id"],)).fetchone()
+                if not session or session["status"] != "OPEN":
+                    raise HTTPException(409, "Only an OPEN collaboration Session accepts new messages")
+                author_type, author_member_id, author_agent_id = "AGENT", None, current["agent_id"]
+                owner_member_id, collaboration_grant_id = grant["owner_member_id"], grant["id"]
+                audit_actor = None
+            else:
+                raise HTTPException(403, "Member or Agent authentication required")
+            message_id = "acm_" + uuid.uuid4().hex[:20]
+            c.execute(
+                """INSERT INTO agent_collaboration_messages
+                   (id,tenant_id,project_id,task_id,session_id,author_type,author_member_id,
+                    author_agent_id,agent_owner_member_id,collaboration_grant_id,message_type,
+                    content,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (message_id, session["tenant_id"], session["project_id"], task_id, session["id"],
+                 author_type, author_member_id, author_agent_id, owner_member_id,
+                 collaboration_grant_id, message_type, content.strip(), metadata_json, stamp))
+            event(c, "agent.collaboration_message.created", audit_actor, task_id, {
+                "message_id": message_id, "session_id": session["id"], "author_type": author_type,
+                "author_member_id": author_member_id, "author_agent_id": author_agent_id,
+                "agent_owner_member_id": owner_member_id, "collaboration_grant_id": collaboration_grant_id,
+                "resource_id": resource_id,
+            }, tenant_override=session["tenant_id"])
+            return _message_payload(c.execute(
+                "SELECT * FROM agent_collaboration_messages WHERE id=?", (message_id,)).fetchone())
+
     app.include_router(router)
