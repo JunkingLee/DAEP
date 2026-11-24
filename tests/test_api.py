@@ -3866,3 +3866,121 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
         assert 'uq_agent_task_grants_one_active_per_task' in app_indexes
     finally:
         app_db.close()
+
+
+def test_agent_task_grant_member_owner_create_list_revoke_and_audit():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Member Private Grant Agent','description':'Owned by the task assignee'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    assert agent['owner_member_id']==member_id
+
+    # A manager/platform administrator cannot authorize someone else's private Agent.
+    manager_attempt=client.post(f'/api/v1/tasks/{task_id}/agent-grants',
+        headers=ADMIN,json={'agent_id':agent['id']})
+    assert manager_attempt.status_code==403,manager_attempt.text
+
+    invalid_scope=client.post(f'/api/v1/tasks/{task_id}/agent-grants',
+        headers=owner_headers,json={'agent_id':agent['id'],'requested_scope':['project.write']})
+    assert invalid_scope.status_code==422,invalid_scope.text
+    invalid_expiry=client.post(f'/api/v1/tasks/{task_id}/agent-grants',
+        headers=owner_headers,json={'agent_id':agent['id'],'expires_in_days':91})
+    assert invalid_expiry.status_code==422,invalid_expiry.text
+
+    granted=client.post(f'/api/v1/tasks/{task_id}/agent-grants',
+        headers=owner_headers,json={'agent_id':agent['id'],'requested_scope':['task.read','task.progress.report']})
+    assert granted.status_code==200,granted.text
+    grant=granted.json()
+    assert grant['status']=='AUTHORIZED'
+    assert grant['owner_member_id']==member_id
+    assert grant['human_assignee_member_id']==member_id
+    assert grant['authorized_by_member_id']==member_id
+    assert set(grant['scope'])=={'task.read','task.progress.report'}
+    assert grant['agent_id']==agent['id']
+    assert 'token' not in grant
+
+    duplicate=client.post(f'/api/v1/tasks/{task_id}/agent-grants',
+        headers=owner_headers,json={'agent_id':agent['id']})
+    assert duplicate.status_code==409,duplicate.text
+
+    personal=client.get('/api/v1/agent-grants/me',headers=owner_headers)
+    assert personal.status_code==200,personal.text
+    assert any(x['id']==grant['id'] for x in personal.json()['items'])
+    task_list=client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers)
+    assert task_list.status_code==200,task_list.text
+    assert [x['id'] for x in task_list.json()['items']]==[grant['id']]
+
+    # A different Member cannot list or revoke another Member's private grant.
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Grant Outsider'})
+    assert outsider.status_code==200,outsider.text
+    outsider_headers={'Authorization':'Bearer '+outsider.json()['token']}
+    assert client.get('/api/v1/agent-grants/me',headers=outsider_headers).json()['items']==[]
+    assert client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=outsider_headers).status_code==403
+    assert client.delete(f"/api/v1/agent-grants/{grant['id']}",headers=outsider_headers).status_code==403
+
+    revoked=client.delete(f"/api/v1/agent-grants/{grant['id']}",headers=owner_headers,
+        json={'reason':'Owner no longer needs Agent execution'})
+    assert revoked.status_code==200,revoked.text
+    assert revoked.json()['status']=='REVOKED'
+    assert revoked.json()['revoked_by_member_id']==member_id
+    with main_module.conn() as c:
+        row=c.execute('SELECT status,revoked_by_member_id,revoke_reason FROM agent_task_grants WHERE id=?',
+            (grant['id'],)).fetchone()
+        audit=c.execute("""SELECT actor_member_id,payload FROM events
+            WHERE event_type='agent.task_grant.revoked' AND task_id=? ORDER BY created_at DESC LIMIT 1""",
+            (task_id,)).fetchone()
+    assert row['status']=='REVOKED' and row['revoked_by_member_id']==member_id
+    assert row['revoke_reason']=='Owner no longer needs Agent execution'
+    assert audit['actor_member_id']==member_id
+    assert json.loads(audit['payload'])['grant_id']==grant['id']
+
+
+def test_agent_task_grant_rejects_non_owner_agent_and_multi_assignee_task():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    other=client.post('/api/v1/members',headers=ADMIN,json={'name':'Different Agent Owner'})
+    assert other.status_code==200,other.text
+    other_headers={'Authorization':'Bearer '+other.json()['token']}
+    private_agent=client.post('/api/v1/agents',headers=other_headers,json={
+        'name':'Not The Assignee Owner Agent'})
+    assert private_agent.status_code==200,private_agent.text
+    denied=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':private_agent.json()['agent']['id']})
+    assert denied.status_code==403,denied.text
+
+    second=client.post('/api/v1/members',headers=ADMIN,json={'name':'Second Human Assignee'})
+    assert second.status_code==200,second.text
+    with main_module.conn() as c:
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',
+            (task_id,second.json()['id']))
+    own_agent=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Multi Assignee Agent'})
+    assert own_agent.status_code==200,own_agent.text
+    ambiguous=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':own_agent.json()['agent']['id']})
+    assert ambiguous.status_code==409,ambiguous.text
+
+
+def test_agent_task_grant_owner_can_revoke_after_task_reassignment():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Reassignment Revocation Agent'})
+    assert agent.status_code==200,agent.text
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agent.json()['agent']['id']})
+    assert grant.status_code==200,grant.text
+    new_assignee=client.post('/api/v1/members',headers=ADMIN,json={'name':'Replacement Assignee'})
+    assert new_assignee.status_code==200,new_assignee.text
+    with main_module.conn() as c:
+        c.execute('DELETE FROM assignments WHERE task_id=?',(task_id,))
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(task_id,new_assignee.json()['id']))
+    revoked=client.delete(f"/api/v1/agent-grants/{grant.json()['id']}",headers=owner_headers)
+    assert revoked.status_code==200,revoked.text
+    assert revoked.json()['status']=='REVOKED'
