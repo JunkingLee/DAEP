@@ -66,7 +66,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                     payload:{summary:'Need human review from browser E2E'}
                 },agentToken);
                 await call('/api/v1/tasks/'+task.id+'/collaboration-messages','POST',{
-                    grant_id:grant.id,message_type:'TEXT',content:'Agent collaboration message from browser E2E'
+                    grant_id:grant.id,message_type:'MESSAGE',content:'Agent collaboration message from browser E2E'
                 },agentToken);
                 return {taskId:task.id,proposalId:proposal.id,sessionId:session.id};
             }""")
