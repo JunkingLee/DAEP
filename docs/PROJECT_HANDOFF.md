@@ -1105,3 +1105,21 @@
 - 正确测试顺序现为：切换只读 Agent Token → 验证只读 Agent 可读/不可发送 → PAUSED 后仍用只读 Agent Token 读取历史 → 切换主 Agent Token → 验证主 Agent 的发送因 Session PAUSED 被拒绝。
 - 该修复只调整测试中的身份切换顺序，不改变任何产品授权逻辑。
 - 修复提交待 CI 验证；本地 pytest 未执行，不宣称通过。
+
+
+## 39. MCP 本地接入文档与 Owner 配置体验收尾（2026-11-24）
+
+### CI 验证
+- 提交 `06da5afb48da7977e58b86c951d4c40367611ec5` 对应 CI run `45343437805` 七个 Job 全部 SUCCESS：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、Container Build、Production Compose、Browser E2E。
+- 该 CI 验证覆盖 MCP→REST 双 Agent Token、Grant Scope、Resource Scope、只读、Session PAUSED 等端到端测试。
+
+### 本轮工作
+- 重写 `docs/MCP_INTEGRATION.md`，清除与当前实现不一致的旧工具清单、Member Token 主流程和“远程 Streamable HTTP 已交付”误导；明确当前是 Owner 本机 stdio Adapter。
+- 扩充 `daep_mcp/README.md`：补充 Agent Owner 首次接入、Task Execution Grant 与 Collaboration Grant 的区别、精确工具范围、常见 401/403/404/409 排障、安全要求和 Windows/macOS/Linux 配置提示。
+- 更新「我的 Agent」页面连接说明和 Token 配置弹窗，明确本机安装依赖、替换脚本绝对路径、使用 `DAEP_AGENT_TOKEN`、重启 MCP Host，以及 DAEP 不托管 Agent Runtime 的边界。
+- Token 仍只在创建/轮换时显示一次；没有将 Token 明文写入持久化配置或源码。
+- 未修改 REST API、数据库 Schema 或迁移文件；不做历史数据迁移、回填和利旧。
+
+### 下一步
+- 验证本轮文档/UI 提交的 Browser E2E 与完整 CI。
+- 下一阶段核对「我的 Agent」页面 Token 轮换、撤销、停用和项目绑定流程，与 Task/Collaboration Grant 生命周期是否一致；补充真实浏览器交互覆盖。
