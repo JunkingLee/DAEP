@@ -880,6 +880,95 @@ def revoke_agent_task_grant(grant_id:str,body:dict=None,authorization:str=Header
             tenant_override=row['tenant_id'])
         return {'id':grant_id,'status':'REVOKED','revoked_at':stamp,'revoked_by_member_id':a['id']}
 
+@app.get('/api/v1/agents/me/grants')
+def list_my_agent_task_grants_inbox(authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')!='AGENT':
+        raise HTTPException(403,'Agent Token required')
+    stamp=now()
+    with conn() as c:
+        rows=c.execute("""SELECT g.id grant_id,g.task_id,g.project_id,g.agent_id,
+            g.owner_member_id,g.human_assignee_member_id,g.authorized_by_member_id,
+            g.scope_json,g.status grant_status,g.created_at,g.expires_at,g.accepted_at,
+            t.title,t.description,t.status task_status,t.progress,t.updated_at task_updated_at,
+            r.id requirement_id,r.title requirement_title,p.name project_name
+            FROM agent_task_grants g
+            JOIN agents ag ON ag.id=g.agent_id
+            JOIN members owner ON owner.id=g.owner_member_id
+            JOIN tasks t ON t.id=g.task_id
+            JOIN requirements r ON r.id=t.requirement_id
+            JOIN projects p ON p.id=g.project_id
+            WHERE g.tenant_id=? AND g.agent_id=?
+              AND ag.status='ACTIVE' AND ag.owner_member_id=g.owner_member_id
+              AND ag.tenant_id=g.tenant_id
+              AND owner.tenant_id=g.tenant_id AND owner.password_status='ACTIVE'
+              AND p.tenant_id=g.tenant_id AND p.status='ACTIVE'
+              AND t.status NOT IN ('DONE','CANCELLED','CLOSED','ARCHIVED')
+              AND g.status IN ('AUTHORIZED','ACCEPTED') AND g.expires_at>?
+              AND (SELECT COUNT(*) FROM assignments ax WHERE ax.task_id=g.task_id)=1
+              AND EXISTS (SELECT 1 FROM assignments ax WHERE ax.task_id=g.task_id
+                          AND ax.member_id=g.human_assignee_member_id)
+            ORDER BY g.created_at DESC LIMIT 200""",
+            (a.get('tenant_id','tenant-default'),a['agent_id'],stamp)).fetchall()
+        return {'agent_id':a['agent_id'],'items':[{**dict(row),
+            'scope':json.loads(row['scope_json'])} for row in rows]}
+
+@app.post('/api/v1/agent-grants/{grant_id}/accept')
+def accept_agent_task_grant(grant_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')!='AGENT':
+        raise HTTPException(403,'Agent Token required')
+    with conn() as c:
+        begin_serialized_write(c)
+        sql="""SELECT g.*,ag.status agent_status,ag.owner_member_id current_agent_owner,
+            ag.tenant_id agent_tenant_id,owner.password_status owner_status,
+            owner.tenant_id owner_tenant_id,t.status task_status,
+            p.status project_status,p.tenant_id project_tenant_id
+            FROM agent_task_grants g
+            JOIN agents ag ON ag.id=g.agent_id
+            JOIN members owner ON owner.id=g.owner_member_id
+            JOIN tasks t ON t.id=g.task_id
+            JOIN requirements r ON r.id=t.requirement_id
+            JOIN projects p ON p.id=g.project_id
+            WHERE g.id=? AND g.agent_id=? AND g.tenant_id=?"""
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            sql += " FOR UPDATE OF g"
+        row=c.execute(sql,(grant_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()
+        if not row:
+            raise HTTPException(404,'Agent grant not found for this Agent')
+        stamp=now()
+        if row['status'] not in ('AUTHORIZED','ACCEPTED'):
+            raise HTTPException(409,'Agent grant is no longer available')
+        if row['expires_at']<=stamp:
+            raise HTTPException(409,'Agent grant has expired')
+        if row['agent_status']!='ACTIVE' or row['current_agent_owner']!=row['owner_member_id']:
+            raise HTTPException(409,'Agent identity or ownership is no longer valid')
+        if row['owner_status']!='ACTIVE' or row['owner_tenant_id']!=row['tenant_id']:
+            raise HTTPException(409,'Agent owner account is no longer active')
+        if row['agent_tenant_id']!=row['tenant_id'] or row['project_tenant_id']!=row['tenant_id']:
+            raise HTTPException(409,'Agent grant tenant relationship is invalid')
+        if row['project_status']!='ACTIVE':
+            raise HTTPException(409,'Project is not active')
+        if row['task_status'] in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+            raise HTTPException(409,'Task is no longer eligible for Agent execution')
+        assignees=c.execute("""SELECT a.member_id FROM assignments a
+            JOIN members m ON m.id=a.member_id WHERE a.task_id=? AND m.tenant_id=?""",
+            (row['task_id'],row['tenant_id'])).fetchall()
+        if len(assignees)!=1 or assignees[0]['member_id']!=row['human_assignee_member_id']:
+            raise HTTPException(409,'Task human assignee changed or is ambiguous')
+        if row['owner_member_id']!=row['human_assignee_member_id']:
+            raise HTTPException(409,'Grant owner is no longer the human task assignee')
+        if row['status']=='ACCEPTED':
+            return {'id':grant_id,'status':'ACCEPTED','accepted_at':row['accepted_at'],'already_accepted':True}
+        c.execute("""UPDATE agent_task_grants SET status='ACCEPTED',accepted_at=?,updated_at=?
+            WHERE id=? AND agent_id=? AND status='AUTHORIZED'""",
+            (stamp,stamp,grant_id,a['agent_id']))
+        event(c,'agent.task_grant.accepted',a['id'],row['task_id'],{
+            'grant_id':grant_id,'agent_id':a['agent_id'],
+            'scope':json.loads(row['scope_json']),'accepted_at':stamp},
+            tenant_override=row['tenant_id'])
+        return {'id':grant_id,'status':'ACCEPTED','accepted_at':stamp,'already_accepted':False}
+
 @app.post('/api/v1/tasks/{task_id}/agent-assignments')
 def assign_task_to_agent(task_id:str, body:dict, authorization:str=Header(None)):
     a=actor(authorization)
