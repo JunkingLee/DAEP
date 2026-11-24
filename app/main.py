@@ -8725,7 +8725,10 @@ def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
     if not task: raise HTTPException(404,'Task not found')
     enforce_workflow_stage(c,pid,target_stage,actor_member_id,tid)
     progress=100 if target_stage=='DONE' else (100 if target_stage=='REVIEW' else task['progress'])
-    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,now(),tid))
+    stamp=now()
+    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,stamp,tid))
+    if target_stage in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+        _close_task_agent_grants(c,tid,target_stage,actor_member_id,stamp)
     eid=event(c,'task.workflow.transitioned',actor_member_id,tid,{'from_status':task['status'],'to_status':target_stage,'comment':comment})
     return eid
 
@@ -10582,7 +10585,10 @@ def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
     if not task: raise HTTPException(404,'Task not found')
     enforce_workflow_stage(c,pid,target_stage,actor_member_id,tid)
     progress=100 if target_stage=='DONE' else (100 if target_stage=='REVIEW' else task['progress'])
-    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,now(),tid))
+    stamp=now()
+    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,stamp,tid))
+    if target_stage in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+        _close_task_agent_grants(c,tid,target_stage,actor_member_id,stamp)
     eid=event(c,'task.workflow.transitioned',actor_member_id,tid,{'from_status':task['status'],'to_status':target_stage,'comment':comment})
     return eid
 
