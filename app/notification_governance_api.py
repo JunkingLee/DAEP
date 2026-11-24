@@ -65,7 +65,7 @@ def register_notification_governance_routes(app, conn, actor, now):
                      updated_at=excluded.updated_at
                    WHERE member_notification_preferences.tenant_id=excluded.tenant_id""",
                 (current["id"], current.get("tenant_id", "tenant-default"),
-                 int(grant_events), int(expiry_reminders), json.dumps(reminder_days),
+                 grant_events, expiry_reminders, json.dumps(reminder_days),
                  stamp, stamp),
             )
             row = c.execute(
