@@ -3854,3 +3854,15 @@ def test_rc46_agent_task_grants_schema_and_migration_contract():
     indexes={row[1] for row in db.execute('PRAGMA index_list(agent_task_grants)')}
     assert 'uq_agent_task_grants_one_active_per_task' in indexes
     db.close()
+
+    # Verify the real application bootstrap, not only a detached DDL fixture.
+    app_db=main_module.conn()
+    try:
+        app_columns={row['name'] for row in app_db.execute('PRAGMA table_info(agent_task_grants)').fetchall()}
+        assert {'tenant_id','project_id','task_id','agent_id','owner_member_id',
+                'human_assignee_member_id','authorized_by_member_id','scope_json',
+                'status','expires_at','legacy_assignment_id'} <= app_columns
+        app_indexes={row['name'] for row in app_db.execute('PRAGMA index_list(agent_task_grants)').fetchall()}
+        assert 'uq_agent_task_grants_one_active_per_task' in app_indexes
+    finally:
+        app_db.close()
