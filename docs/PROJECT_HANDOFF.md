@@ -1041,3 +1041,25 @@
 - 核验本轮提交 CI；若 Python 测试失败，优先修复 MCP HTTP 传输测试或路由映射。
 - CI 通过后，继续补充真实 MCP 工具到 REST API 的完整授权场景联测（Grant scope、撤销、Resource Scope、PAUSED/CLOSED），并回归 Member Token 既有工具。
 - 继续保持 Agent 私有归属、Owner 分别授权、DAEP 不创建/启动/托管 Agent Runtime 的边界。
+
+
+## 34. MCP Agent Token 白名单兼容性修复（2026-11-24）
+
+### CI 失败定位
+- 提交 `a89607ce39539971a91478614489afbe4075485b` 对应 CI run `45341270266`：Browser E2E、PostgreSQL migrations/RLS、container-build、production-compose 均 SUCCESS；Python 3.11/3.12/3.13 均因同一个 MCP allowlist 回归测试失败。
+- 失败测试为 `test_agent_allowlist_accepts_only_grant_scoped_task_routes`。根因是本轮加入 CollaborationGrant accept 路由时，替换白名单逻辑遗漏原有 `POST /api/v1/agent-grants/{grant_id}/accept` Task Execution Grant 接受路由。
+- 这是 Agent 原有任务授权流程的兼容性回归，不是 REST 授权失败。不能通过放宽为通用 POST 来修复。
+
+### 修复
+- 在 Agent Token 精确白名单中恢复原 Task Execution Grant accept 路由，同时保留 CollaborationGrant accept 路由，两者分别精确匹配。
+- 新增回归测试，明确 Task Grant 与 Collaboration Grant 接受路由都允许，任意 revoke 路由仍拒绝。
+- 未扩大 Agent Token 对 Member API、Session 管理、Grant 创建/撤销或项目治理接口的访问能力。
+
+### 验证状态
+- 本节修复提交后 CI 待验证；未在本地运行 pytest，不宣称测试通过。
+- 上述 run 的 Browser E2E 实际已 SUCCESS，不再是阻塞项；本次失败仅为三种 Python 版本上的同一条 allowlist 测试。
+- 未修改 REST API、数据库 Schema 或迁移文件；不做历史数据迁移、回填或利旧。
+
+### 下一步
+- 核验修复提交的完整 CI。
+- CI 通过后继续做 REST 授权场景与 MCP Agent Token 真实调用链的端到端验证，重点补足 scope 不足、撤销、资源范围和 Session 暂停/关闭场景。

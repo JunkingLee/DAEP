@@ -17,6 +17,9 @@ def _agent_path_allowed(method, path):
     ):
         return True
     parts=route.strip('/').split('/')
+    # Preserve the pre-existing Agent Task Grant acceptance route.
+    if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','agent-grants'] and parts[4]=='accept' and parts[3]:
+        return True
     if method=='POST' and len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='collaboration-grants' and parts[4]=='accept' and parts[3]:
         return True
     if len(parts)==4 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
