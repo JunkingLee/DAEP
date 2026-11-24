@@ -47,7 +47,7 @@
 | require_project_access / require_task_access | Agent 先要通过项目 binding，再检查 accepted assignment | Agent 不走通用项目成员授权；任务读取/写入直接校验 Grant 和 allowed_actions |
 | GET /api/v1/mcp/context | 返回 Agent 已绑定项目 | 返回 Agent 身份和非授权性能力信息；不得将 project 列表当成权限范围 |
 
-注：当前任务分配路由的实际路径应以代码路由声明为准；改造前需将它的 decorator 和 OpenAPI 路径加入迁移测试，避免文档路径与实现不一致。
+当前任务分配路由已从代码 decorator 确认：POST /api/v1/tasks/{task_id}/agent-assignments。它明确要求 Project Manager/Owner，选择 Agent ID，并要求 agent_project_bindings ACTIVE；这正是需要替换的旧治理模型。
 
 ## 3. 目标实体：agent_task_grants
 
@@ -333,7 +333,7 @@ Request:
 
 ## 10. 实施前必须确认的代码细节
 
-- Human Assignee 当前数据来源为 assignments 表；需要确认是否允许一个 task 多个 member_id。若允许，第一版强制唯一 assignee 才可授权。
+- 已确认 Human Assignee 数据来自 assignments 表，且其主键为 (task_id, member_id)，因此当前模型明确允许一个 Task 同时关联多个 Member。第一版必须要求任务恰好只有一个有效 assignee 才能创建 AgentTaskGrant；多人协作任务需先增加 primary/responsible member 概念，不能任选一个 assignee 授权。
 - 当前 Agent 的 require_task_access 分支先调用 require_project_access，后检查 ACCEPTED assignment；必须拆成 Agent 专用 Grant guard。
 - Agent progress/blocked/artifact 的各条路由必须逐一盘点，不得只修 /api/v1/agents/me/tasks。
 - 当前 Agent 任务分配 API 的 OpenAPI 路径和前端调用需要完整检索，按真实代码路由迁移。
