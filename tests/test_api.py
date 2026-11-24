@@ -4224,3 +4224,74 @@ def test_agent_task_grant_guard_rejects_reassignment_and_expiry():
     assert denied.status_code==403,denied.text
     denied_write=client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,json={'progress':50})
     assert denied_write.status_code==403,denied_write.text
+
+def test_agent_task_execution_policy_controls_team_grant_cardinality():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agents=[]
+    for name in ('Policy Agent One','Policy Agent Two','Policy Agent Three'):
+        created=client.post('/api/v1/agents',headers=owner_headers,json={'name':name})
+        assert created.status_code==200,created.text
+        agents.append(created.json()['agent'])
+
+    policy=client.get(f'/api/v1/tasks/{task_id}/agent-execution-policy',headers=owner_headers)
+    assert policy.status_code==200,policy.text
+    assert policy.json()['collaboration_mode']=='TEAM'
+    assert policy.json()['allow_multiple_agents'] is False
+    assert policy.json()['max_agents'] is None
+
+    first=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[0]['id']})
+    assert first.status_code==200,first.text
+    denied=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[1]['id']})
+    assert denied.status_code==409,denied.text
+
+    updated=client.put(f'/api/v1/tasks/{task_id}/agent-execution-policy',headers=owner_headers,
+        json={'allow_multiple_agents':True,'max_agents':2})
+    assert updated.status_code==200,updated.text
+    assert updated.json()['allow_multiple_agents'] is True
+    assert updated.json()['max_agents']==2
+
+    second=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[1]['id']})
+    assert second.status_code==200,second.text
+    capped=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[2]['id']})
+    assert capped.status_code==409,capped.text
+
+    unlimited=client.put(f'/api/v1/tasks/{task_id}/agent-execution-policy',headers=owner_headers,
+        json={'allow_multiple_agents':True,'max_agents':None})
+    assert unlimited.status_code==200,unlimited.text
+    assert unlimited.json()['max_agents'] is None
+    third=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[2]['id']})
+    assert third.status_code==200,third.text
+
+    duplicate=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agents[2]['id']})
+    assert duplicate.status_code==409,duplicate.text
+
+    outsider=client.post('/api/v1/members',headers=ADMIN,json={'name':'Policy Outsider'})
+    assert outsider.status_code==200,outsider.text
+    outsider_headers={'Authorization':'Bearer '+outsider.json()['token']}
+    forbidden=client.put(f'/api/v1/tasks/{task_id}/agent-execution-policy',
+        headers=outsider_headers,json={'allow_multiple_agents':True,'max_agents':5})
+    assert forbidden.status_code==403,forbidden.text
+
+    invalid=client.put(f'/api/v1/tasks/{task_id}/agent-execution-policy',headers=owner_headers,
+        json={'allow_multiple_agents':False,'max_agents':2})
+    assert invalid.status_code==422,invalid.text
+
+    with main_module.conn() as c:
+        policy_row=c.execute('SELECT responsible_member_id,allow_multiple_agents,max_agents,policy_version '
+            'FROM agent_task_execution_policies WHERE task_id=?',(task_id,)).fetchone()
+        grants=c.execute("SELECT COUNT(*) AS n FROM agent_task_grants "
+            "WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED')",(task_id,)).fetchone()
+    assert policy_row['responsible_member_id']==member_id
+    assert policy_row['allow_multiple_agents']==1 and policy_row['max_agents'] is None
+    assert policy_row['policy_version']==3
+    assert grants['n']==3
+
