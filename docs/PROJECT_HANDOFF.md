@@ -1205,3 +1205,11 @@
 ### 变更边界与验证
 - 仅修改 `tests/test_api.py` 和本交接文档；不修改 REST API、数据库 Schema 或迁移文件，不做历史迁移、回填或利旧。
 - 本轮提交后需验证 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、Container Build、Production Compose、Browser E2E；本地 pytest 未执行，结果以 CI 为准。
+
+
+## 45. Token 生命周期测试断言修正（2026-11-24）
+
+- CI run `45346355670` 的三个 Python 版本均为 238 passed、1 failed、1 skipped；唯一失败来自测试本身对 Token 状态的错误最终断言。
+- 实际契约是：首次 Token、第一次 rotate 后 Token、revoke 时当前 Token 均应为 `REVOKED`；Token revoke 后重新 rotate 签发的最新 Token 应为 `ACTIVE`。
+- 因此将测试从“所有 Token 都 REVOKED”修正为“恰好 1 个 ACTIVE，至少 2 个 REVOKED”，不改变后端实现。
+- 本轮其他 CI 项目已通过：container-build、migrations、browser-e2e、production-compose。

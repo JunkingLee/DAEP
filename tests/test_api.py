@@ -413,7 +413,8 @@ def test_agent_token_rotation_and_revocation_preserve_collaboration_grant_only()
             (member_id,)).fetchall()
     assert len(token_rows)>=3
     assert all(row['token_hash'] not in (original,replacement,reissued.json()['token']) for row in token_rows)
-    assert all(row['status']=='REVOKED' for row in token_rows)
+    assert sum(row['status']=='ACTIVE' for row in token_rows)==1
+    assert sum(row['status']=='REVOKED' for row in token_rows)>=2
     event_types={row['event_type'] for row in events}
     assert 'agent.token.rotated' in event_types
     assert 'agent.token.revoked' in event_types
