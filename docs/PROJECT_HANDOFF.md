@@ -953,3 +953,10 @@
 - Agent 发送消息继续拒绝 Task 终态；Agent 读取历史在 Grant 仍有效且具备 session.read 时可访问。
 - 新增 session.read-only Agent 负向测试，确保没有 session.message.send 时不能发送消息。
 - 本轮最终原子提交包含 API、测试和本交接文件；以该提交 SHA 和其 CI run 为最终验证依据。
+
+
+### 31 节 CI 失败修复记录
+- CI run 45337587717（提交 d68b5b55b289cb0b87b65b05c06601219226fb98）Python 3.11/3.12/3.13 均在同一集成测试失败：Agent 的 Resource Scope 历史过滤把 Member 发布的普通 Session 消息（无 resource_id）错误排除，导致 Agent 只读到自己的资源消息。
+- 该问题属于服务端历史过滤规则过窄，不是 CI 环境差异。修正为：Resource Scope 限制带 resource_id 的资源消息；没有 resource_id 的普通 Session 消息仍属于会话公共对话，可见于具备 session.read 的 Agent。
+- 扩展测试断言，明确 Agent 历史中同时能看到 Agent 自己的资源消息和 Member 普通消息。
+- 当前修复提交后需重新执行完整 CI；原 run 45337587717 的 Python 失败仍保留为历史结果，不得覆盖为通过。

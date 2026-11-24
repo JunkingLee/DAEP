@@ -4686,6 +4686,7 @@ def test_agent_collaboration_messages_enforce_grants_scopes_resources_and_sessio
     history = client.get(history_url, headers=agent_headers)
     assert history.status_code == 200, history.text
     assert len(history.json()["items"]) == 2
+    assert {item["author_type"] for item in history.json()["items"]} == {"AGENT", "MEMBER"}
 
     paused = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
                           headers=owner_headers, json={"status": "PAUSED"})

@@ -483,8 +483,13 @@ def register_agent_collaboration_routes(
                 (session["tenant_id"], task_id, session["id"], limit)).fetchall()
             messages = [_message_payload(row) for row in rows]
             if allowed_resources:
-                messages = [item for item in messages
-                            if item["metadata"].get("resource_id") in allowed_resources]
+                # Resource-scoped grants may read messages attached to explicitly
+                # allowed resources and general session messages with no resource.
+                messages = [
+                    item for item in messages
+                    if item["metadata"].get("resource_id") is None
+                    or item["metadata"].get("resource_id") in allowed_resources
+                ]
             messages.reverse()
             return {"task_id": task_id, "session_id": session["id"],
                     "session_status": session["status"], "items": messages}
