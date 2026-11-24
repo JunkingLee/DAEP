@@ -705,7 +705,7 @@ def test_rc44_alembic_head_and_quality_risk_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0035_rc45_agent_auth_lookup (head)' in heads
+    assert '0036_rc46_agent_task_grants (head)' in heads
     agent_auth_migration=(root/'alembic/versions/0035_rc45_agent_auth_lookup.py').read_text()
     assert 'daep_authenticate_agent_token' in agent_auth_migration
     assert 'SECURITY DEFINER' in agent_auth_migration
@@ -3794,3 +3794,63 @@ def test_agent_unbind_enforces_project_tenant_boundary():
         f'/api/v1/agents/{agent_id}/projects/{tenant_project_id}',headers=tenant_headers)
     assert removed.status_code==200,removed.text
 
+
+
+def test_rc46_agent_task_grants_schema_and_migration_contract():
+    import sqlite3
+    from pathlib import Path
+    import subprocess
+    root=Path(__file__).resolve().parents[1]
+    heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
+    assert '0036_rc46_agent_task_grants (head)' in heads
+    migration=(root/'alembic/versions/0036_rc46_agent_task_grants.py').read_text()
+    assert 'ENABLE ROW LEVEL SECURITY' in migration
+    assert 'FORCE ROW LEVEL SECURITY' in migration
+    assert 'daep_tenant_visible(tenant_id)' in migration
+    assert 'REVOKE ALL ON TABLE agent_task_grants FROM daep_authenticator' in migration
+    assert "WHERE status IN ('AUTHORIZED','ACCEPTED')" in migration
+
+    db=sqlite3.connect(':memory:')
+    db.execute('PRAGMA foreign_keys=ON')
+    # Execute the exact additive DDL used by the SQLite bootstrap.
+    db.executescript("""
+      CREATE TABLE projects(id TEXT PRIMARY KEY);
+      CREATE TABLE tasks(id TEXT PRIMARY KEY);
+      CREATE TABLE agents(id TEXT PRIMARY KEY);
+      CREATE TABLE members(id TEXT PRIMARY KEY);
+      CREATE TABLE agent_task_assignments(id TEXT PRIMARY KEY);
+      CREATE TABLE agent_task_grants(
+        id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,task_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,owner_member_id TEXT NOT NULL,human_assignee_member_id TEXT NOT NULL,
+        authorized_by_member_id TEXT NOT NULL,scope_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED','ACCEPTED','REVOKED','COMPLETED','EXPIRED')),
+        created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
+        accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
+        revoke_reason TEXT,last_activity_at TEXT,legacy_assignment_id TEXT,
+        CHECK(expires_at>created_at),
+        CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
+          AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
+          AND (status<>'COMPLETED' OR completed_at IS NOT NULL)),
+        FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(task_id) REFERENCES tasks(id),
+        FOREIGN KEY(agent_id) REFERENCES agents(id),FOREIGN KEY(owner_member_id) REFERENCES members(id),
+        FOREIGN KEY(human_assignee_member_id) REFERENCES members(id),
+        FOREIGN KEY(authorized_by_member_id) REFERENCES members(id),
+        FOREIGN KEY(revoked_by_member_id) REFERENCES members(id),
+        FOREIGN KEY(legacy_assignment_id) REFERENCES agent_task_assignments(id)
+      );
+      CREATE UNIQUE INDEX uq_agent_task_grants_one_active_per_task
+        ON agent_task_grants(task_id) WHERE status IN ('AUTHORIZED','ACCEPTED');
+      CREATE INDEX idx_agent_task_grants_agent_status_expiry
+        ON agent_task_grants(tenant_id,agent_id,status,expires_at);
+      CREATE INDEX idx_agent_task_grants_task_status
+        ON agent_task_grants(tenant_id,task_id,status);
+      CREATE INDEX idx_agent_task_grants_owner_status_created
+        ON agent_task_grants(owner_member_id,status,created_at);
+    """)
+    columns={row[1] for row in db.execute('PRAGMA table_info(agent_task_grants)')}
+    assert {'tenant_id','project_id','task_id','agent_id','owner_member_id',
+            'human_assignee_member_id','authorized_by_member_id','scope_json',
+            'status','expires_at','legacy_assignment_id'} <= columns
+    indexes={row[1] for row in db.execute('PRAGMA index_list(agent_task_grants)')}
+    assert 'uq_agent_task_grants_one_active_per_task' in indexes
+    db.close()
