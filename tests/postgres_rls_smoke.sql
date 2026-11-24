@@ -16,7 +16,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments, artifact_versions, agent_task_grants TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments, artifact_versions, agent_task_grants, agent_task_execution_policies, agent_task_contributions, agent_collaboration_sessions, agent_collaboration_grants, agent_collaboration_messages, agent_collaboration_proposals TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -78,6 +78,48 @@ INSERT INTO agent_task_grants(
 ) VALUES
  ('rls-agent-grant-a','tenant-a','rls-probe-a','rls-task-a','rls-agent-identity-a','rls-member-a','rls-member-a','rls-member-a','["task.read"]','AUTHORIZED',now()::text,now()::text,(now()+interval '30 days')::text),
  ('rls-agent-grant-b','tenant-b','rls-probe-b','rls-task-b','rls-agent-identity-b','rls-member-b','rls-member-b','rls-member-b','["task.read"]','AUTHORIZED',now()::text,now()::text,(now()+interval '30 days')::text)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO agent_task_execution_policies(
+ id,tenant_id,project_id,task_id,responsible_member_id,allow_multiple_agents,max_agents,
+ collaboration_mode,policy_version,created_at,updated_at
+) VALUES
+ ('rls-policy-a','tenant-a','rls-probe-a','rls-task-a','rls-member-a',true,NULL,'TEAM',1,now()::text,now()::text),
+ ('rls-policy-b','tenant-b','rls-probe-b','rls-task-b','rls-member-b',true,NULL,'TEAM',1,now()::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_collaboration_sessions(
+ id,tenant_id,project_id,task_id,responsible_member_id,status,created_by_member_id,
+ policy_version,created_at,updated_at
+) VALUES
+ ('rls-session-a','tenant-a','rls-probe-a','rls-task-a','rls-member-a','OPEN','rls-member-a',1,now()::text,now()::text),
+ ('rls-session-b','tenant-b','rls-probe-b','rls-task-b','rls-member-b','OPEN','rls-member-b',1,now()::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_collaboration_grants(
+ id,tenant_id,project_id,task_id,session_id,agent_id,owner_member_id,authorized_by_member_id,
+ scopes_json,resource_scope_json,status,created_at,updated_at,expires_at,accepted_at
+) VALUES
+ ('rls-collab-grant-a','tenant-a','rls-probe-a','rls-task-a','rls-session-a','rls-agent-identity-a','rls-member-a','rls-member-a','["collaboration.message.read","collaboration.message.send"]','{}','ACCEPTED',now()::text,now()::text,(now()+interval '30 days')::text,now()::text),
+ ('rls-collab-grant-b','tenant-b','rls-probe-b','rls-task-b','rls-session-b','rls-agent-identity-b','rls-member-b','rls-member-b','["collaboration.message.read","collaboration.message.send"]','{}','ACCEPTED',now()::text,now()::text,(now()+interval '30 days')::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_task_contributions(
+ id,tenant_id,project_id,task_id,grant_id,agent_id,contribution_type,progress,summary,payload_json,created_at
+) VALUES
+ ('rls-contribution-a','tenant-a','rls-probe-a','rls-task-a','rls-agent-grant-a','rls-agent-identity-a','PROGRESS',25,'A contribution','{}',now()::text),
+ ('rls-contribution-b','tenant-b','rls-probe-b','rls-task-b','rls-agent-grant-b','rls-agent-identity-b','PROGRESS',25,'B contribution','{}',now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_collaboration_messages(
+ id,tenant_id,project_id,task_id,session_id,author_type,author_agent_id,agent_owner_member_id,
+ collaboration_grant_id,content,metadata_json,created_at
+) VALUES
+ ('rls-message-a','tenant-a','rls-probe-a','rls-task-a','rls-session-a','AGENT','rls-agent-identity-a','rls-member-a','rls-collab-grant-a','A collaboration message','{}',now()::text),
+ ('rls-message-b','tenant-b','rls-probe-b','rls-task-b','rls-session-b','AGENT','rls-agent-identity-b','rls-member-b','rls-collab-grant-b','B collaboration message','{}',now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agent_collaboration_proposals(
+ id,tenant_id,project_id,task_id,session_id,proposal_type,proposed_by_agent_id,owner_member_id,
+ collaboration_grant_id,payload_json,status,created_at
+) VALUES
+ ('rls-proposal-a','tenant-a','rls-probe-a','rls-task-a','rls-session-a','HELP_REQUEST','rls-agent-identity-a','rls-member-a','rls-collab-grant-a','{}','PENDING',now()::text),
+ ('rls-proposal-b','tenant-b','rls-probe-b','rls-task-b','rls-session-b','HELP_REQUEST','rls-agent-identity-b','rls-member-b','rls-collab-grant-b','{}','PENDING',now()::text)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO project_agents(id,project_id,member_id,tenant_id,agent_name,capabilities,protocols,status,metadata,last_seen,created_at,updated_at)
@@ -218,6 +260,25 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM agent_task_grants WHERE id IN ('rls-agent-grant-a','rls-agent-grant-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS Agent task grant isolation failed';
+  END IF;
+
+  IF (SELECT count(*) FROM agent_task_execution_policies WHERE id IN ('rls-policy-a','rls-policy-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent task policy isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_task_contributions WHERE id IN ('rls-contribution-a','rls-contribution-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent task contribution isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_collaboration_sessions WHERE id IN ('rls-session-a','rls-session-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent collaboration session isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_collaboration_grants WHERE id IN ('rls-collab-grant-a','rls-collab-grant-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent collaboration grant isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_collaboration_messages WHERE id IN ('rls-message-a','rls-message-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent collaboration message isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_collaboration_proposals WHERE id IN ('rls-proposal-a','rls-proposal-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent collaboration proposal isolation failed';
   END IF;
   IF (SELECT count(*) FROM artifact_versions WHERE id IN ('rls-artifact-version-a','rls-artifact-version-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS artifact version isolation failed';
