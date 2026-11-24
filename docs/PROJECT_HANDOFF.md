@@ -1477,3 +1477,48 @@
   - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
 - 当前分支：`release/1.0.0-rc9`。
 - 后续建议：补齐 Grant 的主动续期/重新授权体验，以及跨 Task 授权审计查询；不要让 Task 负责人代替 Agent Owner 续期或重新授权。
+
+
+## 60. CollaborationGrant 续期、重新授权与 Owner 审计查询（2026-11-24）
+
+- 本轮目标：完成有效 Grant 续期、终态 Grant 重新授权、授权审计筛选，并将操作接入 Agent Owner 授权收件箱。
+- Owner-only 续期接口：
+  - `POST /api/v1/collaboration-grants/{grant_id}/renew`，只允许原始 Agent Owner 且 `authorized_by_member_id` 与当前 Member 一致。
+  - `expires_in_days` 范围 1–90，默认 30；续期在当前时间基础上重新计算到期时间。
+  - 只允许 Agent 仍 ACTIVE、Owner 关系未变化、Project ACTIVE、Task 非终态且 Collaboration Session 为 OPEN 时续期。
+  - 续期保留原 Grant ID、Scope、Resource Scope 和 AUTHORIZED/ACCEPTED 状态，写入 `agent.collaboration_grant.renewed`，记录原到期时间、新到期时间和期限。
+  - 已 REVOKED/EXPIRED 的 Grant 返回冲突，不允许复活。若状态仍是 AUTHORIZED/ACCEPTED 但 expires_at 已过期，接口将其物化为 EXPIRED 并记录过期审计，返回 `renewal_required=true`，提示创建新授权。
+- 重新授权规则：
+  - 不提供终态 Grant 恢复/重置 API。
+  - Owner 在授权收件箱对 REVOKED/EXPIRED 记录发起“重新授权”，调用原 Task Grant 创建接口，创建新的 Grant ID。
+  - 新授权仍经过 Agent Owner 身份校验、Task/Session OPEN 和现有权限规则；旧 Grant 与审计记录保留。
+- Owner 授权审计接口：
+  - `GET /api/v1/members/me/collaboration-grant-audit`。
+  - 支持 `agent_id`、`task_id`、`owner_member_id`、`status`、`start_at`、`end_at`、`limit` 筛选。
+  - Member 只能查询自己的 Owner 授权审计；显式传入其他 Owner ID 返回 403。
+  - 状态过滤支持 AUTHORIZED、ACCEPTED、RENEWED、REVOKED、EXPIRED；时间边界使用 ISO-8601，limit 为 1–200。
+  - 审计数据来自既有 events，不新建审计表、不引入迁移。
+- UI：
+  - Agent 页面“我的协作授权收件箱”对有效 Grant 提供续期/撤销；对 EXPIRED/REVOKED 提供重新授权。
+  - 重新授权 UI 明确提示创建新 Grant，不恢复旧 Grant。
+  - 新增授权审计查看，支持 Agent、Task、事件状态和时间范围筛选；只显示当前 Member 自己作为 Owner 的审计。
+- 测试：
+  - `test_collaboration_grant_renewal_reauthorization_and_owner_audit_filters` 覆盖续期、非 Owner 拒绝、审计筛选、跨 Owner 拒绝、撤销后禁止续期、重新授权创建新 Grant、过期后新授权。
+  - `test_collaboration_grant_renewal_reauthorization_and_audit_ui_contract` 覆盖前端续期/重新授权/审计入口。
+  - 原 Browser E2E 继续验证 Owner 收件箱入口与内容展示。
+- 主要提交：
+  - `72c96f163522f097e80c30c1b906760d0ee48721` — Owner-only Grant 续期和审计筛选 API。
+  - `55171d818513a4747b7edf6e80564515db2a2907` — 续期、重新授权和审计 UI。
+  - `253cf6c1ac13710f357762e48bd0ebd0e901e6f4` — 生命周期和审计 API 测试。
+  - `81dbb46bbcaf96c70b30917872cc1f9f7603879a` — UI 契约测试。
+  - `31c65d0d2957db6447e86ee2e622199d7a201436` — 审计 UI 时间范围筛选。
+  - `d356266c6ecb040ac30ad73a5a9fced8cdd36d1e` — 修复授权 UI JavaScript 引号。
+  - `5ea7e63a65e103e3166cff1fcdd6d1dbe2101447` — 修复 Agent ID 审计筛选。
+  - `36cd58cd90905d5087c36aafd6728b19b49edafd` — 修复 DELETE 请求测试写法。
+- 最终代码 CI：
+  - Run `45366162071`，HEAD `36cd58cd90905d5087c36aafd6728b19b49edafd`，结论 SUCCESS。
+  - Python 3.11/3.12/3.13 均为 `249 passed, 2 skipped`。
+  - Browser E2E 使用 Chromium 实际运行，`3 passed in 8.13s`。
+  - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
+- 当前分支：`release/1.0.0-rc9`。
+- 下一阶段建议：增加 Task 协作授权的批量撤销/筛选导出之前，先补齐 Owner 授权的通知和临近到期提醒；提醒只能通知 Owner，不可自动续期或扩大 Scope。
