@@ -168,4 +168,4 @@ jobs:
       - name: Run isolated Agent management browser E2E
         env:
           DAEP_RUN_BROWSER_E2E: "1"
-        run: pytest -q tests/test_agent_management_e2e.py
+        run: pytest -q tests/test_agent_management_e2e.py tests/test_task_collaboration_ui_e2e.py
