@@ -814,3 +814,26 @@
 - 先核实本轮 CI；若失败，按真实日志修复并更新本交接文档。
 - 若通过，开始 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API：任务内默认 Session、Member 负责人创建/暂停/关闭、Agent Owner 独立授权加入、会话级 Scope/资源范围校验、撤销/过期处理和审计。
 - Session 不创建/启动/调度 Agent Runtime；Agent 仍属于 Member，Runtime 仍由 Owner 自己的环境运行。协作授权不得自动授予 Project 全域权限。
+
+## 29. 并发 Grant 测试的 HTTP 客户端兼容修复（2026-11-24）
+
+### CI 结果与根因
+- 核验 run `45334198996`，对应分支 `release/1.0.0-rc9`、提交 `a1372d7020d7cfdbfedf798e74575bfba2c22fa1`。
+- Python 3.11/3.12/3.13 均在同一个新增测试失败：`test_agent_task_grant_concurrent_create_and_revoke_share_task_lock`。
+- 唯一失败原因为 Starlette/FastAPI TestClient 的 `delete()` 方法不接受 `json` 关键字参数：`TypeError: TestClient.delete() got an unexpected keyword argument 'json'`。不是服务端 Grant 并发逻辑失败。
+- 各 Python 版本分别为 224 passed、1 failed、1 skipped。
+- PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e 均 SUCCESS。
+
+### 修复
+- 将并发测试中的 `client.delete(url, json=...)` 改为通用 `client.request('DELETE', url, json=...)`，保留撤销请求体和原并发测试语义。
+- 修复提交：`42ef3aedc67225330a8b2b95b9a93fafe10b9084` — `test: use request for delete JSON payload`。
+
+### 验证限制
+- 本轮通过 GitHub Actions 日志定位并提交修复；没有在当前执行环境直接运行 pytest。
+- 修复提交触发的新 CI 尚待核验，不能将前一轮失败 run 视为修复后的通过结果。
+- PostgreSQL job 验证 migrations/RLS，不等同于 PostgreSQL 多连接并发授权/撤销压力测试。
+- 未修改生产逻辑、Schema 或历史迁移；不做历史数据回填、利旧或兼容。
+
+### 下一步唯一任务
+- 检查提交 `42ef3aedc67225330a8b2b95b9a93fafe10b9084` 触发的 CI 全部 jobs。
+- 若 Python 测试通过且其他 jobs 全绿，再进入 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API；若失败，按日志先修复。
