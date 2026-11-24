@@ -206,7 +206,21 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                            FROM agent_project_bindings b JOIN projects p ON p.id=b.project_id
                            WHERE b.agent_id=? ORDER BY p.name""",(agent_id,)).fetchall()
             t=c.execute("SELECT id,status,created_at,last_used_at,expires_at,revoked_at FROM agent_tokens WHERE agent_id=? ORDER BY created_at DESC",(agent_id,)).fetchall()
-            return {**dict(r),'projects':[dict(x) for x in b],'tokens':[dict(x) for x in t]}
+            task_grants=c.execute("""SELECT id,task_id,human_assignee_member_id,authorized_by_member_id,scope_json,status,
+                                            created_at,updated_at,expires_at,accepted_at,revoked_at,completed_at,
+                                            revoked_by_member_id,revoke_reason,last_activity_at
+                                     FROM agent_task_grants
+                                     WHERE agent_id=?
+                                     ORDER BY created_at DESC""",(agent_id,)).fetchall()
+            collaboration_grants=c.execute("""SELECT id,task_id,session_id,owner_member_id,authorized_by_member_id,
+                                                     scopes_json,resource_scope_json,status,created_at,updated_at,
+                                                     expires_at,accepted_at,revoked_at,revoked_by_member_id,revoke_reason
+                                              FROM agent_collaboration_grants
+                                              WHERE agent_id=?
+                                              ORDER BY created_at DESC""",(agent_id,)).fetchall()
+            return {**dict(r),'projects':[dict(x) for x in b],'tokens':[dict(x) for x in t],
+                    'task_grants':[dict(x) for x in task_grants],
+                    'collaboration_grants':[dict(x) for x in collaboration_grants]}
 
     @app.patch('/api/v1/agents/{agent_id}')
     def update_agent(agent_id: str, body: AgentUpdateIn, authorization: str = Header(default='')):

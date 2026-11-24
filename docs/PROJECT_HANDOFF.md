@@ -1213,3 +1213,23 @@
 - 实际契约是：首次 Token、第一次 rotate 后 Token、revoke 时当前 Token 均应为 `REVOKED`；Token revoke 后重新 rotate 签发的最新 Token 应为 `ACTIVE`。
 - 因此将测试从“所有 Token 都 REVOKED”修正为“恰好 1 个 ACTIVE，至少 2 个 REVOKED”，不改变后端实现。
 - 本轮其他 CI 项目已通过：container-build、migrations、browser-e2e、production-compose。
+
+
+## 47. Agent 管理页授权状态分层（2026-11-24）
+
+### 恢复与纠正
+- 本轮先核实 release/1.0.0-rc9 实际 HEAD，发现上一轮尝试提交 4a48e40307ec3a3d41026489ad8ba54017fbbe22 虽然存在，但其 Git Tree 错误地删除了大量仓库文件；未将该提交作为有效功能实现。
+- 已用父提交 f2866a03f42e62295b664aeeb0a601bef0e54569 的完整 Tree 恢复仓库内容，并生成恢复提交 87dc507bd88481d68362ed2567152c5e847d3665，当前分支 HEAD 已恢复到完整代码树。
+- 4a48e40307ec3a3d41026489ad8ba54017fbbe22 保留在历史中，但不再位于分支 HEAD 的有效代码树中。
+
+### 本轮实现
+- Agent 详情 API 增加 Task Execution Grant 与 Collaboration Grant 的只读状态信息，继续通过 _agent_owner 限制为 Agent Owner/管理员可查看。
+- 「我的 Agent」详情弹窗明确拆分 Credential、Task Execution authorization、Collaboration authorization 三层状态；展示 Grant 状态、Task/Session、Scope、Resource Scope、过期/撤销时间及撤销原因。
+- UI 明确 Presence 不等于授权；不新增任何跨 Owner 授权/撤销入口，Grant 治理仍由既有 Task 负责人和 Agent Owner 规则执行。
+- 增加静态 UI 契约和 Agent 详情 API 回归断言。
+- 本轮未修改数据库 Schema、迁移或历史数据；不做数据迁移、回填或利旧。
+
+### 验证
+- 本环境未直接运行 pytest/node；代码提交后以 CI 为准。
+- 当前恢复提交 87dc507bd88481d68362ed2567152c5e847d3665 尚待 CI。
+- 下一步：核验本轮完整 CI，并补充真实浏览器对 DISABLED Agent、REVOKED/EXPIRED Grant 状态展示的回归；Browser E2E 若安装/执行继续耗时，不无限等待。

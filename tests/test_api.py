@@ -440,7 +440,7 @@ def test_agent_management_is_scoped_to_owning_member_identity():
 
     owner_view=client.get(f"/api/v1/agents/{agent['id']}",headers=first_headers)
     assert owner_view.status_code==200 and owner_view.json()['owner_member_id']==first['id']
-
+    assert owner_view.json()['task_grants']==[]\n    assert owner_view.json()['collaboration_grants']==[]\n
 
 def test_web_password_login_change_password_and_logout_session_lifecycle():
     username='session.lifecycle.user'
