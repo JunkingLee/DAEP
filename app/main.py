@@ -856,6 +856,30 @@ def _active_agent_grants(c, task_id, stamp):
         WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED') AND expires_at>?""",
         (task_id,stamp)).fetchall()
 
+def _close_task_agent_grants(c, task_id, target_status, actor_member_id, stamp=None):
+    if target_status not in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+        return 0
+    stamp=stamp or now()
+    grant_status='COMPLETED' if target_status=='DONE' else 'REVOKED'
+    grants=c.execute("""SELECT id,agent_id,status FROM agent_task_grants
+        WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(task_id,)).fetchall()
+    for grant in grants:
+        if grant_status=='COMPLETED':
+            c.execute("""UPDATE agent_task_grants SET status='COMPLETED',completed_at=?,updated_at=?
+                WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(stamp,stamp,grant['id']))
+            event_type='agent.task_grant.completed'
+            reason='Task completed'
+        else:
+            c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
+                revoked_by_member_id=?,revoke_reason=?
+                WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                (stamp,stamp,actor_member_id,'Task became '+target_status,grant['id']))
+            event_type='agent.task_grant.revoked'
+            reason='Task became '+target_status
+        event(c,event_type,actor_member_id,task_id,{'grant_id':grant['id'],
+            'agent_id':grant['agent_id'],'reason':reason})
+    return len(grants)
+
 def _agent_policy_payload(policy):
     return {**dict(policy),'allow_multiple_agents':bool(policy['allow_multiple_agents'])}
 
@@ -1017,6 +1041,11 @@ def revoke_agent_task_grant(grant_id:str,body:dict=None,authorization:str=Header
         raise HTTPException(422,'reason must be at most 1000 characters')
     with conn() as c:
         begin_serialized_write(c)
+        lookup=c.execute('SELECT task_id FROM agent_task_grants WHERE id=? AND tenant_id=?',
+            (grant_id,a.get('tenant_id','tenant-default'))).fetchone()
+        if not lookup:
+            raise HTTPException(404,'Agent grant not found')
+        _lock_agent_policy_task(c,lookup['task_id'])
         row=c.execute('SELECT * FROM agent_task_grants WHERE id=? AND tenant_id=?',
             (grant_id,a.get('tenant_id','tenant-default'))).fetchone()
         if not row:
@@ -2137,7 +2166,10 @@ def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
     if not task: raise HTTPException(404,'Task not found')
     enforce_workflow_stage(c,pid,target_stage,actor_member_id,tid)
     progress=100 if target_stage=='DONE' else (100 if target_stage=='REVIEW' else task['progress'])
-    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,now(),tid))
+    stamp=now()
+    c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(target_stage,progress,stamp,tid))
+    if target_stage in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+        _close_task_agent_grants(c,tid,target_stage,actor_member_id,stamp)
     eid=event(c,'task.workflow.transitioned',actor_member_id,tid,{'from_status':task['status'],'to_status':target_stage,'comment':comment})
     return eid
 
