@@ -3984,3 +3984,25 @@ def test_agent_task_grant_owner_can_revoke_after_task_reassignment():
     revoked=client.delete(f"/api/v1/agent-grants/{grant.json()['id']}",headers=owner_headers)
     assert revoked.status_code==200,revoked.text
     assert revoked.json()['status']=='REVOKED'
+
+
+def test_disabling_agent_revokes_owner_authorized_task_grants():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=headers,json={'name':'Disable Revokes Grant'})
+    assert agent.status_code==200,agent.text
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+        json={'agent_id':agent.json()['agent']['id']})
+    assert grant.status_code==200,grant.text
+    disabled=client.patch(f"/api/v1/agents/{agent.json()['agent']['id']}",headers=headers,json={
+        'name':agent.json()['agent']['name'],'description':agent.json()['agent']['description'],
+        'status':'DISABLED'})
+    assert disabled.status_code==200,disabled.text
+    with main_module.conn() as c:
+        row=c.execute('SELECT status,revoked_by_member_id,revoke_reason FROM agent_task_grants WHERE id=?',
+            (grant.json()['id'],)).fetchone()
+    assert row['status']=='REVOKED'
+    assert row['revoked_by_member_id']==member_id
+    assert row['revoke_reason']=='Agent identity disabled'
