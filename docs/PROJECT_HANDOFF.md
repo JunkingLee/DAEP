@@ -1291,3 +1291,21 @@
 - 已修正为从 Grant 的 `session_id` 查询 Session，并显式查询 Task 上下文；不改变 Grant 授权边界或 Proposal 语义。
 - 同一 run 的 migrations、container-build、production-compose 已 SUCCESS；3.12/3.13 与 Browser E2E 当时仍在执行。
 - 修复提交后的 CI 尚待验证，不能提前宣称通过。
+
+
+## 53. Task Collaboration UI（2026-11-24）
+
+### 本轮实现
+- Task 详情现在直接展示 Collaboration Session、协作消息和 Agent Proposal，避免用户必须在多个页面之间切换才能理解一次 Task 的 Agent 协作状态。
+- Session 状态按 OPEN / PAUSED / CLOSED 显示；PAUSED/CLOSED 保留历史读取，但 UI 不提供发送入口。
+- Member 可以从 Task 详情发送协作消息；消息明确提示不会直接改变 Task 治理状态。
+- 当前登录用户若是 Proposal 对应 Agent 的 Owner，可以在 Task 详情直接 ACCEPTED / REJECTED Proposal；其他成员只读。
+- Proposal 展示类型、Agent、状态和 payload；Human 决策继续保持与正式 Task / Work Package / 审批 / 验收变更解耦。
+- 增加静态 UI 契约测试。
+
+### 验证状态
+- 上一阶段 CI run `45353657122` 全部成功：Python 3.11/3.12/3.13、migrations、container-build、production-compose、Browser E2E 均 SUCCESS。
+- 本轮 UI 提交后将触发新的 CI；尚未观察到本轮 CI 结果，不提前宣称通过。
+
+### 下一步
+- 补 Task Collaboration Browser E2E：实际创建 Agent Grant / Proposal / Message，并从 Task 详情验证展示与 Human Decision。
