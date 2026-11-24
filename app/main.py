@@ -639,6 +639,16 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
 def enqueue_member_notification(c, recipient_member_id, tenant_id, task_id, project_id,
                                 message_type, title, content, priority='NORMAL', idempotency_key=None):
     """Persist a durable Member inbox item and its broker outbox envelope."""
+    preference = c.execute(
+        "SELECT collaboration_grant_events,collaboration_expiry_reminders "
+        "FROM member_notification_preferences WHERE member_id=? AND tenant_id=?",
+        (recipient_member_id, tenant_id),
+    ).fetchone()
+    if preference:
+        if message_type == 'AGENT_COLLABORATION_GRANT' and not preference['collaboration_grant_events']:
+            return None
+        if message_type == 'AGENT_COLLABORATION_GRANT_REMINDER' and not preference['collaboration_expiry_reminders']:
+            return None
     if idempotency_key and c.execute(
         'SELECT 1 FROM events WHERE idempotency_key=?', (idempotency_key,)
     ).fetchone():
