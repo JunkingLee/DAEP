@@ -514,3 +514,53 @@
 
 ### 下一步唯一任务
 依据冻结设计实施数据库 schema/migration：新增 AgentTaskExecutionPolicy、AgentTaskContribution、AgentCollaborationGrant；将 AgentTaskGrant 有效唯一索引由 task_id 改为 (task_id, agent_id)；补充 PostgreSQL RLS、SQLite bootstrap/schema parity、历史数据检查与并发迁移测试。先完成数据库层，不提前开放协作 API/MCP。
+
+
+---
+
+## 23. AgentCollaborationSession 与开发阶段初始 Schema（2026-11-24）
+
+### 用户本轮明确要求
+- 接受建议：新增 `AgentCollaborationSession`，作为 Task 级逻辑协作空间。
+- 当前项目仍处于开发阶段：**不考虑数据库迁移、生产数据迁移、历史数据回填、利旧、旧版本兼容或 legacy 退役**。
+- 本阶段应直接实现正确的目标初始 Schema；可重建的开发数据库从空库按目标结构初始化。不要为了未发布的开发结构设计迁移链。
+
+### 本轮开始时核验
+- 仓库：`JunkingLee/DAEP`
+- 分支：`release/1.0.0-rc9`
+- 本轮开始 HEAD：`ed88646c0ad5492e2fd4d3710c699ec50b5bae75`
+- 该 SHA combined status 为空，workflow runs 查询为空；无可确认 CI 通过记录。本轮不将空结果描述为 CI 通过。
+- 本轮开始时未执行 pytest 或 PostgreSQL 测试。
+
+### 本轮文档设计结果
+- `docs/DOMAIN_MODEL_AGENT_OWNERSHIP.md` 新增 AgentCollaborationSession 领域定义：
+  - 一个 Task 最多一个默认 Session（Task 1:0..1）。
+  - Session 是逻辑协作空间，不是 Agent、Runtime、调度器或授权凭证。
+  - Session 管理协作消息、提议、参与者投影、活动和审计。
+  - Agent 参与权限由 AgentCollaborationGrant 决定；不额外建一份可独立授权的 Session membership，避免双重权限源。
+  - Session 状态 OPEN / PAUSED / CLOSED；Task 终态关闭 Session。
+- `docs/AGENT_TASK_GRANT_MIGRATION_DESIGN.md` 已调整为开发阶段数据库 Schema 设计文档，并新增：
+  - `agent_collaboration_sessions` 初始表结构和 Task 唯一关系。
+  - AgentCollaborationGrant 绑定 session_id。
+  - messages 复用现有消息表并记录 Agent 作者身份与授权来源。
+  - Agent 协作 proposal 数据结构。
+  - Task 1:N Grant、Session 1:N CollaborationGrant、并发授权与 RLS 约束。
+  - 从空数据库建立目标 schema 的实施顺序。
+- 文档开头明确：旧章节 migration/legacy 方案只作为历史讨论背景；实施以第 12 节初始 Schema 为准，不执行历史数据回填、旧表兼容、旧 assignment 转换或 legacy 清理。
+
+### 本轮提交
+- `229792232a89c78da785c7952c373e6c4fb77816` — 增加 AgentCollaborationSession 领域模型。
+- `140060ea4611e9a251c5334340dd52e0f901b108` — 增加 Session 与初始 Schema 设计。
+- `1905389e1caa14a7a27b237f93875f58cfd2bf56` — 明确开发阶段不做迁移/利旧，调整文档标题和执行口径。
+- 本轮仅修改文档；没有修改数据库模型、bootstrap、Alembic baseline、API、MCP 或前端。
+- 未运行 pytest；未验证 PostgreSQL RLS；未运行真实 MCP Host / 浏览器测试；CI 需以本节后续核验为准。
+
+### 下一步唯一任务
+直接检查当前 SQLAlchemy models、SQLite bootstrap schema、Alembic 初始基线和 PostgreSQL RLS 定义，依据冻结的目标结构实现初始数据库 Schema（不是历史迁移）：
+1. AgentTaskExecutionPolicy；
+2. AgentTaskGrant Task 1:N；
+3. AgentTaskContribution；
+4. AgentCollaborationSession Task 1:0..1；
+5. AgentCollaborationGrant 绑定 Session；
+6. 消息 Agent identity/session 关联和 proposal 表（先确认现有消息/工作包结构是否可直接复用）。
+同步实现干净数据库初始化、SQLite schema contract tests、PostgreSQL RLS/schema tests 和并发授权测试。完成数据库层后再开发 API/MCP。
