@@ -13,6 +13,88 @@ client=TestClient(app)
 ADMIN={'Authorization':'Bearer test-admin-token-with-32-characters-minimum'}
 WORKER={'Authorization':'Bearer test-worker-token-with-32-characters-minimum'}
 
+
+def test_agent_collaboration_proposal_full_lifecycle_and_human_decision_boundary():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {'Authorization': f'Bearer {owner_token}'}
+
+    created = client.post('/api/v1/agents', headers=owner_headers, json={
+        'name':'Proposal Loop Agent','description':'proposal lifecycle test'})
+    assert created.status_code == 200, created.text
+    agent = created.json()['agent']
+    agent_headers = {'Authorization': f"Bearer {created.json()['token']}"}
+
+    session = client.get(f'/api/v1/tasks/{task_id}/collaboration-session',
+                          headers=owner_headers)
+    assert session.status_code == 200, session.text
+
+    grant = client.post(f'/api/v1/tasks/{task_id}/collaboration-grants',
+                         headers=owner_headers, json={
+                             'agent_id': agent['id'],
+                             'scopes':['session.read','session.proposal.create'],
+                             'expires_in_days':30})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()['id']
+    accepted = client.post(f'/api/v1/collaboration-grants/{grant_id}/accept',
+                           headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+
+    proposal = client.post(f'/api/v1/tasks/{task_id}/collaboration-proposals',
+                            headers=agent_headers, json={
+                                'grant_id':grant_id,
+                                'proposal_type':'HELP_REQUEST',
+                                'payload':{'reason':'Need a human decision','severity':'HIGH'}})
+    assert proposal.status_code == 200, proposal.text
+    proposal_id = proposal.json()['id']
+    assert proposal.json()['status'] == 'PENDING'
+
+    agent_list = client.get(f'/api/v1/tasks/{task_id}/collaboration-proposals',
+                            headers=agent_headers, params={'grant_id':grant_id})
+    assert agent_list.status_code == 200, agent_list.text
+    assert agent_list.json()['items'][0]['id'] == proposal_id
+
+    member_list = client.get(f'/api/v1/tasks/{task_id}/collaboration-proposals',
+                             headers=owner_headers)
+    assert member_list.status_code == 200, member_list.text
+    assert member_list.json()['items'][0]['payload']['reason'] == 'Need a human decision'
+
+    denied_decision = client.post(f'/api/v1/collaboration-proposals/{proposal_id}/decision',
+                                  headers=agent_headers, json={'decision':'ACCEPTED'})
+    assert denied_decision.status_code == 403
+
+    decision = client.post(f'/api/v1/collaboration-proposals/{proposal_id}/decision',
+                           headers=owner_headers, json={
+                               'decision':'ACCEPTED',
+                               'decision_note':'Human reviewed; formal mutation remains separate'})
+    assert decision.status_code == 200, decision.text
+    assert decision.json()['status'] == 'ACCEPTED'
+    assert decision.json()['formal_mutation_required'] is True
+
+    repeated = client.post(f'/api/v1/collaboration-proposals/{proposal_id}/decision',
+                           headers=owner_headers, json={'decision':'REJECTED'})
+    assert repeated.status_code == 409
+
+    withdraw = client.post(f'/api/v1/collaboration-proposals/{proposal_id}/withdraw',
+                           headers=agent_headers)
+    assert withdraw.status_code == 409
+
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        row = db.execute(
+            "SELECT status,decided_by_member_id,decision_note FROM agent_collaboration_proposals WHERE id=?",
+            (proposal_id,)).fetchone()
+        assert row[0] == 'ACCEPTED'
+        assert row[1] == owner_id
+        assert 'formal mutation remains separate' in row[2]
+        events = db.execute(
+            "SELECT event_type,payload FROM events WHERE event_type IN "
+            "('agent.collaboration_proposal.created','agent.collaboration_proposal.decided')").fetchall()
+    assert any(json.loads(payload).get('proposal_id') == proposal_id
+               for event_type,payload in events if event_type == 'agent.collaboration_proposal.created')
+    assert any(json.loads(payload).get('proposal_id') == proposal_id
+               for event_type,payload in events if event_type == 'agent.collaboration_proposal.decided')
+
 def test_health():
     assert client.get('/health').json()['status']=='ok'
     assert client.get('/readyz').json()['status']=='ready'
@@ -5099,3 +5181,11 @@ def test_agent_mcp_collaboration_tools_round_trip_through_rest_api(monkeypatch):
         bridge.shutdown()
         thread.join(timeout=2)
         bridge.server_close()
+
+
+def test_agent_token_allowlist_includes_collaboration_proposal_read_and_create_only():
+    from daep_mcp.server import _agent_path_allowed
+    assert _agent_path_allowed('GET','/api/v1/tasks/task-1/collaboration-proposals')
+    assert _agent_path_allowed('POST','/api/v1/tasks/task-1/collaboration-proposals')
+    assert not _agent_path_allowed('POST','/api/v1/collaboration-proposals/p-1/decision')
+    assert not _agent_path_allowed('POST','/api/v1/collaboration-proposals/p-1/withdraw')
