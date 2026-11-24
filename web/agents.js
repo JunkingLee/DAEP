@@ -14,12 +14,37 @@ async function loadCollaborationGrantInbox(){
   const scopeLabels={'session.read':'读取协作历史','session.message.send':'发送协作消息','session.proposal.create':'创建协作提案'};
   const rows=(data.items||[]).map(g=>{
    const active=['AUTHORIZED','ACCEPTED'].includes(g.effective_status);
-   const revoke=active?'<button class="btn danger" onclick="revokeOwnedCollaborationGrant(\''+esc(g.grant_id)+'\')">撤销授权</button>':'';
+   const renew=active?'<button class="btn secondary" onclick="renewOwnedCollaborationGrant(\\''+esc(g.grant_id)+'\\')">续期</button>':'';
+   const reauthorize=['REVOKED','EXPIRED'].includes(g.effective_status)?'<button class="btn secondary" onclick="reauthorizeOwnedCollaborationGrant(\\''+esc(g.grant_id)+'\\')">重新授权</button>':'';
+   const revoke=active?'<button class="btn danger" onclick="revokeOwnedCollaborationGrant(\\''+esc(g.grant_id)+'\\')">撤销授权</button>':'';
    const resources=g.resource_scope?.resource_ids||[];
-   return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0;flex:1"><div><b>'+esc(g.agent_name||g.agent_id)+'</b> · '+esc(g.project_name||g.project_id||'项目')+' / '+esc(g.task_title||g.task_id)+'</div><div class="muted small">状态：'+esc(labels[g.effective_status]||g.effective_status)+' · Session：'+esc(g.session_status||'未知')+'</div><div class="muted small">权限：'+esc((g.scopes||[]).map(x=>scopeLabels[x]||x).join('、'))+'</div><div class="muted small">资源：'+esc(resources.length?resources.join('、'):'当前 Task 全部协作资源')+' · 到期：'+esc(g.expires_at||'—')+'</div>'+(g.revoked_at?'<div class="muted small">撤销时间：'+esc(g.revoked_at)+' · '+esc(g.revoke_reason||'')+'</div>':'')+'</div>'+revoke+'</div>';
+   return '<div class="list-row" style="align-items:flex-start"><div style="min-width:0;flex:1"><div><b>'+esc(g.agent_name||g.agent_id)+'</b> · '+esc(g.project_name||g.project_id||'项目')+' / '+esc(g.task_title||g.task_id)+'</div><div class="muted small">状态：'+esc(labels[g.effective_status]||g.effective_status)+' · Session：'+esc(g.session_status||'未知')+'</div><div class="muted small">权限：'+esc((g.scopes||[]).map(x=>scopeLabels[x]||x).join('、'))+'</div><div class="muted small">资源：'+esc(resources.length?resources.join('、'):'当前 Task 全部协作资源')+' · 到期：'+esc(g.expires_at||'—')+'</div>'+(g.revoked_at?'<div class="muted small">撤销时间：'+esc(g.revoked_at)+' · '+esc(g.revoke_reason||'')+'</div>':'')+'</div><div class="actions">'+renew+reauthorize+revoke+'</div></div>';
   }).join('')||'<div class="empty">你尚未授权任何 Agent 参与 Task 协作</div>';
-  openModal('我的协作授权收件箱','<p class="muted small">这里只显示你本人拥有并授权的 Agent CollaborationGrant。可在此撤销自己的授权；不会显示或操作其他用户的 Agent。</p><div class="list">'+rows+'</div>');
+  openModal('我的协作授权收件箱','<p class="muted small">这里只显示你本人拥有并授权的 Agent CollaborationGrant。续期和重新授权均由 Owner 本人操作；过期或撤销的 Grant 不会被恢复，而是创建新的授权记录。</p><div class="actions"><button class="btn secondary" onclick="openCollaborationGrantAudit()">查看授权审计</button></div><div class="list">'+rows+'</div>');
  }catch(e){showError(e)}
+}
+async function renewOwnedCollaborationGrant(grantId){
+ const days=prompt('续期天数（1–90）','30');if(days===null)return;
+ const value=Number(days);if(!Number.isInteger(value)||value<1||value>90){toast('续期天数必须为 1–90 的整数');return}
+ try{const result=await api('/api/v1/collaboration-grants/'+encodeURIComponent(grantId)+'/renew',{method:'POST',body:JSON.stringify({expires_in_days:value})});if(result.status==='EXPIRED')toast('该授权已过期，请使用“重新授权”创建新记录');else toast('授权已续期');await loadCollaborationGrantInbox()}catch(e){showError(e)}
+}
+async function reauthorizeOwnedCollaborationGrant(grantId){
+ try{
+  const data=await api('/api/v1/members/me/collaboration-grants');
+  const grant=(data.items||[]).find(x=>x.grant_id===grantId);if(!grant)return;
+  const days=prompt('新授权有效天数（1–90）','30');if(days===null)return;
+  const value=Number(days);if(!Number.isInteger(value)||value<1||value>90){toast('有效天数必须为 1–90 的整数');return}
+  if(!confirm('将为 '+(grant.agent_name||grant.agent_id)+' 创建一条新的 CollaborationGrant。原授权记录会保留，不会恢复。继续？'))return;
+  await api('/api/v1/tasks/'+encodeURIComponent(grant.task_id)+'/collaboration-grants',{method:'POST',body:JSON.stringify({agent_id:grant.agent_id,scopes:grant.scopes,resource_scope:grant.resource_scope||{},expires_in_days:value})});
+  toast('已创建新的协作授权');await loadCollaborationGrantInbox();
+ }catch(e){showError(e)}
+}
+async function openCollaborationGrantAudit(){
+ const agentId=prompt('按 Agent ID 筛选（留空表示全部）','');if(agentId===null)return;
+ const taskId=prompt('按 Task ID 筛选（留空表示全部）','');if(taskId===null)return;
+ const status=prompt('状态筛选：AUTHORIZED / ACCEPTED / RENEWED / REVOKED / EXPIRED（留空表示全部）','');if(status===null)return;
+ const query=new URLSearchParams();if(agentId.trim())query.set('agent_id',agentId.trim());if(taskId.trim())query.set('task_id',taskId.trim());if(status.trim())query.set('status',status.trim().toUpperCase());
+ try{const result=await api('/api/v1/members/me/collaboration-grant-audit?'+query.toString());const labels={'agent.collaboration_grant.authorized':'创建授权','agent.collaboration_grant.accepted':'Agent 接受','agent.collaboration_grant.renewed':'续期','agent.collaboration_grant.revoked':'撤销','agent.collaboration_grant.expired':'过期'};const rows=(result.items||[]).map(x=>'<div class="list-row"><div><b>'+esc(labels[x.event_type]||x.event_type)+'</b><div class="muted small">'+esc(x.payload?.agent_id||'')+' · '+esc(x.task_id||'')+' · '+esc(x.payload?.grant_id||'')+'</div><div class="muted small">'+esc(x.created_at)+'</div></div></div>').join('')||'<div class="empty">没有符合条件的授权审计记录</div>';openModal('协作授权审计','<p class="muted small">仅查询当前用户作为 Agent Owner 的授权审计记录。</p><div class="list">'+rows+'</div>')}catch(e){showError(e)}
 }
 async function revokeOwnedCollaborationGrant(grantId){
  if(!confirm('撤销后 Agent 将立即失去该 Task 的协作访问权限，包括历史读取。确定撤销？'))return;
@@ -41,6 +66,6 @@ async function revokeAgentToken(id){if(!confirm('撤销 Token 后，使用该凭
 async function bindAgentProject(id){if(!isManager()){toast('只有当前项目管理员可以绑定 Agent');return}if(!projects.length){toast('当前没有可绑定项目');return}const opts=projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('');openModal('绑定项目','<div class="field"><label>项目</label><select id="agentProject">'+opts+'</select></div><div class="field"><label>工作职能</label><select id="agentFunction"><option value="developer">开发</option><option value="tester">测试</option><option value="product">产品</option><option value="architect">架构</option><option value="other">其他</option></select></div><div class="field"><label>项目权限</label><input value="项目成员（执行权限）" disabled></div><div class="actions"><button class="btn" onclick="saveAgentProject(\''+esc(id)+'\')">确认绑定</button></div>')}
 async function saveAgentProject(id){try{await api('/api/v1/agents/'+encodeURIComponent(id)+'/projects',{method:'POST',body:JSON.stringify({project_id:document.getElementById('agentProject').value,work_function:document.getElementById('agentFunction').value,role:'member'})});closeModal();toast('Agent 已绑定到项目');loadAgents()}catch(e){showError(e)}}
 async function unbindAgentProject(agentId,projectId){if(!isManager()||!confirm('解除该 Agent 与项目的绑定？活动任务分配也会被撤销。'))return;try{await api('/api/v1/agents/'+encodeURIComponent(agentId)+'/projects/'+encodeURIComponent(projectId),{method:'DELETE'});await openAgentDetail(agentId);await loadAgents();toast('项目绑定已解除')}catch(e){showError(e)}}
-window.loadAgents=loadAgents;window.loadCollaborationGrantInbox=loadCollaborationGrantInbox;window.revokeOwnedCollaborationGrant=revokeOwnedCollaborationGrant;window.openCreateAgent=openCreateAgent;window.createAgent=createAgent;window.showAgentToken=showAgentToken;window.copyText=copyText;window.openAgentDetail=openAgentDetail;window.saveAgent=saveAgent;window.rotateAgentToken=rotateAgentToken;window.revokeAgentToken=revokeAgentToken;window.bindAgentProject=bindAgentProject;window.saveAgentProject=saveAgentProject;window.unbindAgentProject=unbindAgentProject;
+window.loadAgents=loadAgents;window.loadCollaborationGrantInbox=loadCollaborationGrantInbox;window.revokeOwnedCollaborationGrant=revokeOwnedCollaborationGrant;window.renewOwnedCollaborationGrant=renewOwnedCollaborationGrant;window.reauthorizeOwnedCollaborationGrant=reauthorizeOwnedCollaborationGrant;window.openCollaborationGrantAudit=openCollaborationGrantAudit;window.openCreateAgent=openCreateAgent;window.createAgent=createAgent;window.showAgentToken=showAgentToken;window.copyText=copyText;window.openAgentDetail=openAgentDetail;window.saveAgent=saveAgent;window.rotateAgentToken=rotateAgentToken;window.revokeAgentToken=revokeAgentToken;window.bindAgentProject=bindAgentProject;window.saveAgentProject=saveAgentProject;window.unbindAgentProject=unbindAgentProject;
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
