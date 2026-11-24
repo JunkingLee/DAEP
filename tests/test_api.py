@@ -5466,3 +5466,87 @@ def test_agent_token_allowlist_includes_collaboration_proposal_read_and_create_o
     assert _agent_path_allowed('POST','/api/v1/tasks/task-1/collaboration-proposals')
     assert not _agent_path_allowed('POST','/api/v1/collaboration-proposals/p-1/decision')
     assert not _agent_path_allowed('POST','/api/v1/collaboration-proposals/p-1/withdraw')
+
+
+def test_collaboration_grant_notifications_read_state_and_worker_reminders():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Notification Lifecycle Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id,
+        "scopes": ["session.read", "session.message.send"], "expires_in_days": 30})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+
+    pending = client.get("/api/v1/me/notifications", headers=owner_headers,
+                         params={"status": "PENDING"})
+    assert pending.status_code == 200, pending.text
+    created_notice = [x for x in pending.json()["items"]
+                      if x["message_type"] == "AGENT_COLLABORATION_GRANT"
+                      and grant_id in x["content"]]
+    assert len(created_notice) == 1
+    assert pending.json()["unread_count"] >= 1
+
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept",
+                           headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+    all_items = client.get("/api/v1/me/notifications", headers=owner_headers,
+                           params={"status": "ALL"})
+    assert all_items.status_code == 200, all_items.text
+    accepted_notice = [x for x in all_items.json()["items"]
+                       if x["title"] == "Agent 已接受协作授权"]
+    assert len(accepted_notice) == 1
+
+    notice_id = accepted_notice[0]["id"]
+    acked = client.post(f"/api/v1/messages/{notice_id}/ack", headers=owner_headers,
+                        json={"status": "ACKNOWLEDGED"})
+    assert acked.status_code == 200, acked.text
+    read_items = client.get("/api/v1/me/notifications", headers=owner_headers,
+                            params={"status": "ACKNOWLEDGED"})
+    assert read_items.status_code == 200, read_items.text
+    assert any(x["id"] == notice_id for x in read_items.json()["items"])
+    assert not any(x["id"] == notice_id for x in client.get(
+        "/api/v1/me/notifications", headers=owner_headers,
+        params={"status": "PENDING"}).json()["items"])
+
+    with main_module.conn() as c:
+        reminder_expiry = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=2)).isoformat()
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  (reminder_expiry, grant_id))
+    denied = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                         headers=owner_headers, json={})
+    assert denied.status_code == 401, denied.text
+    first = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                        headers=WORKER, json={})
+    assert first.status_code == 200, first.text
+    assert first.json()["dispatched"] == 1
+    second = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                         headers=WORKER, json={})
+    assert second.status_code == 200, second.text
+    assert second.json()["dispatched"] == 0
+    reminders = client.get("/api/v1/me/notifications", headers=owner_headers,
+                           params={"status": "PENDING"})
+    reminder_items = [x for x in reminders.json()["items"]
+                      if x["message_type"] == "AGENT_COLLABORATION_GRANT_REMINDER"]
+    assert len(reminder_items) == 1
+    assert "不会自动续期" in reminder_items[0]["content"]
+    with main_module.conn() as c:
+        reminder_events = c.execute(
+            "SELECT COUNT(*) n FROM events WHERE event_type='agent.collaboration_grant.reminder_sent' AND task_id=?",
+            (task_id,)).fetchone()["n"]
+        outbox_count = c.execute(
+            "SELECT COUNT(*) n FROM outbox WHERE event_type='message.created' AND payload LIKE ?",
+            ('%AGENT_COLLABORATION_GRANT_REMINDER%',)).fetchone()["n"]
+    assert reminder_events == 1
+    assert outbox_count >= 1
+
+    invalid_filter = client.get("/api/v1/me/notifications", headers=owner_headers,
+                                params={"status": "UNREAD"})
+    assert invalid_filter.status_code == 422
