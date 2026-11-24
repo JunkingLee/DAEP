@@ -837,3 +837,59 @@
 ### 下一步唯一任务
 - 检查提交 `42ef3aedc67225330a8b2b95b9a93fafe10b9084` 触发的 CI 全部 jobs。
 - 若 Python 测试通过且其他 jobs 全绿，再进入 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API；若失败，按日志先修复。
+
+## 30. AgentCollaborationSession / AgentCollaborationGrant API 第一阶段（2026-11-24）
+
+### 上一阶段 CI 核验
+- 修复并发测试 HTTP 客户端调用后，最新完整 CI 为 run `45334887299`，对应交接文档提交 `eded651fb478ad72bc26f0ec086e28b8f72b6173`。
+- 以下七个 Job 全部 SUCCESS：Python 3.11、Python 3.12、Python 3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
+- run `45334857782` 因后续文档提交触发新 workflow 而 CANCELLED，不作为验证依据；以 `45334887299` 为完整验证依据。
+
+### 本轮实现
+- 新增 `app/agent_collaboration_api.py`，通过独立 APIRouter 注册协作 API；不把协作服务继续堆入大型 `app/main.py`。
+- `app/main.py` 仅负责注入现有数据库连接、Actor 认证、Task 行锁、Task 负责人上下文、Policy helper 和审计函数。
+- 默认 Session：
+  - `GET /api/v1/tasks/{task_id}/collaboration-session` 在首次访问时幂等创建 Task 唯一默认 Session。
+  - Session 的责任人沿用 Task Agent Execution Policy 的 responsible Member。
+  - 任务 assignee 变更后，必须先显式接管 Execution Policy；Session 责任人随后才与 Policy 责任人对齐。
+- Session 生命周期：
+  - `PATCH /api/v1/tasks/{task_id}/collaboration-session` 支持 OPEN、PAUSED、CLOSED。
+  - 仅当前 Task assignee 且已持有 Policy 责任权的 Member 可管理。
+  - CLOSED 为终态，禁止重新打开；PAUSED/CLOSED 不允许新增 Agent Collaboration Grant。
+  - Session 关闭不会自动撤销独立的 AgentTaskGrant。
+- Owner 独立协作授权：
+  - `POST /api/v1/tasks/{task_id}/collaboration-grants` 由当前 Member 为自己拥有的 Agent 授权，不允许负责人代其他 Owner 授权。
+  - 校验 Agent ACTIVE、Tenant、Owner、Scope、Resource Scope、有效期；支持 1-90 天。
+  - 当前协作 Scope：`session.read`、`session.message.send`、`session.proposal.create`。
+  - Resource Scope 当前采用受限结构 `resource_ids`，不隐式扩大为 Project 全域权限。
+  - 同一 Session + Agent 只允许一个有效授权；写操作先锁 Task，SQLite 使用 BEGIN IMMEDIATE，PostgreSQL 使用 Task 行 FOR UPDATE。
+  - Agent 可查看自己的协作授权 Inbox，并通过 `POST /api/v1/collaboration-grants/{grant_id}/accept` 主动接受；校验 Agent 身份、Owner 关系、Session OPEN、Project ACTIVE 和过期状态。
+  - Owner 可通过 `DELETE /api/v1/collaboration-grants/{grant_id}` 撤销自己的授权；其他 Member 不可代撤销。
+  - 关键授权、接受、撤销和 Session 状态变更写入审计事件。
+- 新增测试：
+  - 默认 Session 重复访问保持唯一。
+  - PAUSED 阻止新 Grant；恢复 OPEN 后可授权。
+  - Owner 创建 Grant、Agent Inbox 查看和 Agent 接受。
+  - Agent 不可管理 Session。
+  - Owner 撤销授权、CLOSED 禁止重新打开和加入。
+  - CLOSED Session 不影响独立 AgentTaskGrant。
+  - 非 Owner Member 不可为他人 Agent 授权。
+
+### 本轮提交
+- `6eb1c658106c8a4619e42922fafb4ed79d00fd26` — feat: add task collaboration session and grant API。
+- `dace1f25e30618738b6f1fcefc2091991bb35610` — feat: register task collaboration API routes。
+- `abb8d39fb35f477ed7f16c693e9494863a79db14` — test: cover task collaboration session and grants。
+- 本节交接文档提交 SHA 以本次文档提交结果为准。
+
+### 验证状态与限制
+- 上一阶段完整 CI 已全绿；本轮 API 和测试提交尚待本轮 CI 验证。
+- 当前没有在执行环境直接运行 pytest；不得宣称新 API 测试已经通过。
+- 本轮未新增数据库表或历史迁移；沿用已存在的 Session/CollaborationGrant 初始 Schema 定义。
+- 本轮尚未开放 MCP 工具或前端界面；消息发送、提议处理、Presence 和实时协作消息流仍未实现。
+- 当前 Scope/Resource Scope 是协作授权边界的第一版；具体消息/提议接口必须复用同一 Grant 有效性和 Scope 检查，不能绕过授权。
+- PostgreSQL Job 通过 migration/RLS 不等于已完成真实 PostgreSQL 多连接并发压力测试。
+
+### 下一步唯一任务
+- 核验本轮 API CI 的 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
+- 若失败按日志修复；通过后继续实现 Agent Collaboration Grant 的统一有效性/Scope/Resource Scope 校验 helper，并以此为基础增加 Session 消息读写 API。Agent 消息必须携带有效 CollaborationGrant；Session 非 OPEN 时禁止新消息；消息历史和 Owner 归属可审计。
+- 继续保持：DAEP 不创建、不启动、不托管 Agent Runtime；Agent 始终归属 Member；Presence 发现不代表调用授权；不新增历史迁移、回填或利旧逻辑。
