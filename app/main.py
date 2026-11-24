@@ -223,6 +223,35 @@ def init():
         CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,artifact_type TEXT,uri TEXT,commit_sha TEXT,metadata TEXT,created_at TEXT,tenant_id TEXT NOT NULL DEFAULT 'tenant-default',FOREIGN KEY(task_id) REFERENCES tasks(id));
         CREATE TABLE IF NOT EXISTS project_agents(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,member_id TEXT NOT NULL,tenant_id TEXT NOT NULL,agent_name TEXT NOT NULL,capabilities TEXT NOT NULL,protocols TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'AVAILABLE',metadata TEXT NOT NULL DEFAULT '{}',last_seen TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(project_id,member_id,agent_name),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_project_agents_discovery ON project_agents(project_id,status,last_seen);
+        CREATE TABLE IF NOT EXISTS agent_task_grants(
+            id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,task_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,owner_member_id TEXT NOT NULL,human_assignee_member_id TEXT NOT NULL,
+            authorized_by_member_id TEXT NOT NULL,scope_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED','ACCEPTED','REVOKED','COMPLETED','EXPIRED')),
+            created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
+            accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
+            revoke_reason TEXT,last_activity_at TEXT,legacy_assignment_id TEXT,
+            CHECK(expires_at>created_at),
+            CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
+              AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
+              AND (status<>'COMPLETED' OR completed_at IS NOT NULL)),
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_member_id) REFERENCES members(id),
+            FOREIGN KEY(human_assignee_member_id) REFERENCES members(id),
+            FOREIGN KEY(authorized_by_member_id) REFERENCES members(id),
+            FOREIGN KEY(revoked_by_member_id) REFERENCES members(id),
+            FOREIGN KEY(legacy_assignment_id) REFERENCES agent_task_assignments(id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_one_active_per_task
+            ON agent_task_grants(task_id) WHERE status IN ('AUTHORIZED','ACCEPTED');
+        CREATE INDEX IF NOT EXISTS idx_agent_task_grants_agent_status_expiry
+            ON agent_task_grants(tenant_id,agent_id,status,expires_at);
+        CREATE INDEX IF NOT EXISTS idx_agent_task_grants_task_status
+            ON agent_task_grants(tenant_id,task_id,status);
+        CREATE INDEX IF NOT EXISTS idx_agent_task_grants_owner_status_created
+            ON agent_task_grants(owner_member_id,status,created_at);
         CREATE TABLE IF NOT EXISTS task_delegations(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,requester_member_id TEXT NOT NULL,recipient_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',message_id TEXT,expires_at TEXT NOT NULL,responded_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(requester_member_id) REFERENCES members(id),FOREIGN KEY(recipient_member_id) REFERENCES members(id));
         CREATE INDEX IF NOT EXISTS idx_task_delegations_recipient ON task_delegations(recipient_member_id,status,expires_at);
         CREATE TABLE IF NOT EXISTS task_work_packages(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL,assignee_member_id TEXT NOT NULL,agent_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,correlation_id TEXT,sla_due_at TEXT,risk_state TEXT NOT NULL DEFAULT 'ON_TRACK',needs_attention INTEGER NOT NULL DEFAULT 0,stalled_at TEXT,stall_reason TEXT,FOREIGN KEY(parent_task_id) REFERENCES tasks(id),FOREIGN KEY(child_task_id) REFERENCES tasks(id),FOREIGN KEY(project_id) REFERENCES projects(id),FOREIGN KEY(assignee_member_id) REFERENCES members(id));
