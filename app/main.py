@@ -231,6 +231,7 @@ def init():
             created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,
             accepted_at TEXT,revoked_at TEXT,completed_at TEXT,revoked_by_member_id TEXT,
             revoke_reason TEXT,last_activity_at TEXT,
+            UNIQUE(id,task_id,agent_id),
             CHECK(expires_at>created_at),
             CHECK((status<>'ACCEPTED' OR accepted_at IS NOT NULL)
               AND (status<>'REVOKED' OR revoked_at IS NOT NULL)
