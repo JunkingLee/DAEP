@@ -136,7 +136,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             expect(page.locator("#agents .page-head button")).to_be_visible()
             expect(page.locator("#agentGrid")).to_contain_text("还没有 Agent")
 
-            page.locator("#agents .page-head button").click()
+            page.locator("#agents .page-head button").filter(has_text="创建 Agent").click()
             page.locator("#agentName").fill("Browser E2E Agent")
             page.locator("#agentDesc").fill("Agent identity lifecycle acceptance")
             page.get_by_role("button", name="创建并获取 Token").click()
