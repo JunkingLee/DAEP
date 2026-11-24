@@ -624,3 +624,13 @@
 2. 检查 PostgreSQL Alembic 干净建库和 `tests/postgres_rls_smoke.sql`，重点检查复合 FK、RLS 和 authenticator 权限。
 3. 修复 CI 暴露的 schema/test 问题；不要在 CI 结果未知时宣称数据库层已验证通过。
 4. 数据库层验证完成后，下一阶段才实现 AgentTaskExecutionPolicy 和 AgentTaskGrant 事务服务/API；在同一事务锁定 Policy 行校验 allow_multiple_agents/max_agents，随后再实现 Session/CollaborationGrant API。仍不做历史迁移或利旧。
+
+
+### CI 首轮反馈与修复（2026-11-24）
+- 初始 schema 代码提交 `e7f28ad05bce430a0bd8b43392453c649bc67d67` 触发 run `45321152370`。
+- PostgreSQL migrations job 成功，production-compose 和 container-build 成功。
+- Python 3.11/3.12/3.13 均因既有 `tests/test_api.py::test_rc46_agent_task_grants_schema_and_migration_contract` 仍断言 `legacy_assignment_id` 和旧 `UNIQUE(task_id)` 而失败；每个版本其余测试为 219 passed、1 skipped。
+- 这属于测试合约仍描述旧模型，不是新 schema 测试失败。已将该测试调整为初始 Schema 合约：删除 legacy 字段/外键，改为 (task_id, agent_id) 唯一索引和复合键。
+- 修复提交：`484dc155f2203502e4aa7b2bdf377554e27e48e5`、`2424ca2bf6cdf519b591d72c842a3be0b3a2db69`、`2eb5699d0694d648ad70833ee349411f01ac0ee7`（最后一项修正测试 DDL 中误写的转义换行）。
+- 最新代码提交 `2eb5699d0694d648ad70833ee349411f01ac0ee7` 对应 CI run `45321394737` 已创建，当前查询状态为 pending；不得提前宣称通过。
+- 旧 run 的 browser-e2e 因新提交触发后续运行而 cancelled，不作为结果。继续以最新 run 为准。
