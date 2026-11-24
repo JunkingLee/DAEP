@@ -316,3 +316,42 @@
   - 旧 `agent_project_bindings` / `agent_task_assignments` 仍按旧路径运行；没有自动迁移旧 assignment，也没有提前撤销历史任务授权。
 - 下一步唯一任务：Stage A API 第一批——实现 Member 主动创建 Grant、按任务/个人列表查看 Grant、授权人撤销 Grant；创建必须校验当前 Member 是任务唯一 assignee、Agent 属于当前 Member 且同 Tenant，期限默认 30 天/最大 90 天，同任务最多一个有效 Grant，写审计事件。先不切换 Agent 执行 API/MCP。
 
+## 17. AgentTaskGrant Member API 第一批（2026-11-24）
+
+- 承接第 16 节唯一任务，新增 Member 主动授权、个人/任务范围查询、授权人撤销 API。旧 Agent assignment/inbox/accept/heartbeat/execution API 暂未切换；本阶段不依赖 `agent_project_bindings`。
+- 新 API：
+  - `POST /api/v1/tasks/{task_id}/agent-grants`：Member 在本人负责的任务上授权自己的 Agent。请求字段 `agent_id`、可选 `requested_scope`、可选 `expires_in_days`。
+  - `GET /api/v1/agent-grants/me`：只列出当前 Member 自己拥有的 Agent Grants。
+  - `GET /api/v1/tasks/{task_id}/agent-grants`：只允许当前唯一人类责任人查看自己该任务的 Grant，不向项目 Manager 暴露私人 Agent 记录。
+  - `DELETE /api/v1/agent-grants/{grant_id}`：由创建授权的 Agent owner Member 撤销，可附带 reason；撤销不要求任务仍分配给该 Member，避免任务重新分配后授权人失去撤销自己授权的能力。
+- 创建授权服务端规则：
+  - actor 必须为 MEMBER，Agent Token 不得创建/管理 Grant。
+  - Task → Requirement → Project → Tenant 必须存在，Project 必须 ACTIVE，Task 不得为 DONE/CANCELLED/CLOSED/ARCHIVED。
+  - assignments 中必须恰好只有一个 Member，且等于当前 Member；多人责任人任务返回 409，其他 Member/Manager/Admin 代授权返回 403。
+  - Agent 必须 ACTIVE、Tenant 与 Project 一致，且 `agents.owner_member_id` 必须等于当前 Member；不检查 Project binding。
+  - 默认 30 天，允许 1–90 天；拒绝 bool/字符串/越界值。
+  - Scope 固定白名单：`task.read`、`task.progress.report`、`task.blocked.report`、`task.artifact.submit`；默认授予上述四项，可显式选择非空子集，拒绝未知/重复 scope。没有开放 task.comment.create。
+  - 同一 Task 已有未过期 AUTHORIZED/ACCEPTED Grant 时返回 409；发现已过期但状态仍 active 的旧 Grant 时，在同一写事务中标记 EXPIRED 后再创建。
+  - 返回数据不包含 Agent Token；授权和撤销均写 `events` 审计事件，actor_member_id 为真实授权/撤销 Member。
+- 列表返回 scope 解析结果和 `effective_status`；对超过 expires_at 的 active 状态显示 EXPIRED。创建新 Grant 时会持久化清理同任务过期 active Grant。
+- 生命周期联动：
+  - Agent 被 owner 禁用时，自动撤销该 Agent 所有 AUTHORIZED/ACCEPTED AgentTaskGrant，写 revoked_at、revoked_by_member_id、revoke_reason 并记录审计事件。
+  - Member 账号被禁用时，对其 Agent 的有效 Grant 同样撤销，原因标记为 Agent owner account disabled。
+  - 单纯 Agent Token 撤销仍由 Token 认证阻断请求；Token 轮换策略不在本轮改变。
+- 测试新增：
+  - `tests/test_api.py` 覆盖：平台管理员/Manager 不能替 Member 授权、非法 scope/expiry、正常创建和 scope、重复 Grant、个人/任务列表隔离、其他 Member 无法读取/撤销、撤销审计、非 owner Agent 拒绝、多人责任人拒绝、任务改派后原授权人仍可撤销、Agent disable 自动撤销 Grant。
+  - 最新完整代码 HEAD：`88c86221bcb0a558a9d533179672a695c67bdab6`。
+  - 代码阶段 CI run `45308076211`：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、production-compose、container-build 均 success；browser-e2e 当时仍在 Install Chromium，未完成，不能记为通过。交接文档提交后以新 run 复核最终状态。
+- 关键代码提交：
+  - `1e2d41a787b45df49bcd4ad994968560b5f6c734` — Member Grant API。
+  - `fa2658c42044bd0eb62cf3cc707ef74d53d1b5c9` — 支持任务改派后授权人仍可撤销。
+  - `8ac9ee63f952510a48317c9eb9a09e4e22e531b8`、`21202dd6f406978e09c598532c4809b38544952d` — Grant API 权限测试及 DELETE 请求测试修正。
+  - `40f9152c6c7182a6b57c2bced0d56938382d5eb7` — Agent disable 撤销 Grant。
+  - `64289efa9e72ff2b0d895440b609d7742c9dee12` — Member disable 撤销其 Agent Grants。
+  - `88c86221bcb0a558a9d533179672a695c67bdab6` — Agent disable 联动测试。
+- 已知限制/后续：
+  - AgentTaskGrant 目前仅支持 Member 创建、查询、撤销；Agent 接受 Grant 的 API 尚未实现，故新 Grant 仍为 AUTHORIZED，尚不能驱动新 Agent 执行流程。
+  - 旧 Agent inbox/accept/heartbeat/require_task_access 仍由旧 assignment + project binding 驱动。不能把本轮 API 描述为已切换新执行授权。
+  - Grant scope 当前仅在创建时校验和存储；统一 AgentTaskGrant 执行 guard 尚未落地，后续 Stage B 必须在每次执行 API/MCP 调用中重新校验 Tenant/Project/Task/Agent/owner/assignee/status/expiry/scope。
+  - 数据库仍缺少复合 tenant/project/task/agent/owner 关系约束，当前 API 通过事务内查询做组合校验；后续 migration 可强化数据库级约束。
+- 下一步唯一任务：实现 Agent 侧 Grant inbox 与 accept API（`GET /api/v1/agents/me/grants`、`POST /api/v1/agent-grants/{grant_id}/accept`），只允许 Grant 对应 Agent 接受；接受时重验 Agent ACTIVE、owner Member ACTIVE、Project ACTIVE、Tenant/Task 一致、任务仍由 grant.human_assignee_member_id 唯一负责、Grant 未过期且状态 AUTHORIZED。成功后改为 ACCEPTED、记录 accepted_at/审计；幂等处理已接受 Grant。此步骤仍不切换旧执行 API，待 accept/inbox 完成后再实施统一执行 guard 和 MCP/API 切换。
