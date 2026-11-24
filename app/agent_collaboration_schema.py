@@ -125,7 +125,7 @@ def ensure_agent_collaboration_schema(conn_factory):
             FOREIGN KEY (author_member_id) REFERENCES members(id),
             FOREIGN KEY (author_agent_id) REFERENCES agents(id),
             FOREIGN KEY (agent_owner_member_id) REFERENCES members(id),
-            FOREIGN KEY (collaboration_grant_id) REFERENCES agent_collaboration_grants(id),
+            FOREIGN KEY (collaboration_grant_id, session_id, task_id, author_agent_id, agent_owner_member_id) REFERENCES agent_collaboration_grants(id, session_id, task_id, agent_id, owner_member_id),
             CHECK (
                 (author_type = 'MEMBER' AND author_member_id IS NOT NULL
                     AND author_agent_id IS NULL AND agent_owner_member_id IS NULL
@@ -160,7 +160,7 @@ def ensure_agent_collaboration_schema(conn_factory):
             FOREIGN KEY (session_id) REFERENCES agent_collaboration_sessions(id) ON DELETE CASCADE,
             FOREIGN KEY (proposed_by_agent_id) REFERENCES agents(id) ON DELETE CASCADE,
             FOREIGN KEY (owner_member_id) REFERENCES members(id),
-            FOREIGN KEY (collaboration_grant_id) REFERENCES agent_collaboration_grants(id),
+            FOREIGN KEY (collaboration_grant_id, session_id, task_id, proposed_by_agent_id, owner_member_id) REFERENCES agent_collaboration_grants(id, session_id, task_id, agent_id, owner_member_id),
             FOREIGN KEY (decided_by_member_id) REFERENCES members(id)
         );
 
