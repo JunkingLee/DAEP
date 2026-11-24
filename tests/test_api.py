@@ -5558,10 +5558,11 @@ def test_collaboration_grant_notifications_read_state_and_worker_reminders():
         "expires_in_days": 10})
     assert second_grant.status_code == 200, second_grant.text
     expired_id = second_grant.json()["id"]
+    expired_created = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=3)).isoformat()
     expired_at = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=1)).isoformat()
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  (expired_at, expired_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  (expired_created, expired_at, expired_id))
     swept = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
                         headers=WORKER, json={})
     assert swept.status_code == 200, swept.text
