@@ -370,12 +370,15 @@ def register_agent_collaboration_routes(
         row = c.execute(
             """SELECT g.*,a.status agent_status,a.owner_member_id current_owner,a.tenant_id agent_tenant,
                       s.status session_status,s.project_id session_project,s.task_id session_task,
-                      p.status project_status,p.tenant_id project_tenant,t.status task_status
+                      p.status project_status,p.tenant_id project_tenant,t.status task_status,
+                      r.project_id task_project,m.tenant_id owner_tenant
                FROM agent_collaboration_grants g
                JOIN agents a ON a.id=g.agent_id
                JOIN agent_collaboration_sessions s ON s.id=g.session_id
                JOIN projects p ON p.id=g.project_id
                JOIN tasks t ON t.id=g.task_id
+               JOIN requirements r ON r.id=t.requirement_id
+               JOIN members m ON m.id=g.owner_member_id
                WHERE g.id=? AND g.tenant_id=? AND g.agent_id=?""",
             (grant_id, current.get("tenant_id", "tenant-default"), current.get("agent_id")),
         ).fetchone()
@@ -383,6 +386,7 @@ def register_agent_collaboration_routes(
             raise HTTPException(404, "Collaboration grant not found")
         if (row["agent_tenant"] != row["tenant_id"] or row["project_tenant"] != row["tenant_id"]
             or row["session_project"] != row["project_id"] or row["session_task"] != row["task_id"]
+            or row["task_project"] != row["project_id"] or row["owner_tenant"] != row["tenant_id"]
             or (task_id is not None and row["task_id"] != task_id)
             or row["current_owner"] != row["owner_member_id"] or row["agent_status"] != "ACTIVE"):
             raise HTTPException(403, "Agent collaboration identity or resource relationship is invalid")
@@ -491,8 +495,9 @@ def register_agent_collaboration_routes(
                     required_scope="session.message.send", resource_id=resource_id)
                 session = c.execute("SELECT * FROM agent_collaboration_sessions WHERE id=?",
                                     (grant["session_id"],)).fetchone()
-                if not session or session["status"] != "OPEN":
-                    raise HTTPException(409, "Only an OPEN collaboration Session accepts new messages")
+                if (not session or session["status"] != "OPEN"
+                    or grant["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED")):
+                    raise HTTPException(409, "Only an OPEN collaboration Session on an active Task accepts new messages")
                 author_type, author_member_id, author_agent_id = "AGENT", None, current["agent_id"]
                 owner_member_id, collaboration_grant_id = grant["owner_member_id"], grant["id"]
                 audit_actor = None
