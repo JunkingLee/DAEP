@@ -137,3 +137,66 @@ def test_team_policy_accepts_unbounded_agent_count_in_initial_schema():
             pass
         else:
             raise AssertionError("A Task must have at most one execution policy")
+
+
+def test_multiple_agent_grants_share_one_task_but_duplicate_agent_is_rejected():
+    main_module.init()
+    ensure_agent_schema(main_module.conn)
+    with main_module.conn() as c:
+        c.execute(
+            """INSERT INTO projects(id,name,description,created_by,created_at,tenant_id)
+               VALUES('schema-multi-project','Schema Multi Project','', 'member-admin',
+                      '2026-11-24T00:00:00+00:00','tenant-default')"""
+        )
+        c.execute(
+            """INSERT INTO requirements(id,project_id,title,description,acceptance_criteria,status,created_at)
+               VALUES('schema-multi-requirement','schema-multi-project','Requirement','','[]','OPEN',
+                      '2026-11-24T00:00:00+00:00')"""
+        )
+        c.execute(
+            """INSERT INTO tasks(id,requirement_id,title,description,status,progress,created_at,updated_at)
+               VALUES('schema-multi-task','schema-multi-requirement','Task','','READY',0,?,?)""",
+            ("2026-11-24T00:00:00+00:00","2026-11-24T00:00:00+00:00"),
+        )
+        for agent_id in ("schema-agent-one", "schema-agent-two"):
+            c.execute(
+                """INSERT INTO agents(id,owner_member_id,tenant_id,name,description,status,created_at,updated_at)
+                   VALUES(?, 'member-admin','tenant-default',?,'','ACTIVE',?,?)""",
+                (agent_id, agent_id, "2026-11-24T00:00:00+00:00",
+                 "2026-11-24T00:00:00+00:00"),
+            )
+            c.execute(
+                """INSERT INTO agent_task_grants(
+                       id,tenant_id,project_id,task_id,agent_id,owner_member_id,
+                       human_assignee_member_id,authorized_by_member_id,scope_json,
+                       status,created_at,updated_at,expires_at
+                   ) VALUES(?,?,?,?,?,?,?,?,'["task.read"]','AUTHORIZED',?,?,?)""",
+                ("schema-grant-" + agent_id,"tenant-default","schema-multi-project",
+                 "schema-multi-task",agent_id,"member-admin","member-admin","member-admin",
+                 "2026-11-24T00:00:00+00:00","2026-11-24T00:00:00+00:00",
+                 "2026-12-24T00:00:00+00:00"),
+            )
+
+        active_count = c.execute(
+            """SELECT count(*) AS n FROM agent_task_grants
+               WHERE task_id='schema-multi-task' AND status IN ('AUTHORIZED','ACCEPTED')"""
+        ).fetchone()["n"]
+        assert active_count == 2
+
+        try:
+            c.execute(
+                """INSERT INTO agent_task_grants(
+                       id,tenant_id,project_id,task_id,agent_id,owner_member_id,
+                       human_assignee_member_id,authorized_by_member_id,scope_json,
+                       status,created_at,updated_at,expires_at
+                   ) VALUES('schema-duplicate-agent-grant','tenant-default',
+                            'schema-multi-project','schema-multi-task','schema-agent-one',
+                            'member-admin','member-admin','member-admin','["task.read"]',
+                            'AUTHORIZED',?,?,?)""",
+                ("2026-11-24T00:00:00+00:00","2026-11-24T00:00:00+00:00",
+                 "2026-12-24T00:00:00+00:00"),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("The same Agent cannot hold duplicate active grants for one Task")
