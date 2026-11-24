@@ -3764,21 +3764,42 @@ def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
     stamp=datetime.now(timezone.utc)
     stamp_text=stamp.isoformat()
     horizon=(stamp+timedelta(days=7)).isoformat()
-    dispatched=0
+    reminders_dispatched=0
+    expired_dispatched=0
     with conn() as c:
         begin_serialized_write(c)
         rows=c.execute("""SELECT g.id grant_id,g.tenant_id,g.project_id,g.task_id,g.agent_id,
-                    g.owner_member_id,g.expires_at,a.name agent_name,t.title task_title
+                    g.owner_member_id,g.expires_at,a.name agent_name,t.title task_title,
+                    s.status session_status,p.status project_status,t.status task_status
              FROM agent_collaboration_grants g
              JOIN agents a ON a.id=g.agent_id AND a.owner_member_id=g.owner_member_id AND a.status='ACTIVE'
              JOIN members m ON m.id=g.owner_member_id AND m.tenant_id=g.tenant_id
-             JOIN projects p ON p.id=g.project_id AND p.tenant_id=g.tenant_id AND p.status='ACTIVE'
-             JOIN tasks t ON t.id=g.task_id AND t.status NOT IN ('DONE','CANCELLED','CLOSED','ARCHIVED')
-             JOIN agent_collaboration_sessions s ON s.id=g.session_id AND s.status='OPEN'
-             WHERE g.status IN ('AUTHORIZED','ACCEPTED') AND g.expires_at>? AND g.expires_at<=?
-             ORDER BY g.expires_at""",(stamp_text,horizon)).fetchall()
+             JOIN projects p ON p.id=g.project_id AND p.tenant_id=g.tenant_id
+             JOIN tasks t ON t.id=g.task_id
+             JOIN agent_collaboration_sessions s ON s.id=g.session_id
+             WHERE g.status IN ('AUTHORIZED','ACCEPTED') AND g.expires_at<=?
+             ORDER BY g.expires_at""",(horizon,)).fetchall()
         for row in rows:
             remaining=(datetime.fromisoformat(row['expires_at'].replace('Z','+00:00'))-stamp).total_seconds()
+            if remaining<=0:
+                cur=c.execute("""UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=?
+                    WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED') AND expires_at<=?""",
+                    (stamp_text,row['grant_id'],stamp_text))
+                if not cur.rowcount:
+                    continue
+                event(c,'agent.collaboration_grant.expired',row['owner_member_id'],row['task_id'],
+                      {'grant_id':row['grant_id'],'agent_id':row['agent_id'],'source':'worker_expiry_sweep'},
+                      tenant_override=row['tenant_id'])
+                enqueue_member_notification(
+                    c,row['owner_member_id'],row['tenant_id'],row['task_id'],row['project_id'],
+                    'AGENT_COLLABORATION_GRANT','Agent 协作授权已过期',
+                    f"Agent「{row['agent_name']}」在 Task「{row['task_title']}」的协作授权已过期。若仍需协作，请由你本人重新授权。",
+                    'HIGH',f"agent-collaboration-grant:expired:{row['grant_id']}")
+                expired_dispatched+=1
+                continue
+            # Do not remind about grants that cannot currently be used.
+            if row['session_status']!='OPEN' or row['project_status']!='ACTIVE' or row['task_status'] in ('DONE','CANCELLED','CLOSED','ARCHIVED'):
+                continue
             if remaining<=86400:
                 window='24h'; label='24 小时内'
             elif remaining<=3*86400:
@@ -3796,8 +3817,10 @@ def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
                 'AGENT_COLLABORATION_GRANT_REMINDER','Agent 协作授权即将到期',
                 f"Agent「{row['agent_name']}」参与 Task「{row['task_title']}」的协作授权将在{label}到期。请检查是否需要由你本人续期；系统不会自动续期或扩大授权范围。",
                 'HIGH' if window=='24h' else 'NORMAL',reminder_key+':notification')
-            dispatched+=1
-    return {'dispatched':dispatched,'checked':len(rows),'horizon_days':7}
+            reminders_dispatched+=1
+    return {'dispatched':reminders_dispatched+expired_dispatched,
+            'reminders_dispatched':reminders_dispatched,'expired_dispatched':expired_dispatched,
+            'checked':len(rows),'horizon_days':7}
 
 @app.get('/api/v1/me/notifications')
 def notifications(authorization:str=Header(None),after:int=0,limit:int=50,status:str='PENDING'):
