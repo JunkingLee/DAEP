@@ -338,3 +338,145 @@ Request:
 - Agent progress/blocked/artifact 的各条路由必须逐一盘点，不得只修 /api/v1/agents/me/tasks。
 - 当前 Agent 任务分配 API 的 OpenAPI 路径和前端调用需要完整检索，按真实代码路由迁移。
 - 需要先查询历史数据分布（owner/tenant 不一致、重复 assignment、同任务多人 assignee、项目 binding 与 assignment 的组合），再决定 migration 是否需要数据修复脚本。
+
+
+---
+
+## 11. 正式产品决策：TEAM 多 Agent 团队协作（2026-11-24）
+
+本节是本迁移设计的最新决策，覆盖本文旧版第 3.4、4.1 第 6 步、8.2 和测试矩阵中“同一 Task 只能有一个有效 Grant”的旧约束。旧约束全部废止。
+
+### 11.1 迁移目标与核心语义
+
+- `collaboration_mode` 固定采用 `TEAM`。本轮不再提供 INDEPENDENT 或 LEAD_AND_SUPPORT 作为产品选择项。
+- `allow_multiple_agents` 由 Task 人类负责人设置。关闭时最多一个有效 Agent Grant；开启时可授权多个 Agent。
+- `max_agents` 为 nullable positive integer。NULL = 负责人不设置任务级固定数量上限；正整数 = 负责人主动设置的任务级数量上限。不得在数据库默认值、API 默认值或 UI 中隐式设置 3、5、10。
+- 若 `allow_multiple_agents=false`，数据库/服务层必须将有效 Grant 数限制为 1，不论 max_agents 值为何；建议策略校验拒绝不一致配置（例如 false + max_agents > 1）。
+- 若 `allow_multiple_agents=true` 且 `max_agents IS NULL`，不设任务级固定数量上限。数据库不应建立 task_id 单列的有效 Grant 唯一索引。
+- “不设固定数量”不取消容量治理：请求速率、单 Agent 并发、消息大小、存储配额等通用平台资源保护可以独立存在，但不能伪装为 Task 的 max_agents 或静默拒绝一个合法的团队成员数。任何平台级限制必须单独公开、可配置、可观测，并非本次任务级数据库字段。
+
+### 11.2 新增/调整数据库实体
+
+#### A. agent_task_execution_policies
+
+建议字段：
+- `id` TEXT PK
+- `tenant_id`, `project_id`, `task_id`（Task 唯一约束）
+- `responsible_member_id`（明确的人类任务负责人）
+- `allow_multiple_agents` BOOLEAN NOT NULL DEFAULT FALSE
+- `max_agents` INTEGER NULL CHECK (max_agents IS NULL OR max_agents > 0)
+- `collaboration_mode` TEXT NOT NULL DEFAULT 'TEAM' CHECK (collaboration_mode = 'TEAM')
+- `policy_version` INTEGER NOT NULL DEFAULT 1
+- `created_at`, `updated_at`
+
+约束：
+- 一个 Task 一条策略；tenant/project/task 关系必须一致。
+- responsible_member_id 必须是当前 Task 的有效人类负责人，且属于同一 Tenant/Project。
+- 策略创建/修改由当前人类任务负责人执行；项目治理角色负责分配人类任务，不得代替 Agent Owner 授权其 Agent。
+- 修改策略必须记录审计事件并递增 policy_version。
+- 默认 allow_multiple_agents=false 是安全默认；用户可显式打开。max_agents 默认 NULL，但在 allow_multiple_agents=false 时仍受单 Agent 语义约束。
+
+#### B. agent_task_grants：从 Task 1:1 改为 Task 1:N
+
+保留现有 Grant 字段和状态机，新增/确保：
+- policy_version：授权时策略版本快照；
+- grant owner 与 authorized_by 的身份快照；
+- human_assignee/responsible_member 快照；
+- scope、expires_at、accepted_at、revoked_at、completed_at 等生命周期字段。
+
+索引/约束迁移：
+- 删除旧的 `UNIQUE(task_id) WHERE status IN ('AUTHORIZED','ACCEPTED')`。
+- 新建 `UNIQUE(task_id, agent_id) WHERE status IN ('AUTHORIZED','ACCEPTED')`，确保同一 Agent 同一 Task 只有一个有效授权。
+- 为统计有效 Grant 建立 `(tenant_id, task_id, status)` 索引。
+- 不通过静态 partial unique index 实现可变 max_agents；数量限制必须在事务中读取并锁定 policy/Task 行后校验。
+- Grant 创建事务：锁定 TaskExecutionPolicy（PostgreSQL FOR UPDATE；SQLite 使用项目既有 BEGIN IMMEDIATE 事务约定）→ 校验当前负责人和 Agent Owner → 校验 allow_multiple_agents/max_agents → 校验同 Agent 无有效 Grant → 插入 Grant → 写审计事件。所有并发创建都必须走同一锁顺序。
+- 当策略从允许多 Agent 改为不允许时，若当前有效 Grant 数大于 1，必须要求负责人显式选择保留对象并撤销其余 Grant；禁止数据库迁移或 PATCH 自动随机撤销。
+- policy_version 不匹配时，执行请求按明确策略处理；建议已存在 Grant 保留其授权快照，但策略收紧/关闭多 Agent 时触发显式协调与撤销，而非静默改变授权含义。
+
+#### C. agent_task_contributions
+
+按 Agent Grant 保存独立贡献，建议字段：
+- id、tenant_id、project_id、task_id、grant_id、agent_id、owner_member_id
+- contribution_type（PROGRESS / BLOCKER / NOTE / ARTIFACT_REFERENCE / STATUS）
+- progress_percent（可空，0–99）
+- payload_json（按类型 schema 校验，禁止任意敏感字段）
+- created_at、updated_at
+
+约束：
+- grant_id 必须属于同 task、agent、tenant；贡献记录不可跨 Grant 归属。
+- Agent 只能追加/更新自己 Grant 允许的贡献，不直接覆盖 Task 的整体进度/人类责任字段。
+- Task overall progress 由人类负责人确认；若以后聚合，必须有确定性聚合算法、来源可追溯及审计。
+- Blocker 与 artifact contribution 都必须关联 grant_id；审计 actor_type=AGENT、agent_id、owner_member_id。
+
+#### D. agent_collaboration_grants
+
+建议字段：
+- id、tenant_id、project_id、task_id（第一版必填，限制在单 Task）
+- agent_id、owner_member_id、authorized_by_member_id
+- scope_json、resource_scope_json
+- status（AUTHORIZED / ACCEPTED / REVOKED / EXPIRED）
+- expires_at、created_at、accepted_at、revoked_at、revoked_by_member_id、revoke_reason
+- 可选 policy_version
+
+该表与 AgentTaskGrant 分离：执行授权不自动授予消息/发现/邀请权限。每个 Agent 的协作授权由其 Owner 单独同意；授权者必须是有权为该 Agent 授权且在该 Task 中具备相应人类权限的 Member。Agent 对外协作仍以 Agent 身份执行。
+
+#### E. 消息与工作包关联
+
+复用现有 messages、task_work_packages、task_delegations，不另造一套不兼容的消息总线；为消息/工作包补充可空的 agent_id、agent_owner_member_id、agent_collaboration_grant_id、source_grant_id（按实体实际适用），保证身份与授权来源可追溯。
+- Member→Member task_delegations 语义不变。
+- Agent 只能提出 delegation/work-package proposal；正式人类责任变更和正式工作包治理由 Member 确认。
+- 消息必须按 Task + recipient/resource scope 授权过滤，Agent 不得读取项目全局消息或无关任务消息。
+
+### 11.3 协作 Scope 与 API/MCP 迁移
+
+第一阶段建议开放以下最小协作 scopes：
+- `collaboration.message.read`
+- `collaboration.message.send`
+- `collaboration.agent.discover`
+- `collaboration.invitation.propose`
+- `collaboration.work_package.propose`
+- `collaboration.delegation.propose`
+
+授权边界：
+- discover 仅返回当前 Task 协作范围内明确公开的 Agent Presence 摘要；不得返回 Token、私有配置或其他项目数据。
+- message.read/send 仅限 collaboration grant 的 Task、conversation 和 recipients 范围；消息作者身份必须是 Agent。
+- invitation/work_package/delegation 的 Agent 入口只创建 proposal，不直接改变 assignee、创建正式治理决策或授权其他 Agent。
+- 被邀请 Agent 的 Owner 必须单独授权；Agent 发现或收到邀请不自动形成 Grant。
+- 所有 REST 路由先实现统一 CollaborationGrant guard；MCP allowlist 仅作为第二道防线，不能替代 REST guard。
+- 工具目录按 Member/Agent 身份过滤；Agent Token 不应看到不可调用的 Member 治理工具。
+
+### 11.4 迁移步骤（依赖顺序）
+
+1. **文档与 schema 合约冻结**：更新领域模型、迁移设计、OpenAPI 术语和测试矩阵；完成策略、Grant 1:N、Contribution、CollaborationGrant 表设计。
+2. **DB migration**：新增 execution policy、contribution、collaboration grant 表；为 Grant 增加 policy_version/必要归属快照；替换唯一索引。迁移前检查并报告历史有效 Grant 数量，不能静默删除。
+3. **策略 API**：Task 负责人可读写执行策略；项目 Manager 仍只负责分配人类成员；策略修改带版本和审计。
+4. **Grant API 1:N**：Member owner 分别授权自己的 Agent；事务锁校验 allow_multiple_agents/max_agents；inbox/accept/撤销支持多 Grant。
+5. **Contribution API**：progress/blocker/artifact 记录按 grant_id/agent_id 分离；Task 总体进度由负责人确认。
+6. **CollaborationGrant API**：按 Task 资源范围独立授权消息、发现、提议；Agent 不能继承 Owner Member 的治理权限。
+7. **Messages/Work Packages/MCP**：给消息和工作包建立 Agent 身份/授权关联；Agent 可发送授权范围内消息并提出 proposal；Member 确认后执行治理变更。
+8. **旧路径退役**：旧 assignment 写 API/MCP 工具改为只读兼容或 410；旧 Assignment 仅历史，不迁移为 Grant；旧 project binding 不作为授权条件。
+9. **前端**：Task 负责人设置 TEAM 与 allow_multiple_agents；max_agents 留空代表不设固定上限；展示每个 Agent 的独立授权/贡献/协作授权和撤销入口。
+10. **生产验证**：SQLite 应用测试 + PostgreSQL migration/RLS + 并发 Grant 创建/策略修改 + 真实 MCP Host/浏览器验证分别报告，不相互替代。
+
+### 11.5 必须新增的测试
+
+- allow_multiple_agents=false：同 Task 第二个有效 Grant 拒绝。
+- allow_multiple_agents=true、max_agents=NULL：多个不同 Agent 可各自授权并接受；不因 3/5/10 等隐式阈值被拒绝。
+- allow_multiple_agents=true、max_agents=N：N 个有效 Grant 可创建，第 N+1 个拒绝；并发创建不得超额。
+- 同一 Agent 对同一 Task 重复授权被拒绝；同一 Agent 对不同 Task 可分别授权。
+- 多 Agent 的 progress/blocker/artifact contribution 保持各自 grant_id/agent_id，互不覆盖。
+- Agent 无 collaboration grant 时，即使有 AgentTaskGrant，也不能读取/发送协作消息、发现 Agent 或发起 proposal。
+- Agent 有 message.send 但无 message.read 时只能发送不能读取；scope 与 resource_scope 都必须匹配。
+- Agent proposal 不会直接修改 human assignee、正式 work package、审批/验收或其他 Agent Grant。
+- 跨 Tenant、跨 Project、跨 Task、跨 Owner 的 collaboration grant 和 message 访问全部拒绝。
+- 接收 Agent 未经其 Owner 授权不能因被发现/邀请而加入团队。
+- 撤销 CollaborationGrant 后所有 REST/MCP 协作入口立即拒绝。
+- PostgreSQL 并发锁、RLS、唯一索引与 SQLite BEGIN IMMEDIATE 路径分别验证。
+
+### 11.6 旧设计明确废止项
+
+- 废止“同一 Task 只能有一个有效 Agent Grant”的 task_id partial unique index。
+- 废止“多 Agent 以后再引入”的延期决策。
+- 废止“INDEPENDENT / LEAD_AND_SUPPORT / TEAM 由用户选择”的备选项；本次用户已确认 TEAM。
+- 废止任何默认 3、5、10 的任务级 Agent 数量限制。
+- 旧 Assignment 不能自动复制为 Grant；旧项目绑定不能作为执行/协作授权。
