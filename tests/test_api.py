@@ -4092,3 +4092,79 @@ def test_agent_grant_accept_rechecks_current_assignee_and_expiry():
     assert expired.status_code==409,expired.text
     inbox=client.get('/api/v1/agents/me/grants',headers=agent_headers)
     assert all(x['grant_id']!=second.json()['id'] for x in inbox.json()['items'])
+
+
+def test_agent_task_grant_guard_controls_task_read_progress_and_blocked_without_binding():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Scoped Execution Agent'})
+    assert agent.status_code==200,agent.text
+    agent_id=agent.json()['agent']['id']
+    agent_headers={'Authorization':'Bearer '+agent.json()['token']}
+
+    # A legacy assignment/binding is not sufficient: only an accepted owner-issued grant works.
+    no_grant=client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers)
+    assert no_grant.status_code==403,no_grant.text
+
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent_id,'requested_scope':['task.read','task.progress.report']})
+    assert grant.status_code==200,grant.text
+    accepted=client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+
+    detail=client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers)
+    assert detail.status_code==200,detail.text
+    assert detail.json()['id']==task_id
+    progress=client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,json={'progress':45})
+    assert progress.status_code==200,progress.text
+    assert progress.json()['progress']==45
+
+    blocked_denied=client.post(f'/api/v1/tasks/{task_id}/blocked',headers=agent_headers,json={
+        'reason':'Missing permission in this grant'})
+    assert blocked_denied.status_code==403,blocked_denied.text
+    review_denied=client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,json={'progress':100})
+    assert review_denied.status_code==403,review_denied.text
+
+    # A new, separately scoped grant can authorize blocked reporting.
+    revoked=client.delete(f"/api/v1/agent-grants/{grant.json()['id']}",headers=owner_headers)
+    assert revoked.status_code==200,revoked.text
+    second=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent_id,'requested_scope':['task.read','task.blocked.report']})
+    assert second.status_code==200,second.text
+    assert client.post(f"/api/v1/agent-grants/{second.json()['id']}/accept",
+        headers=agent_headers).status_code==200
+    blocked=client.post(f'/api/v1/tasks/{task_id}/blocked',headers=agent_headers,json={
+        'reason':'External dependency unavailable'})
+    assert blocked.status_code==200,blocked.text
+    with main_module.conn() as c:
+        row=c.execute('SELECT status FROM tasks WHERE id=?',(task_id,)).fetchone()
+        events=c.execute("""SELECT COUNT(*) n FROM events
+            WHERE task_id=? AND event_type='task.blocked'""",(task_id,)).fetchone()
+    assert row['status']=='BLOCKED' and events['n']==1
+
+
+def test_agent_task_grant_guard_rejects_reassignment_and_expiry():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Grant Guard Revalidation'})
+    assert agent.status_code==200,agent.text
+    agent_headers={'Authorization':'Bearer '+agent.json()['token']}
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent.json()['agent']['id'],'requested_scope':['task.read','task.progress.report']})
+    assert grant.status_code==200,grant.text
+    assert client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",
+        headers=agent_headers).status_code==200
+
+    replacement=client.post('/api/v1/members',headers=ADMIN,json={'name':'Guard Reassignment Target'})
+    assert replacement.status_code==200,replacement.text
+    with main_module.conn() as c:
+        c.execute('DELETE FROM assignments WHERE task_id=?',(task_id,))
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(task_id,replacement.json()['id']))
+    denied=client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers)
+    assert denied.status_code==403,denied.text
+    denied_write=client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,json={'progress':50})
+    assert denied_write.status_code==403,denied_write.text
