@@ -12314,3 +12314,6 @@ register_agent_collaboration_routes(
     _lock_agent_policy_task, _grant_task_context, _ensure_agent_task_policy, DATABASE_URL,
     enqueue_member_notification,
 )
+
+from app.notification_governance_api import register_notification_governance_routes
+register_notification_governance_routes(app, conn, actor, now)
