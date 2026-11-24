@@ -1334,3 +1334,28 @@
 
 ### 下一步
 - 核验当前分支最新 CI，重点关注新浏览器测试的 Proposal 决策按钮、消息回显，以及 Python 测试收集是否正常。
+
+
+## 56. Task Collaboration 浏览器闭环 CI 验证与下一阶段（2026-11-24）
+
+### 本轮验证结果
+- 当前代码提交：`2839c1742db12666f6319544f0a3f40b5e8c1e40`（`ci: run task collaboration browser acceptance`）。
+- CI run `45356197776`：整体 `success`，七个 Job 全部 SUCCESS：
+  - Python 3.11 / 3.12 / 3.13：SUCCESS。
+  - PostgreSQL migrations / RLS：SUCCESS。
+  - Container Build：SUCCESS。
+  - Production Compose：SUCCESS。
+  - Browser E2E：SUCCESS。
+- Browser E2E 使用真实 Playwright Chromium，命令执行 `pytest -q tests/test_agent_management_e2e.py tests/test_task_collaboration_ui_e2e.py`，结果 `3 passed in 10.42s`。覆盖 Agent 管理既有浏览器回归与 Task Collaboration Session / Grant / Agent Proposal / 消息 / Member 决策闭环。
+- 因此，前一节记录的浏览器 E2E 待验证状态已解除；没有通过跳过 Chromium 或关闭测试来获得绿色结果。
+
+### 本轮修正
+- 修复 Agent 管理浏览器测试从真实页面 `.token-box` 读取一次性 Token 的断言，避免依赖未稳定的 `window.__daepLastAgentToken`。
+- CI Browser E2E Job 同时执行 Agent 管理和 Task Collaboration 两个测试模块。
+- 本轮没有修改 REST API、数据库 Schema 或迁移；不做历史数据迁移、回填或利旧。
+
+### 下一步唯一任务
+- 进入 **Task Collaboration 治理闭环强化**：补齐 Session OPEN / PAUSED / CLOSED 的真实浏览器操作与权限边界验证，并验证 CLOSED 后历史只读、禁止新消息/Proposal/新 Grant；同时覆盖非 Task 负责人不能管理 Session、非 Proposal Owner 不能决策等负向场景。
+- 继续遵守既定规则：Agent 只提案，Member 决策，正式 Task / Work Package / 审批 / 验收变更必须走既有正式业务流程；Agent Owner 只能授权自己的 Agent。
+- 本阶段仍不做数据库迁移、历史数据兼容或利旧。
+- 当前验证基准 HEAD：`2839c1742db12666f6319544f0a3f40b5e8c1e40`；本交接更新提交后，以新 HEAD 和新 CI 为准。
