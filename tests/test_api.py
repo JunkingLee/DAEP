@@ -4902,14 +4902,10 @@ def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_t
     assert observer.status_code == 200, observer.text
     observer_id, observer_token = observer.json()["id"], observer.json()["token"]
     observer_headers = {"Authorization": "Bearer " + observer_token}
-    requirement = client.post("/api/v1/requirements", headers=ADMIN,
-        json={"project_id": pid, "title": "Grant visibility requirement"})
-    assert requirement.status_code == 200, requirement.text
-    task = client.post("/api/v1/tasks", headers=ADMIN, json={
-        "requirement_id": requirement.json()["id"], "title": "Grant visibility task",
-        "assignee_member_ids": [owner_id, observer_id]})
-    assert task.status_code == 200, task.text
-    task_id = task.json()["id"]
+    added = client.post(f"/api/v1/projects/{pid}/members", headers=ADMIN,
+        json={"member_id": observer_id, "role": "member"})
+    assert added.status_code == 200, added.text
+    _, _, _, task_id = setup_project_task()
     created = client.post("/api/v1/agents", headers=owner_headers,
                           json={"name": "Owner Inbox Agent"})
     assert created.status_code == 200, created.text
