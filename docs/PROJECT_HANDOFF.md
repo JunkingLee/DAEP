@@ -487,7 +487,7 @@
 ### 本轮实时仓库核验
 - 仓库：`JunkingLee/DAEP`
 - 分支：`release/1.0.0-rc9`
-- 本轮开始时实时分支 HEAD：`d09eb19e9eed9646b1b4fdca763f03e76745c15e`；本轮文档提交后的 HEAD：`8241324ebbf121cc519cb7b2e4d3cb6259714506`（随后本次交接修订会产生新的 HEAD，以 Git 实时值为准）。
+- 本轮开始时实时分支 HEAD：`d09eb19e9eed9646b1b4fdca763f03e76745c15e`；本轮文档提交后的已核实 HEAD：`3fe45d08c09909afa923ebdb5f6c40b868b18aae`；本次交接文件更新本身会再产生一个文档提交，需以该更新响应/后续实时查询为准。
 - 该 HEAD 的 combined status 查询未返回 status checks；commit workflow runs 查询返回空列表。当前不能据此宣称该 HEAD CI 通过，也没有可确认的 pending run。
 - 原领域模型和迁移设计存在冲突：迁移设计旧版规定同一 Task 仅一个有效 Grant，并把多 Agent 推迟到未来；本轮已用下列正式规则覆盖旧条款。
 
@@ -508,7 +508,7 @@
 - 本次仅冻结文档设计，尚未实施数据库 migration、API、MCP 或前端改造。
 
 ### 本轮提交与验证
-- 文档提交：`a92ffea5cc0d8c0fe0d2d1b58afb0e8d37fa5587`（领域模型）；`0d64133f6ac16653eaa392fa2a1b27b57da27760`（数据库迁移设计）；`8241324ebbf121cc519cb7b2e4d3cb6259714506`（本节交接记录）。
+- 文档提交：`a92ffea5cc0d8c0fe0d2d1b58afb0e8d37fa5587`（领域模型）；`0d64133f6ac16653eaa392fa2a1b27b57da27760`（数据库迁移设计）；`8241324ebbf121cc519cb7b2e4d3cb6259714506`（交接章节初次写入）；`3fe45d08c09909afa923ebdb5f6c40b868b18aae`（补全提交引用）。
 - 本轮未运行 pytest；未执行 PostgreSQL migration/RLS 或真实浏览器/MCP Host 测试。
 - CI 状态以本节提交对应的 GitHub workflow 为准；在结果可查之前不得声称通过。
 
