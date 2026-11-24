@@ -132,21 +132,43 @@ def register_agent_collaboration_routes(
         with conn() as c:
             begin_serialized_write(c)
             lock_task(c, task_id)
-            task, session = _member_task_session(c, task_id, current, now())
-            rows = c.execute(
-                """SELECT g.*,a.name agent_name FROM agent_collaboration_grants g
-                   JOIN agents a ON a.id=g.agent_id
-                   WHERE g.tenant_id=? AND g.task_id=?
-                   ORDER BY g.created_at DESC""",
-                (task["project_tenant_id"], task_id),
-            ).fetchall()
+            # Reading grants must not implicitly create/take over the Session.
+            # The responsible Member can inspect the Task-wide grant roster;
+            # other Task Members can inspect only grants they personally own.
+            task = task_context(c, task_id, current)
+            session = c.execute(
+                "SELECT id,responsible_member_id FROM agent_collaboration_sessions WHERE task_id=? AND tenant_id=?",
+                (task_id, task["project_tenant_id"]),
+            ).fetchone()
+            is_responsible = bool(session and session["responsible_member_id"] == current["id"])
+            query = """SELECT g.*,a.name agent_name FROM agent_collaboration_grants g
+                       JOIN agents a ON a.id=g.agent_id
+                       WHERE g.tenant_id=? AND g.task_id=?"""
+            params = [task["project_tenant_id"], task_id]
+            if not is_responsible:
+                query += " AND g.owner_member_id=? AND g.authorized_by_member_id=?"
+                params.extend([current["id"], current["id"]])
+            query += " ORDER BY g.created_at DESC"
+            rows = c.execute(query, tuple(params)).fetchall()
             stamp = now()
-            return {"task_id": task_id, "session_id": session["id"], "items": [
-                {**dict(row), "scopes": json.loads(row["scopes_json"]),
-                 "resource_scope": json.loads(row["resource_scope_json"]),
-                 "effective_status": _effective_status(row, stamp)}
-                for row in rows
-            ]}
+            items = []
+            for row in rows:
+                effective = _effective_status(row, stamp)
+                if effective == "EXPIRED" and row["status"] != "EXPIRED":
+                    c.execute(
+                        "UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=? WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')",
+                        (stamp, row["id"]),
+                    )
+                    event(
+                        c, "agent.collaboration_grant.expired", row["owner_member_id"], task_id,
+                        {"grant_id": row["id"], "agent_id": row["agent_id"], "source": "task_grant_list"},
+                        tenant_override=row["tenant_id"],
+                    )
+                items.append({**dict(row), "scopes": json.loads(row["scopes_json"]),
+                              "resource_scope": json.loads(row["resource_scope_json"]),
+                              "effective_status": effective})
+            return {"task_id": task_id, "session_id": session["id"] if session else None,
+                    "visibility": "TASK_WIDE" if is_responsible else "OWNER_ONLY", "items": items}
 
     @router.post("/api/v1/tasks/{task_id}/collaboration-grants")
     def create_task_collaboration_grant(task_id: str, body: dict, authorization: str = Header(None)):
@@ -314,6 +336,49 @@ def register_agent_collaboration_routes(
                  "resource_scope": json.loads(row["resource_scope_json"])}
                 for row in rows
             ]}
+
+    @router.get("/api/v1/members/me/collaboration-grants")
+    def list_member_owned_collaboration_grants(authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        with conn() as c:
+            begin_serialized_write(c)
+            stamp = now()
+            rows = c.execute(
+                """SELECT g.id grant_id,g.agent_id,g.task_id,g.project_id,g.session_id,
+                          g.owner_member_id,g.scopes_json,g.resource_scope_json,g.status,
+                          g.created_at,g.expires_at,g.revoked_at,g.revoked_by_member_id,
+                          g.revoke_reason,a.name agent_name,s.status session_status,
+                          t.title task_title,p.name project_name
+                   FROM agent_collaboration_grants g
+                   JOIN agents a ON a.id=g.agent_id AND a.owner_member_id=g.owner_member_id
+                   LEFT JOIN agent_collaboration_sessions s ON s.id=g.session_id
+                   LEFT JOIN tasks t ON t.id=g.task_id
+                   LEFT JOIN projects p ON p.id=g.project_id
+                   WHERE g.tenant_id=? AND g.owner_member_id=? AND g.authorized_by_member_id=?
+                   ORDER BY g.created_at DESC""",
+                (current.get("tenant_id", "tenant-default"), current["id"], current["id"]),
+            ).fetchall()
+            items = []
+            for row in rows:
+                effective = _effective_status(row, stamp)
+                if effective == "EXPIRED" and row["status"] != "EXPIRED":
+                    c.execute(
+                        "UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=? WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')",
+                        (stamp, row["grant_id"]),
+                    )
+                    event(
+                        c, "agent.collaboration_grant.expired", current["id"], row["task_id"],
+                        {"grant_id": row["grant_id"], "agent_id": row["agent_id"], "source": "owner_inbox"},
+                        tenant_override=current.get("tenant_id", "tenant-default"),
+                    )
+                item = dict(row)
+                item["scopes"] = json.loads(item.pop("scopes_json"))
+                item["resource_scope"] = json.loads(item.pop("resource_scope_json"))
+                item["effective_status"] = effective
+                items.append(item)
+            return {"owner_member_id": current["id"], "items": items}
 
     @router.post("/api/v1/collaboration-grants/{grant_id}/accept")
     def accept_collaboration_grant(grant_id: str, authorization: str = Header(None)):
