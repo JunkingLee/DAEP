@@ -27,6 +27,8 @@ def _agent_path_allowed(method, path):
     if len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
         if parts[4]=='collaboration-messages':
             return method in ('GET','POST')
+        if parts[4]=='collaboration-proposals':
+            return method in ('GET','POST')
         return (method=='POST' and parts[4] in ('progress','blocked','artifacts')) or (method=='GET' and parts[4] in ('artifacts','artifact-versions','artifact-quality'))
     return False
 
@@ -289,6 +291,38 @@ def accept_agent_collaboration_grant(grant_id: str) -> dict:
     if not grant_id.strip():
         raise ValueError('grant_id is required')
     return call('POST',f'/api/v1/collaboration-grants/{urllib.parse.quote(grant_id, safe="")}/accept',{})
+
+
+
+@mcp.tool()
+def list_task_collaboration_proposals(task_id: str, grant_id: str) -> dict:
+    """Read collaboration proposals visible through this Agent's accepted session.read grant."""
+    if not task_id.strip() or not grant_id.strip():
+        raise ValueError('task_id and grant_id are required')
+    query=urllib.parse.urlencode({'grant_id':grant_id})
+    return call('GET',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-proposals?{query}')
+
+
+@mcp.tool()
+def create_task_collaboration_proposal(task_id: str, grant_id: str, proposal_type: str,
+                                       payload: dict = None) -> dict:
+    """Create a human-decision collaboration proposal through this Agent's session.proposal.create grant."""
+    if not task_id.strip() or not grant_id.strip():
+        raise ValueError('task_id and grant_id are required')
+    if proposal_type not in ('INVITE_AGENT','WORK_PACKAGE','MEMBER_DELEGATION','HELP_REQUEST'):
+        raise ValueError('invalid proposal_type')
+    if payload is not None and not isinstance(payload, dict):
+        raise ValueError('payload must be an object')
+    return call('POST',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-proposals',{
+        'grant_id':grant_id,'proposal_type':proposal_type,'payload':payload or {}})
+
+
+@mcp.tool()
+def withdraw_task_collaboration_proposal(proposal_id: str) -> dict:
+    """Withdraw a pending proposal created by this Agent."""
+    if not proposal_id.strip():
+        raise ValueError('proposal_id is required')
+    return call('POST',f'/api/v1/collaboration-proposals/{urllib.parse.quote(proposal_id, safe="")}/withdraw',{})
 
 
 @mcp.tool()
