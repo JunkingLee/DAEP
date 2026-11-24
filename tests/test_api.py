@@ -4006,3 +4006,87 @@ def test_disabling_agent_revokes_owner_authorized_task_grants():
     assert row['status']=='REVOKED'
     assert row['revoked_by_member_id']==member_id
     assert row['revoke_reason']=='Agent identity disabled'
+
+
+def test_agent_grant_inbox_and_accept_without_project_binding():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Grant Inbox Agent','description':'No project binding required'})
+    assert agent.status_code==200,agent.text
+    agent_body=agent.json()
+    agent_headers={'Authorization':'Bearer '+agent_body['token']}
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agent_body['agent']['id'],'requested_scope':['task.read','task.progress.report']})
+    assert grant.status_code==200,grant.text
+    grant_id=grant.json()['id']
+
+    # The new inbox is driven by AgentTaskGrant and must not require project binding.
+    inbox=client.get('/api/v1/agents/me/grants',headers=agent_headers)
+    assert inbox.status_code==200,inbox.text
+    assert any(x['grant_id']==grant_id and x['grant_status']=='AUTHORIZED'
+        and x['task_id']==task_id for x in inbox.json()['items'])
+    assert client.get('/api/v1/agents/me/grants',headers=owner_headers).status_code==403
+
+    other=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Other Agent Identity'})
+    assert other.status_code==200,other.text
+    other_headers={'Authorization':'Bearer '+other.json()['token']}
+    assert client.post(f'/api/v1/agent-grants/{grant_id}/accept',
+        headers=other_headers).status_code==404
+
+    accepted=client.post(f'/api/v1/agent-grants/{grant_id}/accept',headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+    assert accepted.json()['status']=='ACCEPTED'
+    assert accepted.json()['already_accepted'] is False
+    repeated=client.post(f'/api/v1/agent-grants/{grant_id}/accept',headers=agent_headers)
+    assert repeated.status_code==200,repeated.text
+    assert repeated.json()['already_accepted'] is True
+    refreshed=client.get('/api/v1/agents/me/grants',headers=agent_headers)
+    accepted_item=next(x for x in refreshed.json()['items'] if x['grant_id']==grant_id)
+    assert accepted_item['grant_status']=='ACCEPTED'
+    assert accepted_item['scope']==['task.progress.report','task.read']
+    with main_module.conn() as c:
+        row=c.execute('SELECT status,accepted_at FROM agent_task_grants WHERE id=?',(grant_id,)).fetchone()
+        audit=c.execute("""SELECT payload FROM events WHERE event_type='agent.task_grant.accepted'
+            AND task_id=? ORDER BY created_at DESC LIMIT 1""",(task_id,)).fetchone()
+    assert row['status']=='ACCEPTED' and row['accepted_at']
+    assert json.loads(audit['payload'])['agent_id']==agent_body['agent']['id']
+
+
+def test_agent_grant_accept_rechecks_current_assignee_and_expiry():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    agent=client.post('/api/v1/agents',headers=owner_headers,json={'name':'Grant Revalidation Agent'})
+    assert agent.status_code==200,agent.text
+    agent_headers={'Authorization':'Bearer '+agent.json()['token']}
+    first=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agent.json()['agent']['id']})
+    assert first.status_code==200,first.text
+    replacement=client.post('/api/v1/members',headers=ADMIN,json={'name':'Changed Task Assignee'})
+    assert replacement.status_code==200,replacement.text
+    with main_module.conn() as c:
+        c.execute('DELETE FROM assignments WHERE task_id=?',(task_id,))
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(task_id,replacement.json()['id']))
+    rejected=client.post(f"/api/v1/agent-grants/{first.json()['id']}/accept",headers=agent_headers)
+    assert rejected.status_code==409,rejected.text
+
+    # Reassign to the original owner, then expire the second grant before acceptance.
+    with main_module.conn() as c:
+        c.execute('DELETE FROM assignments WHERE task_id=?',(task_id,))
+        c.execute('INSERT INTO assignments(task_id,member_id) VALUES(?,?)',(task_id,member_id))
+        c.execute("UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=? WHERE id=?",
+            (main_module.now(),main_module.now(),first.json()['id']))
+    second=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,
+        json={'agent_id':agent.json()['agent']['id']})
+    assert second.status_code==200,second.text
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_task_grants SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+            (second.json()['id'],))
+    expired=client.post(f"/api/v1/agent-grants/{second.json()['id']}/accept",headers=agent_headers)
+    assert expired.status_code==409,expired.text
+    inbox=client.get('/api/v1/agents/me/grants',headers=agent_headers)
+    assert all(x['grant_id']!=second.json()['id'] for x in inbox.json()['items'])
