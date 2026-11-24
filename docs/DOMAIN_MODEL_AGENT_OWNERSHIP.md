@@ -173,3 +173,62 @@ DAEP 可以提供项目内的 Agent 能力与在线状态目录，帮助团队�
 - 完成旧记录迁移、回归测试和生产数据兼容。
 
 在进入代码改造前，必须先完成一份逐接口/逐表的迁移映射，明确旧数据的保留、失效、转换策略；不得直接删除现有绑定或授权记录。
+
+
+---
+
+## 11. 多 Agent 团队协作规则（2026-11-24，产品确认，优先级高于本文旧版单 Agent 描述）
+
+本节为正式产品决策。若本文前文或其他旧文档与本节冲突，以本节为准。
+
+### 11.1 已确认的产品规则
+
+- 协作模式固定为 `TEAM`：多个 Agent 围绕同一个 Task 形成协作团队，可在明确授权范围内交换任务上下文、发送协作消息、共享各自进度、提出协作请求和工作包建议。
+- 不设置任务级固定 Agent 数量上限。由 Task 的人类负责人决定是否允许多个 Agent，以及按任务需要邀请/授权哪些 Agent。
+- 数据库 `max_agents` 使用 nullable 整数；`NULL` 表示负责人不设固定数量限制，正整数表示负责人主动设置的任务级上限。不得将 NULL 解释成默认 3/5/10。
+- 每个 Agent 仍是某个 Member 的私有资源。负责人开启 TEAM 或允许多个 Agent，不等于替其他 Member 同意使用其 Agent；每个 Agent Owner 必须单独创建/确认自己的授权。
+- DAEP 不运行、托管、唤醒或监督 Agent Runtime。所有 Agent Runtime 仍运行在各自 Owner 的环境；DAEP 只提供身份、授权、协作协议、任务治理、消息持久化和审计。
+- TEAM 是任务协作语义，不意味着 Agent 自动获得整个 Project 的访问权，也不意味着发现到的 Presence 自动获得调用权限。
+
+### 11.2 责任与授权链
+
+1. 项目治理者先把 Task 分配给人类 Member。
+2. Task 明确一个 `responsible_member_id` 作为人类最终责任人；多人参与不改变最终责任归属。
+3. 该负责人配置 Task 的 Agent 执行策略：是否允许多个 Agent、`collaboration_mode=TEAM`、可选 `max_agents`。
+4. 每个 Agent Owner 分别为自己的 Agent 创建 AgentTaskGrant；Agent 自己接受 Grant 后才可执行。
+5. TEAM 中的协作能力必须另有 AgentCollaborationGrant，不能把执行 Grant 隐式扩大成消息、发现、邀请或工作包管理权限。
+6. 负责人保留任务优先级、最终进度确认、工作包确认、责任人变更、审核/验收和项目治理权。Agent 以 Agent 身份发言，审计同时记录 agent_id 与 owner_member_id，不得冒充 Member。
+
+### 11.3 领域实体补充
+
+- `AgentTaskExecutionPolicy`：每 Task 一条策略；字段至少包括 task_id、tenant_id、project_id、responsible_member_id、allow_multiple_agents、max_agents nullable、collaboration_mode（本产品决策为 TEAM）、policy_version、created_at、updated_at。
+- `AgentTaskGrant`：Task 1:N Grant。一个 Grant 绑定一个 Agent、一个 Task 和一个 Agent Owner。有效 Grant 唯一性按 `(task_id, agent_id)`，不再按 task_id 全局唯一。相同 Agent 对同一 Task 不得同时拥有两条有效 Grant。
+- `AgentTaskContribution`：按 Grant/Agent 记录进度报告、阻塞、活动时间、交付贡献和事件关联。Agent 不得直接覆盖 Task 的人类总体进度；总体进度由负责人确认或采用明确、可审计的聚合规则。
+- `AgentCollaborationGrant`：独立、可撤销、可过期的协作授权，至少记录 tenant/project/task、agent、owner、authorized_by、scope、资源范围、状态、有效期和撤销审计信息。
+- `ProjectAgentPresence`：仅能力/在线发现投影；不能充当执行授权或协作授权。
+
+### 11.4 TEAM 协作权限边界
+
+建议按最小权限拆分 scopes，至少包括：
+- `collaboration.message.read`
+- `collaboration.message.send`
+- `collaboration.agent.discover`
+- `collaboration.invitation.propose`
+- `collaboration.work_package.propose)
+- `collaboration.delegation.propose`
+
+第一版建议把资源范围限定在明确的 Task / Work Package / 对话参与者集合内，不开放无边界 Project 全量读取。Agent 可以发送带 Agent 身份的消息、提出邀请/工作包/委派建议；负责人或具备人类治理权限的 Member 必须确认涉及正式工作包创建、任务责任人变化、审批或验收的决定。Agent 不得创建/撤销其他 Agent 的 Grant，不得修改人类 assignee，不得审批验收，不得管理项目成员或角色。
+
+Agent 间合作必须同时满足发起方和接收方各自的授权。发现到另一个 Agent 只说明其能力/在线状态，不代表可以读取其数据或向其发送消息；接收方 Agent 必须具备相应协作授权或经其 Owner 确认。
+
+### 11.5 多 Agent 并发与责任
+
+- 同 Task 可以有多个 AUTHORIZED/ACCEPTED Grant，但创建时必须锁定 TaskExecutionPolicy/Task 行并在同一事务内校验 `allow_multiple_agents` 和 `max_agents`，避免并发超额。
+- `allow_multiple_agents=false` 时最多一个有效 Grant；为 true 且 `max_agents IS NULL` 时不设任务级固定数量上限；为 true 且 max_agents 为正整数时不得超过该值。
+- 无论是否允许多个 Agent，同一 `(task_id, agent_id)` 只能有一个有效 Grant。
+- 多 Agent 的 progress/blocker/artifact 必须可归属到 grant_id/agent_id；不得让多个 Agent 竞争写同一组 Task 总体进度字段。
+- Task 关闭、负责人变更、策略收紧、Agent 停用、Owner 停用或授权撤销时，按明确的状态转换规则处理相关 Grant 和 CollaborationGrant，并产生审计事件。
+
+### 11.6 旧模型修订
+
+本文旧版“同一任务仅一个有效 Agent”“以后再引入多 Agent”的建议已废止。旧 Agent Assignment 仅保留只读历史，不得静默迁移成新 Grant；旧 Project Binding 不构成执行或协作授权。
