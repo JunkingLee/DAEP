@@ -4992,7 +4992,7 @@ def test_collaboration_grant_renewal_reauthorization_and_owner_audit_filters():
     assert client.get("/api/v1/members/me/collaboration-grant-audit",
         headers=owner_headers, params={"status": "UNKNOWN"}).status_code == 422
 
-    revoked = client.delete(f"/api/v1/collaboration-grants/{grant_id}",
+    revoked = client.request("DELETE", f"/api/v1/collaboration-grants/{grant_id}",
         headers=owner_headers, json={"reason": "renewal lifecycle test"})
     assert revoked.status_code == 200, revoked.text
     cannot_restore = client.post(f"/api/v1/collaboration-grants/{grant_id}/renew",
