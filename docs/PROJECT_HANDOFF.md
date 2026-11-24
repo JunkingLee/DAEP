@@ -746,3 +746,28 @@
 3. browser-e2e 是否完整成功。
 4. 若失败先定位修复；通过后增加真实 workflow HTTP 终态路径、Task assignee 变更和并发 Grant 撤销/授权的集成测试，再进入 AgentCollaborationSession / AgentCollaborationGrant 服务 API。
 
+## 27. Task workflow HTTP 与 Agent Grant 终态集成测试（2026-11-24）
+
+### 恢复核验
+- 指定分支：`release/1.0.0-rc9`。
+- 第 26 节交接提交 `a52f5f4b077706834c4ca8d4dd821a71cf812d1c` 已通过 GitHub commit 查询确认存在，内容为 Grant 生命周期收口文档。
+- 该提交的 combined status 查询返回空 statuses，commit workflow runs 查询返回空列表；不能据此宣称 CI 通过或失败。workflow runs 查询接口只返回 PR 触发记录，空列表不代表不存在 push CI。
+- 分支内容与第 26 节记录一致；仓库工具没有提供可直接读取分支 HEAD SHA 的 ref 查询接口。本轮以分支文件读取结果作为内容基准，后续需用新提交 SHA 和 CI 结果继续核验。
+
+### 本轮代码
+- 修改 `tests/test_api.py`，新增 `test_workflow_transition_http_revokes_agent_grant_on_task_cancellation`。
+- 测试通过真实 HTTP 路径创建 Member 自有 Agent、创建 Task Agent Grant、配置含 CANCELLED 阶段的工作流，再调用 `POST /api/v1/tasks/{task_id}/workflow-transition`。
+- 验证 Task 状态变为 CANCELLED；对应有效 Grant 同步变为 REVOKED；撤销原因、撤销人和审计事件均正确。
+- 该测试补足此前只直接调用 `_close_task_agent_grants` helper 的覆盖缺口，确保 API endpoint -> workflow transition -> Task 锁 -> Grant 生命周期逻辑端到端联动。
+- 代码提交：`b76ca38cd9f36a4803fa806e7e8dacb4d761444c` — `test: cover HTTP workflow grant lifecycle`。
+
+### 验证状态与限制
+- 当前执行环境没有运行本地 pytest。
+- 新提交尚无已核实 CI 结果；不得宣称新增测试或整个测试矩阵通过。
+- 本轮没有改动生产逻辑、数据库结构、历史迁移或兼容逻辑。
+- 尚未补齐任务 assignee 变化的真实 HTTP 集成测试，以及并发授权/撤销交错测试。
+
+### 下一步唯一任务
+- 继续补充真实 HTTP 集成测试：任务重新分配给另一 Member 后，原 Owner 的 Agent Grant 必须撤销；新 assignee 必须先通过策略接管，再由其 Owner 身份授权自己的 Agent。
+- 随后补充并发 Grant 创建与撤销的事务一致性测试；确认 SQLite 与 PostgreSQL 使用同一 Task 串行化约定。
+- 这些测试通过并完成 CI 核验后，再进入 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API。仍不考虑数据库历史迁移、回填或利旧。
