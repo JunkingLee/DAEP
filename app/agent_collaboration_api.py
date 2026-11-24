@@ -438,7 +438,9 @@ def register_agent_collaboration_routes(
                 params.append(task_id)
             if agent_id:
                 clauses.append("payload LIKE ?")
-                params.append('%"agent_id": "' + agent_id.replace("%", "\\%").replace("_", "\\_") + '"%')
+                if len(agent_id) > 120 or "%" in agent_id:
+                    raise HTTPException(422, "agent_id filter is invalid")
+                params.append('%"agent_id": "' + agent_id + '"%')
             if status:
                 clauses.append("event_type=?")
                 params.append(event_types[status])
