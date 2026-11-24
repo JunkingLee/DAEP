@@ -636,6 +636,31 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
+def enqueue_member_notification(c, recipient_member_id, tenant_id, task_id, project_id,
+                                message_type, title, content, priority='NORMAL', idempotency_key=None):
+    """Persist a durable Member inbox item and its broker outbox envelope."""
+    if idempotency_key and c.execute(
+        'SELECT 1 FROM events WHERE idempotency_key=?', (idempotency_key,)
+    ).fetchone():
+        return None
+    created=now()
+    message_id='msg_'+uuid.uuid4().hex[:12]
+    c.execute(
+        'INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        (message_id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,'PENDING',created,None),
+    )
+    payload={'message_id':message_id,'recipient_member_id':recipient_member_id,
+             'project_id':project_id,'task_id':task_id,'message_type':message_type,
+             'title':title,'content':content,'priority':priority}
+    c.execute(
+        'INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',
+        ('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,created,created,tenant_id),
+    )
+    event(c,'notification.queued',recipient_member_id,task_id,
+          {'message_id':message_id,'message_type':message_type,'idempotency_key':idempotency_key},
+          key=idempotency_key,tenant_override=tenant_id)
+    return message_id
+
 @app.get('/',include_in_schema=False)
 def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
 def _oidc_discovery():
@@ -3733,13 +3758,62 @@ def send_message(b:MessageIn,authorization:str=Header(None)):
         c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,created,created,message_tenant))
         event(c,'message.created',a['id'],b.task_id,{'message_id':mid,'recipient':b.recipient_member_id},tenant_override=message_tenant)
     return {'id':mid,'status':'PENDING'}
-@app.get('/api/v1/me/notifications')
-def notifications(authorization:str=Header(None),after:int=0,limit:int=50):
-    a=actor(authorization); limit=max(1,min(limit,100))
+@app.post('/internal/v1/collaboration-grants/reminders/dispatch')
+def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
+    require_worker(authorization)
+    stamp=datetime.now(timezone.utc)
+    stamp_text=stamp.isoformat()
+    horizon=(stamp+timedelta(days=7)).isoformat()
+    dispatched=0
     with conn() as c:
-        rows=[dict(x) for x in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT ?",(a['id'],after,limit))]
-        for row in rows: c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),row['id']))
-        return {'items':rows,'next_cursor':rows[-1]['seq'] if rows else after,'has_more':len(rows)==limit}
+        begin_serialized_write(c)
+        rows=c.execute("""SELECT g.id grant_id,g.tenant_id,g.project_id,g.task_id,g.agent_id,
+                    g.owner_member_id,g.expires_at,a.name agent_name,t.title task_title
+             FROM agent_collaboration_grants g
+             JOIN agents a ON a.id=g.agent_id AND a.owner_member_id=g.owner_member_id AND a.status='ACTIVE'
+             JOIN members m ON m.id=g.owner_member_id AND m.tenant_id=g.tenant_id
+             JOIN projects p ON p.id=g.project_id AND p.tenant_id=g.tenant_id AND p.status='ACTIVE'
+             JOIN tasks t ON t.id=g.task_id AND t.status NOT IN ('DONE','CANCELLED','CLOSED','ARCHIVED')
+             JOIN agent_collaboration_sessions s ON s.id=g.session_id AND s.status='OPEN'
+             WHERE g.status IN ('AUTHORIZED','ACCEPTED') AND g.expires_at>? AND g.expires_at<=?
+             ORDER BY g.expires_at""",(stamp_text,horizon)).fetchall()
+        for row in rows:
+            remaining=(datetime.fromisoformat(row['expires_at'].replace('Z','+00:00'))-stamp).total_seconds()
+            if remaining<=86400:
+                window='24h'; label='24 小时内'
+            elif remaining<=3*86400:
+                window='3d'; label='3 天内'
+            else:
+                window='7d'; label='7 天内'
+            reminder_key=f"agent-collaboration-grant-reminder:{row['grant_id']}:{row['expires_at']}"
+            if c.execute('SELECT 1 FROM events WHERE idempotency_key=?',(reminder_key,)).fetchone():
+                continue
+            event(c,'agent.collaboration_grant.reminder_sent',row['owner_member_id'],row['task_id'],
+                  {'grant_id':row['grant_id'],'agent_id':row['agent_id'],'expires_at':row['expires_at'],
+                   'reminder_window':window},key=reminder_key,tenant_override=row['tenant_id'])
+            enqueue_member_notification(
+                c,row['owner_member_id'],row['tenant_id'],row['task_id'],row['project_id'],
+                'AGENT_COLLABORATION_GRANT_REMINDER','Agent 协作授权即将到期',
+                f"Agent「{row['agent_name']}」参与 Task「{row['task_title']}」的协作授权将在{label}到期。请检查是否需要由你本人续期；系统不会自动续期或扩大授权范围。",
+                'HIGH' if window=='24h' else 'NORMAL',reminder_key+':notification')
+            dispatched+=1
+    return {'dispatched':dispatched,'checked':len(rows),'horizon_days':7}
+
+@app.get('/api/v1/me/notifications')
+def notifications(authorization:str=Header(None),after:int=0,limit:int=50,status:str='PENDING'):
+    a=actor(authorization); limit=max(1,min(limit,100)); status=status.upper()
+    if status not in ('PENDING','ACKNOWLEDGED','REJECTED','ALL'):
+        raise HTTPException(422,'status must be PENDING, ACKNOWLEDGED, REJECTED or ALL')
+    with conn() as c:
+        if status=='ALL':
+            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND seq>? ORDER BY seq DESC LIMIT ?', (a['id'],after,limit))]
+        else:
+            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND status=? AND seq>? ORDER BY seq DESC LIMIT ?', (a['id'],status,after,limit))]
+        for row in rows:
+            if row['status']=='PENDING': c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),row['id']))
+        unread=c.execute("SELECT COUNT(*) n FROM messages WHERE recipient_member_id=? AND status='PENDING'",(a['id'],)).fetchone()['n']
+        return {'items':rows,'next_cursor':rows[-1]['seq'] if rows else after,'has_more':len(rows)==limit,
+                'unread_count':unread,'status':status}
 @app.post('/api/v1/messages/{mid}/ack')
 def ack(mid:str,b:AckIn,authorization: str=Header(None)):
     a=actor(authorization)
@@ -12212,4 +12286,5 @@ from app.agent_collaboration_api import register_agent_collaboration_routes
 register_agent_collaboration_routes(
     app, conn, actor, event, now, begin_serialized_write,
     _lock_agent_policy_task, _grant_task_context, _ensure_agent_task_policy, DATABASE_URL,
+    enqueue_member_notification,
 )
