@@ -226,12 +226,13 @@ def test_disabling_agent_owner_revokes_agent_identity_and_assignments_permanentl
         assert c.execute("SELECT status FROM agents WHERE id=?",(agent['id'],)).fetchone()['status']=='DISABLED'
 
 
-def test_agent_unbind_revokes_assignments_and_rebind_does_not_restore_access():
+def test_agent_unbind_revokes_legacy_assignment_but_not_owner_task_grant():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
-    project_id,_,_,task_id=setup_project_task()
-    created=client.post('/api/v1/agents',headers=ADMIN,json={
-        'name':'Unbind Revocation Agent','description':'Binding removal revokes task grants'})
+    project_id,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Unbind Revocation Agent','description':'Task grant is independent of project binding'})
     assert created.status_code==200,created.text
     agent=created.json()['agent']; token=created.json()['token']
     agent_headers={'Authorization':'Bearer '+token}
@@ -246,9 +247,14 @@ def test_agent_unbind_revokes_assignments_and_rebind_does_not_restore_access():
     accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',
         headers=agent_headers,json={})
     assert accepted.status_code==200,accepted.text
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read','task.progress.report']})
+    assert grant.status_code==200,grant.text
+    assert client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",
+        headers=agent_headers).status_code==200
     assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==200
 
-    # A bound Agent cannot inspect unrelated tasks in the same project.
+    # A valid Grant authorizes only its task, not unrelated tasks in the same project.
     other_project=client.post('/api/v1/projects',headers=ADMIN,json={'name':'Unbound Agent Project'})
     assert other_project.status_code==200,other_project.text
     other_requirement=client.post('/api/v1/requirements',headers=ADMIN,json={
@@ -264,15 +270,26 @@ def test_agent_unbind_revokes_assignments_and_rebind_does_not_restore_access():
     assert unbound.json()['revoked_assignment_count']==1
     with main_module.conn() as c:
         state=c.execute("SELECT status FROM agent_task_assignments WHERE id=?",(assignment_id,)).fetchone()
+        grant_state=c.execute("SELECT status FROM agent_task_grants WHERE id=?",(grant.json()['id'],)).fetchone()
     assert state['status']=='REVOKED'
+    assert grant_state['status']=='ACCEPTED'
+    assert client.get('/api/v1/agents/me/tasks',headers=agent_headers).json()['items']==[]
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==200
+    assert client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,
+        json={'progress':40,'note':'Still authorized by owner task grant'}).status_code==200
 
     rebound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
         'project_id':project_id,'role':'member','work_function':'developer'})
     assert rebound.status_code==200,rebound.text
     assert client.get('/api/v1/agents/me/tasks',headers=agent_headers).json()['items']==[]
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==200
+
+    # Revoking the owner Grant, not changing project binding, ends task access.
+    revoked=client.delete(f"/api/v1/agent-grants/{grant.json()['id']}",headers=owner_headers)
+    assert revoked.status_code==200,revoked.text
     assert client.get(f'/api/v1/tasks/{task_id}',headers=agent_headers).status_code==403
     assert client.post(f'/api/v1/tasks/{task_id}/progress',headers=agent_headers,
-        json={'progress':40,'note':'Must remain revoked'}).status_code==403
+        json={'progress':50,'note':'Grant was revoked'}).status_code==403
 
 
 def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
