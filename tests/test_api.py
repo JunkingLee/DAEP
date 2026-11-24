@@ -4896,7 +4896,7 @@ def test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_au
         json.loads(payload).get("reason") == "Owner withdrew authorization" for _, payload in events)
 
 def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_task_roster():
-    pid, owner_id, owner_token, _ = setup_project_task()
+    pid, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
     observer = client.post("/api/v1/members", headers=ADMIN, json={"name": "Task Observer"})
     assert observer.status_code == 200, observer.text
@@ -4905,7 +4905,6 @@ def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_t
     added = client.post(f"/api/v1/projects/{pid}/members", headers=ADMIN,
         json={"member_id": observer_id, "role": "member"})
     assert added.status_code == 200, added.text
-    _, _, _, task_id = setup_project_task()
     created = client.post("/api/v1/agents", headers=owner_headers,
                           json={"name": "Owner Inbox Agent"})
     assert created.status_code == 200, created.text
