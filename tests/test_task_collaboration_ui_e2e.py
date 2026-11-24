@@ -157,7 +157,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             assert revoked_access == {"history":403,"message":403,"proposal":403}, revoked_access
 
             # Validate the durable Member inbox after the Task workspace flow is complete.
-            page.evaluate("go('inbox'); loadInbox('ALL')")
+            page.evaluate("closeModal(); go('inbox'); loadInbox('ALL')")
             inbox = page.locator("#inbox")
             notice_button = inbox.get_by_role("button", name="标记已读").first
             expect(notice_button).to_be_visible()
