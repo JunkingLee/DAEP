@@ -323,6 +323,146 @@ def register_agent_collaboration_routes(
             return {"id": grant_id, "status": "REVOKED", "revoked_at": stamp,
                     "revoked_by_member_id": current["id"]}
 
+    @router.post("/api/v1/collaboration-grants/{grant_id}/renew")
+    def renew_collaboration_grant(grant_id: str, body: dict = None, authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        days = (body or {}).get("expires_in_days", 30)
+        if isinstance(days, bool) or not isinstance(days, int) or days < 1 or days > 90:
+            raise HTTPException(422, "expires_in_days must be an integer between 1 and 90")
+        with conn() as c:
+            begin_serialized_write(c)
+            lookup = c.execute(
+                "SELECT task_id FROM agent_collaboration_grants WHERE id=? AND tenant_id=?",
+                (grant_id, current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not lookup:
+                raise HTTPException(404, "Collaboration grant not found")
+            lock_task(c, lookup["task_id"])
+            row = c.execute(
+                """SELECT g.*,a.status agent_status,a.owner_member_id current_owner,
+                          s.status session_status,p.status project_status,t.status task_status
+                   FROM agent_collaboration_grants g
+                   JOIN agents a ON a.id=g.agent_id
+                   JOIN agent_collaboration_sessions s ON s.id=g.session_id
+                   JOIN projects p ON p.id=g.project_id
+                   JOIN tasks t ON t.id=g.task_id
+                   WHERE g.id=? AND g.tenant_id=?""",
+                (grant_id, current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Collaboration grant not found")
+            if row["owner_member_id"] != current["id"] or row["authorized_by_member_id"] != current["id"]:
+                raise HTTPException(403, "Only the Agent Owner who authorized this grant can renew it")
+            if row["current_owner"] != current["id"] or row["agent_status"] != "ACTIVE":
+                raise HTTPException(409, "Agent is no longer active or owned by this Member")
+            if row["status"] not in ("AUTHORIZED", "ACCEPTED"):
+                raise HTTPException(409, "Expired or revoked grants cannot be renewed; create a new authorization")
+            stamp = now()
+            if row["expires_at"] <= stamp:
+                c.execute(
+                    "UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=? WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')",
+                    (stamp, grant_id),
+                )
+                event(
+                    c, "agent.collaboration_grant.expired", current["id"], row["task_id"],
+                    {"grant_id": grant_id, "agent_id": row["agent_id"], "source": "renewal_attempt"},
+                    tenant_override=row["tenant_id"],
+                )
+                return {"id": grant_id, "status": "EXPIRED", "renewal_required": True,
+                        "message": "Expired grants cannot be renewed; create a new authorization"}
+            if row["session_status"] != "OPEN" or row["project_status"] != "ACTIVE" or row["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
+                raise HTTPException(409, "Only active Tasks in an OPEN Session can renew collaboration grants")
+            expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+            c.execute(
+                "UPDATE agent_collaboration_grants SET expires_at=?,updated_at=? WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')",
+                (expires, stamp, grant_id),
+            )
+            event(
+                c, "agent.collaboration_grant.renewed", current["id"], row["task_id"],
+                {"grant_id": grant_id, "session_id": row["session_id"], "agent_id": row["agent_id"],
+                 "previous_expires_at": row["expires_at"], "expires_at": expires,
+                 "expires_in_days": days},
+                tenant_override=row["tenant_id"],
+            )
+            return {"id": grant_id, "status": row["status"], "previous_expires_at": row["expires_at"],
+                    "expires_at": expires, "renewed_at": stamp}
+
+    @router.get("/api/v1/members/me/collaboration-grant-audit")
+    def list_member_collaboration_grant_audit(
+        agent_id: str = None, task_id: str = None, owner_member_id: str = None,
+        status: str = None, start_at: str = None, end_at: str = None,
+        limit: int = 100, authorization: str = Header(None),
+    ):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        if owner_member_id and owner_member_id != current["id"]:
+            raise HTTPException(403, "Members can inspect only their own collaboration grant audit")
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be between 1 and 200")
+        allowed_status = {"AUTHORIZED", "ACCEPTED", "RENEWED", "REVOKED", "EXPIRED"}
+        if status:
+            status = status.strip().upper()
+            if status not in allowed_status:
+                raise HTTPException(422, "Unsupported collaboration grant audit status")
+        def parse_bound(value, field):
+            if not value:
+                return None
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc).isoformat()
+            except (TypeError, ValueError):
+                raise HTTPException(422, field + " must be an ISO-8601 datetime")
+        start_bound = parse_bound(start_at, "start_at")
+        end_bound = parse_bound(end_at, "end_at")
+        if start_bound and end_bound and start_bound > end_bound:
+            raise HTTPException(422, "start_at must not be later than end_at")
+        event_types = {
+            "AUTHORIZED": "agent.collaboration_grant.authorized",
+            "ACCEPTED": "agent.collaboration_grant.accepted",
+            "RENEWED": "agent.collaboration_grant.renewed",
+            "REVOKED": "agent.collaboration_grant.revoked",
+            "EXPIRED": "agent.collaboration_grant.expired",
+        }
+        with conn() as c:
+            clauses = ["tenant_id=?", "event_type IN (?,?,?,?,?)",
+                       "(actor_member_id=? OR payload LIKE ?)"]
+            params = [current.get("tenant_id", "tenant-default"), *event_types.values(),
+                      current["id"], '%"owner_member_id": "' + current["id"] + '"%']
+            if task_id:
+                clauses.append("task_id=?")
+                params.append(task_id)
+            if agent_id:
+                clauses.append("payload LIKE ?")
+                params.append('%"agent_id": "' + agent_id.replace("%", "\\%").replace("_", "\\_") + '"%')
+            if status:
+                clauses.append("event_type=?")
+                params.append(event_types[status])
+            if start_bound:
+                clauses.append("created_at>=?")
+                params.append(start_bound)
+            if end_bound:
+                clauses.append("created_at<=?")
+                params.append(end_bound)
+            rows = c.execute(
+                "SELECT id,event_type,actor_member_id,task_id,payload,created_at FROM events WHERE "
+                + " AND ".join(clauses) + " ORDER BY created_at DESC LIMIT ?",
+                tuple(params + [limit]),
+            ).fetchall()
+            items = []
+            for raw in rows:
+                item = dict(raw)
+                try:
+                    item["payload"] = json.loads(item["payload"] or "{}")
+                except (TypeError, ValueError):
+                    item["payload"] = {}
+                items.append(item)
+            return {"owner_member_id": current["id"], "items": items, "limit": limit}
+
     @router.get("/api/v1/agents/me/collaboration-grants")
     def list_agent_collaboration_grants(authorization: str = Header(None)):
         current = actor(authorization)
