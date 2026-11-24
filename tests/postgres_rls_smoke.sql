@@ -8,7 +8,7 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO daep_rls_probe;
-GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments, artifact_versions TO daep_rls_probe;
+GRANT SELECT, INSERT, UPDATE, DELETE ON projects, members, events, artifacts, outbox, messages, project_agents, task_delegations, task_work_packages, project_approvals, requirements, tasks, project_members, assignments, dependencies, agents, agent_tokens, agent_project_bindings, agent_task_assignments, artifact_versions, agent_task_grants TO daep_rls_probe;
 
 INSERT INTO projects (id, name, description, created_by, created_at, tenant_id)
 VALUES
@@ -62,6 +62,15 @@ ON CONFLICT DO NOTHING;
 INSERT INTO assignments (task_id,member_id)
 VALUES ('rls-task-a','rls-member-a'),('rls-task-b','rls-member-b')
 ON CONFLICT DO NOTHING;
+
+
+INSERT INTO agent_task_grants(
+ id,tenant_id,project_id,task_id,agent_id,owner_member_id,human_assignee_member_id,
+ authorized_by_member_id,scope_json,status,created_at,updated_at,expires_at
+) VALUES
+ ('rls-agent-grant-a','tenant-a','rls-probe-a','rls-task-a','rls-agent-identity-a','rls-member-a','rls-member-a','rls-member-a','["task.read"]','AUTHORIZED',now()::text,now()::text,(now()+interval '30 days')::text),
+ ('rls-agent-grant-b','tenant-b','rls-probe-b','rls-task-b','rls-agent-identity-b','rls-member-b','rls-member-b','rls-member-b','["task.read"]','AUTHORIZED',now()::text,now()::text,(now()+interval '30 days')::text)
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO project_agents(id,project_id,member_id,tenant_id,agent_name,capabilities,protocols,status,metadata,last_seen,created_at,updated_at)
 VALUES
@@ -198,6 +207,9 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM agent_task_assignments WHERE id IN ('rls-agent-assignment-a','rls-agent-assignment-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS Agent task assignment isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM agent_task_grants WHERE id IN ('rls-agent-grant-a','rls-agent-grant-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS Agent task grant isolation failed';
   END IF;
   IF (SELECT count(*) FROM artifact_versions WHERE id IN ('rls-artifact-version-a','rls-artifact-version-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS artifact version isolation failed';
