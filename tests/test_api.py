@@ -4848,3 +4848,123 @@ def test_agent_collaboration_message_access_rejects_owner_relationship_drift():
         f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}",
         headers=agent_headers)
     assert denied.status_code == 403, denied.text
+
+
+def test_agent_mcp_collaboration_tools_round_trip_through_rest_api(monkeypatch):
+    import importlib
+    import json as json_module
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    _, _, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+
+    primary = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "MCP Collaboration Agent"})
+    readonly = client.post("/api/v1/agents", headers=owner_headers,
+                           json={"name": "MCP Read Only Agent"})
+    assert primary.status_code == readonly.status_code == 200
+    primary_token = primary.json()["token"]
+    readonly_token = readonly.json()["token"]
+
+    primary_grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={
+            "agent_id": primary.json()["agent"]["id"],
+            "scopes": ["session.read", "session.message.send"],
+            "resource_scope": {"resource_ids": ["artifact-1"]},
+        })
+    readonly_grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={
+            "agent_id": readonly.json()["agent"]["id"],
+            "scopes": ["session.read"],
+        })
+    assert primary_grant.status_code == readonly_grant.status_code == 200
+    primary_grant_id = primary_grant.json()["id"]
+    readonly_grant_id = readonly_grant.json()["id"]
+
+    class RestBridgeHandler(BaseHTTPRequestHandler):
+        def _forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            payload = json_module.loads(raw) if raw else None
+            headers = {}
+            if self.headers.get("Authorization"):
+                headers["Authorization"] = self.headers["Authorization"]
+            response = client.request(self.command, self.path, headers=headers, json=payload)
+            body = response.content
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", response.headers.get("content-type", "application/json"))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            self._forward()
+
+        def do_POST(self):
+            self._forward()
+
+        def log_message(self, *args):
+            pass
+
+    bridge = HTTPServer(("127.0.0.1", 0), RestBridgeHandler)
+    thread = threading.Thread(target=bridge.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("DAEP_API_URL", f"http://127.0.0.1:{bridge.server_port}")
+        monkeypatch.setenv("DAEP_AGENT_TOKEN", primary_token)
+        monkeypatch.delenv("DAEP_MEMBER_TOKEN", raising=False)
+        import daep_mcp.server as mcp_server
+        mcp_server = importlib.reload(mcp_server)
+
+        inbox = mcp_server.list_my_agent_collaboration_grants()
+        assert any(item["grant_id"] == primary_grant_id for item in inbox["items"])
+        accepted = mcp_server.accept_agent_collaboration_grant(primary_grant_id)
+        assert accepted["status"] == "ACCEPTED"
+
+        # Resource-scoped grants reject out-of-scope sends at the REST boundary.
+        try:
+            mcp_server.send_task_collaboration_message(
+                task_id, primary_grant_id, "outside resource", "artifact-2")
+            raise AssertionError("out-of-scope MCP message unexpectedly succeeded")
+        except RuntimeError as exc:
+            assert "403" in str(exc)
+
+        sent = mcp_server.send_task_collaboration_message(
+            task_id, primary_grant_id, "MCP Agent message", "artifact-1")
+        assert sent["author_type"] == "AGENT"
+        assert sent["author_agent_id"] == primary.json()["agent"]["id"]
+        assert sent["collaboration_grant_id"] == primary_grant_id
+        history = mcp_server.get_task_collaboration_messages(task_id, primary_grant_id)
+        assert any(item["id"] == sent["id"] for item in history["items"])
+
+        # A read-only grant can accept and read but cannot send.
+        mcp_server.TOKEN = readonly_token
+        accepted_readonly = mcp_server.accept_agent_collaboration_grant(readonly_grant_id)
+        assert accepted_readonly["status"] == "ACCEPTED"
+        readonly_history = mcp_server.get_task_collaboration_messages(task_id, readonly_grant_id)
+        assert any(item["id"] == sent["id"] for item in readonly_history["items"])
+        try:
+            mcp_server.send_task_collaboration_message(
+                task_id, readonly_grant_id, "read only cannot send")
+            raise AssertionError("read-only MCP message unexpectedly succeeded")
+        except RuntimeError as exc:
+            assert "403" in str(exc)
+
+        # Session state is enforced by REST on every MCP request.
+        paused = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+                              headers=owner_headers, json={"status": "PAUSED"})
+        assert paused.status_code == 200, paused.text
+        assert mcp_server.get_task_collaboration_messages(task_id, readonly_grant_id)["items"]
+        try:
+            mcp_server.send_task_collaboration_message(
+                task_id, primary_grant_id, "paused session", "artifact-1")
+            raise AssertionError("paused Session unexpectedly accepted a message")
+        except RuntimeError as exc:
+            assert "409" in str(exc)
+    finally:
+        bridge.shutdown()
+        thread.join(timeout=2)
+        bridge.server_close()

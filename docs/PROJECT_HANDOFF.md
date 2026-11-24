@@ -1071,3 +1071,20 @@
 - 根因是新增 Task Grant / CollaborationGrant 独立路由回归测试时，插入位置落在原有 `allowed=[...]` 列表内部，破坏 Python 语法。不是产品逻辑错误。
 - 已将新增测试移动到原有 allowlist 测试函数结束之后，保留原始 allowed 列表内容和测试断言。
 - 本轮修正提交后需重新验证完整 CI；未在本地运行 pytest，不宣称通过。
+
+
+## 36. MCP Agent Collaboration 到 REST 的真实调用链集成测试（2026-11-24）
+
+### 本轮新增
+- 在 `tests/test_api.py` 增加 MCP adapter 经真实本地 TCP HTTP 请求调用 FastAPI REST API 的集成测试；HTTP Bridge 将 TCP 请求转交给当前测试应用，验证 MCP adapter 的 urllib 客户端、Bearer Token、路由和 REST 授权中间链路，不再只使用 mock `call()`。
+- 测试覆盖 Agent Collaboration Grant Inbox、Agent 主动接受、有效 Scope 发送/读取、Resource Scope 越权拒绝、只读 Grant 禁止发送，以及 Session PAUSED 后仍可读历史但禁止发送。
+- 使用两个不同 Agent Token 验证不同 Grant 的权限隔离；只读 Agent 无法借用另一个 Agent 的发送能力。
+- 既有 REST 测试继续覆盖未接受、错误 Agent、过期、Owner 关系漂移、撤销和 CLOSED Session；既有 MCP adapter 测试继续覆盖 Member Token 工具兼容性。
+
+### 边界与验证
+- 测试中的 HTTP Bridge 仅是测试适配层；生产架构仍是 Agent 自己的 MCP Host 通过 HTTP 调用 DAEP REST API，DAEP 不启动/托管 Agent Runtime。
+- 本轮仅增加测试，不改 REST API、数据库 Schema 或迁移文件；不涉及历史数据迁移、回填和利旧。
+- 本轮测试尚待 CI 验证；本地 pytest 未执行，不宣称通过。
+
+### 下一步
+- 核验本轮完整 CI。若通过，进入 MCP 使用文档与 Agent Owner 配置/排障体验收尾；若失败，按日志修复并保持本轮端到端授权覆盖。
