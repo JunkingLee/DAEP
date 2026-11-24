@@ -34,8 +34,8 @@ def upgrade():
             revoked_by_member_id TEXT REFERENCES members(id),
             revoke_reason TEXT,
             last_activity_at TEXT,
-            legacy_assignment_id TEXT,
-            UNIQUE (id, task_id, agent_id),\n            CHECK (expires_at > created_at),
+            UNIQUE (id, task_id, agent_id),
+            CHECK (expires_at > created_at),
             CHECK (
                 (status <> 'ACCEPTED' OR accepted_at IS NOT NULL)
                 AND (status <> 'REVOKED' OR revoked_at IS NOT NULL)
@@ -99,7 +99,8 @@ def upgrade():
             progress INTEGER CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
             summary TEXT NOT NULL DEFAULT '',
             payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (grant_id, task_id, agent_id) REFERENCES agent_task_grants(id, task_id, agent_id) ON DELETE CASCADE
         )
     """)
     op.execute("""
@@ -142,6 +143,7 @@ def upgrade():
             revoked_at TEXT,
             revoked_by_member_id TEXT REFERENCES members(id),
             revoke_reason TEXT,
+            UNIQUE (id, session_id, task_id, agent_id, owner_member_id),
             CHECK (expires_at > created_at),
             CHECK ((status <> 'ACCEPTED' OR accepted_at IS NOT NULL) AND
                    (status <> 'REVOKED' OR revoked_at IS NOT NULL))
@@ -165,6 +167,7 @@ def upgrade():
             content TEXT NOT NULL,
             metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
+            FOREIGN KEY (collaboration_grant_id, session_id, task_id, author_agent_id, agent_owner_member_id) REFERENCES agent_collaboration_grants(id, session_id, task_id, agent_id, owner_member_id),
             CHECK (
                 (author_type = 'MEMBER' AND author_member_id IS NOT NULL
                     AND author_agent_id IS NULL AND agent_owner_member_id IS NULL
@@ -194,7 +197,8 @@ def upgrade():
             decided_by_member_id TEXT REFERENCES members(id),
             decision_note TEXT,
             created_at TEXT NOT NULL,
-            decided_at TEXT
+            decided_at TEXT,
+            FOREIGN KEY (collaboration_grant_id, session_id, task_id, proposed_by_agent_id, owner_member_id) REFERENCES agent_collaboration_grants(id, session_id, task_id, agent_id, owner_member_id)
         )
     """)
 
