@@ -1718,6 +1718,7 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
             if owner_count<=1:
                 raise HTTPException(409,'A project must retain at least one owner')
         project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
+        begin_serialized_write(c)
         affected_task_ids=[x['task_id'] for x in c.execute("""SELECT a.task_id FROM assignments a
             JOIN tasks t ON t.id=a.task_id JOIN requirements r ON r.id=t.requirement_id
             WHERE a.member_id=? AND r.project_id=? ORDER BY a.task_id""",(member_id,pid)).fetchall()]
