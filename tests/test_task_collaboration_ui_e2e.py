@@ -80,6 +80,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             page.evaluate("loadInbox('ACKNOWLEDGED')")
             expect(inbox).to_contain_text("已读")
             expect(inbox).to_contain_text("Agent")
+            page.evaluate("go('work')")
 
             page.evaluate("(id) => openTask(id)", setup["taskId"])
             modal = page.locator("#modalBody")
