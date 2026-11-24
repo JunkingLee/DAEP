@@ -1006,3 +1006,9 @@
 - 修正测试为拒绝多余路径段 `/collaboration-messages/extra`，保留对真实额外路由的负向检查；未修改生产授权逻辑。
 - 首轮 CI 其余 Python 版本和 Browser E2E 在本修正前仍处于运行中；该 run 不作为完整通过依据。
 - 修正提交后的 CI 尚待验证；当前未在本地直接运行 pytest。
+
+
+### 32 节第二轮安全集成测试补充（待 CI）
+- 增加真实 FastAPI TestClient 集成测试，验证未接受邀请不能读/写；其他 Agent 不能借用目标 Agent 的 Grant；Grant 到期后读/写均拒绝；Agent 当前 Owner 与 Grant Owner 关系不一致时 fail-closed。
+- 测试直接操作当前开发 SQLite 测试库模拟过期和 Owner 关系漂移，不改变生产 Schema/API。
+- 本轮测试变更提交后需重新核验 Python 3.11/3.12/3.13、migrations/RLS、容器构建、Production Compose 和 Browser E2E；本地 pytest 未执行，测试结果以 CI 为准。

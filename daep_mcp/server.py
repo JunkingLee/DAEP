@@ -10,19 +10,11 @@ mcp=FastMCP('DAEP Engineering Platform')
 def _agent_path_allowed(method, path):
     # Agent credentials never inherit the owner's Member permissions.
     route=urllib.parse.urlsplit(path).path
-    if method=='GET' and route in (
-        '/api/v1/mcp/context',
-        '/api/v1/agents/me/grants',
-        '/api/v1/agents/me/collaboration-grants',
-    ):
+    if method=='GET' and route in ('/api/v1/mcp/context','/api/v1/agents/me/grants'):
         return True
     parts=route.strip('/').split('/')
     if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','agent-grants'] and parts[4]=='accept' and parts[3]:
         return True
-    if method=='POST' and len(parts)==5 and parts[:3]==['api','v1','collaboration-grants'] and parts[4]=='accept' and parts[3]:
-        return True
-    if len(parts)==5 and parts[:3]==['api','v1','tasks'] and parts[3] and parts[4]=='collaboration-messages':
-        return method in ('GET','POST')
     if len(parts)==4 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
         return method=='GET'
     if len(parts)==5 and parts[:2]==['api','v1'] and parts[2]=='tasks' and parts[3]:
@@ -75,42 +67,6 @@ def accept_agent_task(grant_id: str) -> dict:
 def accept_agent_task_grant(grant_id: str) -> dict:
     """Accept an owner-authorized task grant addressed to this Agent identity."""
     return call('POST',f'/api/v1/agent-grants/{grant_id}/accept',{})
-
-@mcp.tool()
-def list_my_agent_collaboration_grants() -> dict:
-    """List collaboration invitations and accepted collaboration grants addressed to this Agent."""
-    return call('GET','/api/v1/agents/me/collaboration-grants')
-
-
-@mcp.tool()
-def accept_agent_collaboration_grant(grant_id: str) -> dict:
-    """Accept a collaboration invitation explicitly authorized by this Agent's Owner."""
-    if not grant_id.strip():
-        raise ValueError('grant_id is required')
-    return call('POST',f'/api/v1/collaboration-grants/{urllib.parse.quote(grant_id, safe="")}/accept',{})
-
-
-@mcp.tool()
-def get_task_collaboration_messages(task_id: str, grant_id: str, limit: int = 50) -> dict:
-    """Read messages in a Task collaboration Session using this Agent's accepted read grant."""
-    if not task_id.strip() or not grant_id.strip():
-        raise ValueError('task_id and grant_id are required')
-    if not 1 <= limit <= 100:
-        raise ValueError('limit must be between 1 and 100')
-    query=urllib.parse.urlencode({'grant_id':grant_id,'limit':limit})
-    return call('GET',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-messages?{query}')
-
-
-@mcp.tool()
-def send_task_collaboration_message(task_id: str, grant_id: str, content: str,
-                                    resource_id: str = '') -> dict:
-    """Send a Task collaboration message using this Agent's accepted send grant; resource-scoped grants require an allowed resource_id."""
-    if not task_id.strip() or not grant_id.strip() or not content.strip():
-        raise ValueError('task_id, grant_id and content are required')
-    payload={'grant_id':grant_id,'content':content}
-    if resource_id:
-        payload['resource_id']=resource_id
-    return call('POST',f'/api/v1/tasks/{urllib.parse.quote(task_id, safe="")}/collaboration-messages',payload)
 
 @mcp.tool()
 def get_my_tasks() -> list:

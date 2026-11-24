@@ -4770,3 +4770,81 @@ def test_agent_collaboration_grant_cannot_be_authorized_by_non_owner():
         json={"agent_id": agent_id},
     )
     assert denied.status_code == 403, denied.text
+
+
+def test_agent_collaboration_message_access_rejects_unaccepted_wrong_agent_and_expired_grants():
+    _, _, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    first = client.post("/api/v1/agents", headers=owner_headers,
+                        json={"name": "Grant-bound Collaboration Agent"})
+    second = client.post("/api/v1/agents", headers=owner_headers,
+                         json={"name": "Different Collaboration Agent"})
+    assert first.status_code == second.status_code == 200
+    agent_headers = {"Authorization": "Bearer " + first.json()["token"]}
+    other_agent_headers = {"Authorization": "Bearer " + second.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant_response = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers,
+        json={"agent_id": first.json()["agent"]["id"],
+              "scopes": ["session.read", "session.message.send"]})
+    assert grant_response.status_code == 200, grant_response.text
+    grant_id = grant_response.json()["id"]
+    history_url = f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}"
+    message_url = f"/api/v1/tasks/{task_id}/collaboration-messages"
+
+    # An invitation is not usable until the addressed Agent explicitly accepts it.
+    assert client.get(history_url, headers=agent_headers).status_code == 403
+    assert client.post(message_url, headers=agent_headers,
+                       json={"grant_id": grant_id, "content": "not accepted"}).status_code == 403
+
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept",
+                           headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+
+    # A different Agent cannot borrow the accepted Agent's grant identifier.
+    assert client.get(history_url, headers=other_agent_headers).status_code == 404
+    assert client.post(message_url, headers=other_agent_headers,
+                       json={"grant_id": grant_id, "content": "wrong agent"}).status_code == 404
+
+    # Expiration is enforced on every read and write, not only by inbox display.
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  ("2000-01-01T00:00:00+00:00", grant_id))
+    assert client.get(history_url, headers=agent_headers).status_code == 403
+    assert client.post(message_url, headers=agent_headers,
+                       json={"grant_id": grant_id, "content": "expired"}).status_code == 403
+
+
+def test_agent_collaboration_message_access_rejects_owner_relationship_drift():
+    _, _, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    other = client.post("/api/v1/members", headers=ADMIN,
+                        json={"name": "Replacement Agent Owner"})
+    assert other.status_code == 200, other.text
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Owner-bound Collaboration Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant_response = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers,
+        json={"agent_id": agent_id, "scopes": ["session.read"]})
+    assert grant_response.status_code == 200, grant_response.text
+    grant_id = grant_response.json()["id"]
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept",
+                           headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+
+    # Simulate an inconsistent ownership relationship; the API must fail closed.
+    with main_module.conn() as c:
+        c.execute("UPDATE agents SET owner_member_id=? WHERE id=?",
+                  (other.json()["member"]["id"], agent_id))
+    denied = client.get(
+        f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}",
+        headers=agent_headers)
+    assert denied.status_code == 403, denied.text
