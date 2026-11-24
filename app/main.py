@@ -3810,7 +3810,7 @@ def notifications(authorization:str=Header(None),after:int=0,limit:int=50,status
         if status=='ALL':
             rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND seq>? ORDER BY seq LIMIT ?', (a['id'],after,limit))]
         else:
-            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND status=? AND seq>? ORDER BY seq DESC LIMIT ?', (a['id'],status,after,limit))]
+            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND status=? AND seq>? ORDER BY seq LIMIT ?', (a['id'],status,after,limit))]
         for row in rows:
             if row['status']=='PENDING': c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),row['id']))
         unread=c.execute("SELECT COUNT(*) n FROM messages WHERE recipient_member_id=? AND status='PENDING'",(a['id'],)).fetchone()['n']
