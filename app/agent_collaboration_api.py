@@ -135,7 +135,22 @@ def register_agent_collaboration_routes(
             # Reading grants must not implicitly create/take over the Session.
             # The responsible Member can inspect the Task-wide grant roster;
             # other Task Members can inspect only grants they personally own.
-            task = task_context(c, task_id, current)
+            task = c.execute(
+                """SELECT t.id task_id,t.status task_status,r.project_id,p.tenant_id project_tenant_id,
+                          p.status project_status,pm.member_id project_member_id,a.member_id assignee_member_id
+                   FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+                   JOIN projects p ON p.id=r.project_id
+                   LEFT JOIN project_members pm ON pm.project_id=r.project_id AND pm.member_id=?
+                   LEFT JOIN assignments a ON a.task_id=t.id AND a.member_id=?
+                   WHERE t.id=? AND p.tenant_id=?""",
+                (current["id"], current["id"], task_id, current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not task:
+                raise HTTPException(404, "Task not found")
+            if task["project_status"] != "ACTIVE" or task["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
+                raise HTTPException(409, "Task is not eligible for collaboration grant inspection")
+            if task["project_member_id"] is None and task["assignee_member_id"] is None:
+                raise HTTPException(404, "Task not found")
             session = c.execute(
                 "SELECT id,responsible_member_id FROM agent_collaboration_sessions WHERE task_id=? AND tenant_id=?",
                 (task_id, task["project_tenant_id"]),
