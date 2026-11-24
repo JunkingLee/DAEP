@@ -183,11 +183,4 @@ def ensure_agent_collaboration_schema(conn_factory):
             ON agent_collaboration_proposals(tenant_id, session_id, status, created_at);
         """)
 
-        # Initial-schema definition: one active grant per (Task, Agent), not
-        # one grant per Task. A Task may have many distinct Agent Owners.
-        c.execute("DROP INDEX IF EXISTS uq_agent_task_grants_one_active_per_task")
-        c.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_grants_active_task_agent
-            ON agent_task_grants(task_id, agent_id)
-            WHERE status IN ('AUTHORIZED','ACCEPTED')
-        """)
+        # The base bootstrap defines active-grant uniqueness.
