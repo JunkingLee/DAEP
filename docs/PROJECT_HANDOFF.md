@@ -391,3 +391,45 @@
   - 新 Grant ACCEPTED 目前只是授权生命周期状态，不意味着已经允许旧执行 API；执行入口切换前必须完成统一 guard。
   - Scope 在 Member 创建时校验并存储；Agent inbox 暴露 scope；执行动作级校验尚未实现。
 - 下一步唯一任务：Stage B 第一项——实现统一 `require_agent_task_grant(c, actor, task_id, action)` 执行授权 guard，并先对现有 Agent task read/progress/blocked/artifact 入口进行逐条路由盘点。guard 必须验证 Agent Token 身份、Grant ACCEPTED/未过期、Agent ACTIVE/owner 仍匹配、Tenant/Project/Task 关系、Project ACTIVE、当前唯一 Human Assignee 与 Grant 快照一致、scope 包含精确 action；Agent 分支不得调用 `require_project_access` 或依赖 `agent_project_bindings`。先迁移最小只读 task detail + progress/blocked 写入口并补全权限矩阵测试，再迁移 artifact/MCP；禁止触及审批、验收、治理、任务重新分配接口。
+
+## 19. Stage B execution guard：task detail / progress / blocked（2026-11-24）
+
+- 承接第 18 节，新增统一 `require_agent_task_grant(c, actor, task_id, action)`，作为 Agent 任务执行入口的最小权限 guard。
+- Guard 每次请求都验证：
+  - actor 必须是 Agent Token 身份，并匹配当前 agent_id、owner member_id、tenant_id。
+  - Grant 必须属于当前 Agent + Task + Tenant，且 status=ACCEPTED、expires_at 尚未到期。
+  - Agent 必须 ACTIVE，当前 owner_member_id 与 Grant 快照一致。
+  - Owner Member 必须 ACTIVE 且 Tenant 一致。
+  - Grant、Agent、Project、Task Tenant 关系必须一致；Project 必须 ACTIVE。
+  - Task 不能为 DONE/CANCELLED/CLOSED/ARCHIVED。
+  - 当前 assignments 必须恰好只有一个 Member，且等于 Grant.human_assignee_member_id；Grant.owner_member_id 必须等于该责任人。
+  - scope_json 必须为合法列表且包含本次精确 action；未知 action 不允许执行。
+  - PostgreSQL 请求锁定 Grant 和 Task 行；SQLite 走现有事务模式。
+- 已切换入口：
+  - `GET /api/v1/tasks/{tid}` → `task.read`
+  - `POST /api/v1/tasks/{tid}/progress` → `task.progress.report`
+  - `POST /api/v1/tasks/{tid}/blocked` → `task.blocked.report`
+- 安全边界：
+  - Agent 分支不调用 `require_project_access`，不检查 `agent_project_bindings` 或旧 `agent_task_assignments`。
+  - Agent 的 progress=100 一律拒绝，不能通过进度接口请求人类验收。
+  - Agent 更新进度/阻塞状态时不触发父任务 work-package 自动同步，避免 Grant 对单个 Task 的授权扩散到父任务。
+  - Member/Admin 原有权限路径保持不变。
+- `app/main.py` 存在多组历史重复的 `task_detail` 定义。路由 wrapper 动态调用模块级最后一个 `task_detail`，所以必须同步修正全部五个同名定义；本轮已检查五处均调用新 Grant guard，避免只修改前置定义却没有改变实际运行行为。
+- 测试调整与新增：
+  - 新增 Scope 白名单、无 Grant 拒绝、Agent 无 Project Binding 仍可执行、精确 action 授权、progress=100 拒绝、任务改派拒绝、Grant revoke 拒绝等覆盖。
+  - 原有依赖旧 Assignment + Project Binding 执行的测试已更新：旧 assignment 不再授权 task read/progress；解绑只撤销 legacy assignment，不撤销独立 AgentTaskGrant；重新绑定不能复活旧 assignment；只有 Member owner 撤销 Grant 才终止新模型执行权限。
+  - Python 3.11 / 3.12 / 3.13：每个版本 `212 passed, 1 skipped`。
+- 关键提交：
+  - `743d163b553811aa3bc0180a4906e981b63af387` — guard + task read/progress/blocked 首轮切换。
+  - `3dab920c819e909b10267a7662d68a08c0f6b0a8` — Guard 权限矩阵测试。
+  - `d093d721ac52e9d6acd6e4f4ed318dcbc806d059` — 阻止 Agent progress/blocked 修改父任务。
+  - `a7c91e3b36c74f2eeb2ca0268039218c34ee2211` — 修正全部重复 task_detail 定义的实际执行路径。
+  - `658a90ac6d8a44100c6767af4daa9149373137ff` — 旧 assignment 测试迁移到 owner Grant 语义。
+  - `222441992ecb0ee83d6e9813d129f6fdc016321a` — 验证 project unbind 不会撤销独立 owner Grant。
+- CI run `45310315758` 对应代码 HEAD `222441992ecb0ee83d6e9813d129f6fdc016321a`：Python 3.11/3.12/3.13 全部 success（每个 212 passed / 1 skipped）；PostgreSQL migrations、production-compose、container-build success。browser-e2e 在本次记录时仍停留于 Install Chromium，尚未完成，不能声称全 CI 通过；继续观察 run 结果。
+- 当前未切换：
+  - `POST /api/v1/tasks/{tid}/artifacts` 仍使用旧 assignment + binding guard。
+  - Artifact read/versions/quality、events、MCP task tools 仍需逐项盘点和迁移。
+  - 旧 Agent inbox/accept/heartbeat/assignment API 保留兼容；新 Grant 已成为 task detail/progress/blocked 的唯一 Agent 授权来源。
+  - Grant 在 Task 完成后目前仍保留 ACCEPTED 状态；后续应评估任务完成时将 Grant 标记 COMPLETED 的生命周期联动。
+- 下一步唯一任务：将 Artifact submit/read 入口迁移到同一 Grant guard：`task.artifact.submit`、`task.read`，逐条审查 artifact quality、artifact versions、events 的数据暴露和副作用；保证 Agent 只能提交自己授权任务的产物，不能 review/approve 或改变质量治理数据。为迁移后的 artifact API 增加无 binding、scope 不足、过期/撤销、租户隔离、任务改派、审计归属测试。MCP task tools 暂不同时切换，待 REST API 完成后单独迁移。
