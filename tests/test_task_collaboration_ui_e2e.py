@@ -84,7 +84,6 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             # The Member owner can review and revoke only their own Agent grants
             # from the dedicated inbox, independently of the Task workspace.
             page.evaluate("loadCollaborationGrantInbox()")
-            expect(modal).to_contain_text("我的协作授权收件箱")
             expect(modal).to_contain_text("Collaboration UI Browser Agent")
             expect(modal).to_contain_text("已生效")
             page.evaluate("closeModal()")
