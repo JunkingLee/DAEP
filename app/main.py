@@ -12195,3 +12195,9 @@ def requirement_acceptance_report(rid:str,authorization:str=Header(None)):
         require_project_access(c,req['project_id'],a)
 
 register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now)
+
+from app.agent_collaboration_api import register_agent_collaboration_routes
+register_agent_collaboration_routes(
+    app, conn, actor, event, now, begin_serialized_write,
+    _lock_agent_policy_task, _grant_task_context, _ensure_agent_task_policy, DATABASE_URL,
+)
