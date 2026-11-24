@@ -133,7 +133,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
 
             page.locator('#nav button[data-page="agents"]').click()
             expect(page.locator("#agents.page.active")).to_be_visible()
-            expect(page.locator("#agents .page-head button")).to_be_visible()
+            expect(page.locator("#agents .page-head button").filter(has_text="创建 Agent")).to_be_visible()
             expect(page.locator("#agentGrid")).to_contain_text("还没有 Agent")
 
             page.locator("#agents .page-head button").filter(has_text="创建 Agent").click()
