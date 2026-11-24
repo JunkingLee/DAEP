@@ -649,7 +649,7 @@ def test_transactional_outbox_claim_and_lease_ownership():
     _,mid,_,tid=setup_project_task()
     sent=client.post('/api/v1/messages',headers=ADMIN,json={'recipient_member_id':mid,'task_id':tid,'title':'Dispatch','content':'hello'})
     assert sent.status_code==200
-    claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a','limit':10,'lease_seconds':30})
+    claim=client.post('/internal/v1/outbox/claim',headers=WORKER,json={'worker_id':'worker-a','limit':100,'lease_seconds':30})
     assert claim.status_code==200 and claim.json()['count']>=1
     item=next(x for x in claim.json()['items'] if x['payload']['message_id']==sent.json()['id'])
     wrong=client.post(f"/internal/v1/outbox/{item['id']}/complete",headers=WORKER,json={'worker_id':'worker-a','lease_token':'x'*40})
