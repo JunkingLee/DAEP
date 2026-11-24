@@ -4954,6 +4954,91 @@ def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_t
     assert any(json.loads(row["payload"]).get("grant_id") == grant_id for row in audit)
 
 
+def test_collaboration_grant_renewal_reauthorization_and_owner_audit_filters():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    other = client.post("/api/v1/members", headers=ADMIN, json={"name": "Other Grant Owner"})
+    assert other.status_code == 200, other.text
+    other_headers = {"Authorization": "Bearer " + other.json()["token"]}
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Renewable Collaboration Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    created_grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id, "scopes": ["session.read"],
+        "resource_scope": {"resource_ids": ["artifact-1"]}, "expires_in_days": 5})
+    assert created_grant.status_code == 200, created_grant.text
+    grant_id = created_grant.json()["id"]
+
+    denied = client.post(f"/api/v1/collaboration-grants/{grant_id}/renew",
+        headers=other_headers, json={"expires_in_days": 45})
+    assert denied.status_code == 403, denied.text
+    renewed = client.post(f"/api/v1/collaboration-grants/{grant_id}/renew",
+        headers=owner_headers, json={"expires_in_days": 45})
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["id"] == grant_id
+    assert renewed.json()["status"] == "AUTHORIZED"
+    assert renewed.json()["expires_at"] > renewed.json()["previous_expires_at"]
+
+    audit = client.get("/api/v1/members/me/collaboration-grant-audit",
+        headers=owner_headers, params={"agent_id": agent_id, "task_id": task_id,
+        "status": "RENEWED", "limit": 20})
+    assert audit.status_code == 200, audit.text
+    assert len(audit.json()["items"]) == 1
+    assert audit.json()["items"][0]["payload"]["grant_id"] == grant_id
+    assert audit.json()["items"][0]["event_type"] == "agent.collaboration_grant.renewed"
+    assert client.get("/api/v1/members/me/collaboration-grant-audit",
+        headers=other_headers, params={"owner_member_id": owner_id}).status_code == 403
+    assert client.get("/api/v1/members/me/collaboration-grant-audit",
+        headers=owner_headers, params={"status": "UNKNOWN"}).status_code == 422
+
+    revoked = client.delete(f"/api/v1/collaboration-grants/{grant_id}",
+        headers=owner_headers, json={"reason": "renewal lifecycle test"})
+    assert revoked.status_code == 200, revoked.text
+    cannot_restore = client.post(f"/api/v1/collaboration-grants/{grant_id}/renew",
+        headers=owner_headers, json={"expires_in_days": 30})
+    assert cannot_restore.status_code == 409, cannot_restore.text
+
+    replacement = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id, "scopes": ["session.read"],
+        "resource_scope": {"resource_ids": ["artifact-1"]}, "expires_in_days": 30})
+    assert replacement.status_code == 200, replacement.text
+    assert replacement.json()["id"] != grant_id
+    with main_module.conn() as c:
+        old = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                        (grant_id,)).fetchone()
+        new = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                        (replacement.json()["id"],)).fetchone()
+    assert old["status"] == "REVOKED"
+    assert new["status"] == "AUTHORIZED"
+
+    expiring_agent = client.post("/api/v1/agents", headers=owner_headers,
+                                 json={"name": "Expiring Collaboration Agent"})
+    assert expiring_agent.status_code == 200, expiring_agent.text
+    expiring_id = expiring_agent.json()["agent"]["id"]
+    expiring_grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": expiring_id, "scopes": ["session.read"],
+        "expires_in_days": 10})
+    assert expiring_grant.status_code == 200, expiring_grant.text
+    expiring_grant_id = expiring_grant.json()["id"]
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  ("1999-12-31T00:00:00+00:00", "2000-01-01T00:00:00+00:00", expiring_grant_id))
+    expired_renewal = client.post(f"/api/v1/collaboration-grants/{expiring_grant_id}/renew",
+        headers=owner_headers, json={"expires_in_days": 30})
+    assert expired_renewal.status_code == 200, expired_renewal.text
+    assert expired_renewal.json()["status"] == "EXPIRED"
+    expired_replacement = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": expiring_id, "scopes": ["session.read"],
+        "expires_in_days": 30})
+    assert expired_replacement.status_code == 200, expired_replacement.text
+    assert expired_replacement.json()["id"] != expiring_grant_id
+    with main_module.conn() as c:
+        expired = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                            (expiring_grant_id,)).fetchone()
+    assert expired["status"] == "EXPIRED"
+
+
 def test_collaboration_session_pause_close_history_and_owner_boundaries():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
