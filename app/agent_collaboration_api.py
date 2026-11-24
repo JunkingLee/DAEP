@@ -272,7 +272,7 @@ def register_agent_collaboration_routes(
             )
             notify_member(c,current["id"],task["project_tenant_id"],task_id,task["project_id"],
                 "AGENT_COLLABORATION_GRANT","Agent 协作授权已创建",
-                f"你已为 Agent「{agent['name']}」创建 Task「{task.get('title') or task_id}」的协作授权，等待 Agent 接受。",
+                f"你已为 Agent「{agent['name']}」创建 Task「{task_id}」的协作授权，等待 Agent 接受。",
                 "NORMAL",f"agent-collaboration-grant:authorized:{grant_id}")
             return {
                 "id": grant_id, "task_id": task_id, "session_id": session["id"],
