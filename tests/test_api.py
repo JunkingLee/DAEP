@@ -5581,6 +5581,67 @@ def test_collaboration_grant_notifications_read_state_and_worker_reminders():
     assert invalid_filter.status_code == 422
 
 
+
+def test_disabling_expiry_reminders_does_not_disable_grant_expiration():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Reminder Preference Boundary Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id,
+        "scopes": ["session.read"], "expires_in_days": 30})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+
+    preferences = client.put("/api/v1/me/notification-preferences",
+        headers=owner_headers, json={
+            "collaboration_grant_events": True,
+            "collaboration_expiry_reminders": False,
+            "reminder_days": [7, 3, 1],
+        })
+    assert preferences.status_code == 200, preferences.text
+
+    # Reminder suppression must not affect the authorization lifecycle.
+    soon = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=2)).isoformat()
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  (soon, grant_id))
+    reminder_run = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                               headers=WORKER, json={})
+    assert reminder_run.status_code == 200, reminder_run.text
+    assert reminder_run.json()["reminders_dispatched"] == 0
+    with main_module.conn() as c:
+        state = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                          (grant_id,)).fetchone()["status"]
+    assert state in ("AUTHORIZED", "ACCEPTED")
+
+    # Even with reminders disabled, an actually expired grant is still expired.
+    past = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=1)).isoformat()
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  (past, grant_id))
+    expiry_run = client.post("/internal/v1/collaboration-grants/reminders/dispatch",
+                             headers=WORKER, json={})
+    assert expiry_run.status_code == 200, expiry_run.text
+    assert expiry_run.json()["expired_dispatched"] == 1
+    with main_module.conn() as c:
+        state = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                          (grant_id,)).fetchone()["status"]
+    assert state == "EXPIRED"
+
+    # The preference suppresses reminders, not expiry lifecycle notices.
+    notices = client.get("/api/v1/me/notifications", headers=owner_headers,
+                         params={"status": "ALL"})
+    assert notices.status_code == 200, notices.text
+    assert not any(x["message_type"] == "AGENT_COLLABORATION_GRANT_REMINDER"
+                   for x in notices.json()["items"])
+    assert any(x["title"] == "Agent 协作授权已过期"
+               for x in notices.json()["items"])
+
+
+
 def test_member_notification_delivery_view_correlates_outbox_and_inbox_ack():
     pid, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {'Authorization': f'Bearer {owner_token}'}
