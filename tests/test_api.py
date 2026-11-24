@@ -4295,3 +4295,87 @@ def test_agent_task_execution_policy_controls_team_grant_cardinality():
     assert policy_row['policy_version']==3
     assert grants['n']==3
 
+def test_agent_disable_and_token_revocation_revoke_active_task_grants():
+    pid,member_id,member_token,task_id=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=headers,json={'name':'Lifecycle Disabled Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+        json={'agent_id':agent['id']})
+    assert grant.status_code==200,grant.text
+
+    disabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=headers,json={
+        'name':'Lifecycle Disabled Agent','description':'','status':'DISABLED'})
+    assert disabled.status_code==200,disabled.text
+    with main_module.conn() as c:
+        row=c.execute('SELECT status,revoke_reason,revoked_by_member_id FROM agent_task_grants WHERE id=?',
+            (grant.json()['id'],)).fetchone()
+    assert row['status']=='REVOKED'
+    assert row['revoke_reason']=='Agent identity disabled'
+    assert row['revoked_by_member_id']==member_id
+
+    created2=client.post('/api/v1/agents',headers=headers,json={'name':'Lifecycle Token Agent'})
+    assert created2.status_code==200,created2.text
+    agent2=created2.json()['agent']
+    grant2=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+        json={'agent_id':agent2['id']})
+    assert grant2.status_code==200,grant2.text
+    revoked=client.post(f"/api/v1/agents/{agent2['id']}/tokens/revoke",headers=headers)
+    assert revoked.status_code==200,revoked.text
+    assert revoked.json()['revoked_grant_count']==1
+    with main_module.conn() as c:
+        row2=c.execute('SELECT status,revoke_reason,revoked_by_member_id FROM agent_task_grants WHERE id=?',
+            (grant2.json()['id'],)).fetchone()
+        token=c.execute("SELECT status FROM agent_tokens WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
+            (agent2['id'],)).fetchone()
+    assert row2['status']=='REVOKED'
+    assert row2['revoke_reason']=='Agent token revoked'
+    assert row2['revoked_by_member_id']==member_id
+    assert token['status']=='REVOKED'
+
+
+def test_task_terminal_lifecycle_completes_or_revokes_agent_grants():
+    pid,member_id,member_token,task_id=setup_project_task()
+    headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=headers,json={'name':'Lifecycle Completed Agent'})
+    assert created.status_code==200,created.text
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers,
+        json={'agent_id':created.json()['agent']['id']})
+    assert grant.status_code==200,grant.text
+
+    with main_module.conn() as c:
+        main_module.begin_serialized_write(c)
+        main_module._lock_agent_policy_task(c,task_id)
+        count=main_module._close_task_agent_grants(c,task_id,'DONE',member_id)
+        row=c.execute('SELECT status,completed_at FROM agent_task_grants WHERE id=?',
+            (grant.json()['id'],)).fetchone()
+    assert count==1
+    assert row['status']=='COMPLETED'
+    assert row['completed_at'] is not None
+
+    created2=client.post('/api/v1/agents',headers=headers,json={'name':'Lifecycle Cancelled Agent'})
+    assert created2.status_code==200,created2.text
+    # Create a second task because terminal tasks reject new Agent grants.
+    req=client.post('/api/v1/requirements',headers=headers,json={
+        'project_id':pid,'title':'Lifecycle cancellation requirement','description':'','acceptance_criteria':[]})
+    assert req.status_code==200,req.text
+    task=client.post('/api/v1/tasks',headers=headers,json={
+        'requirement_id':req.json()['id'],'title':'Lifecycle cancellation task',
+        'description':'','assignee_member_ids':[member_id],'dependencies':[]})
+    assert task.status_code==200,task.text
+    task2=task.json()['id']
+    grant2=client.post(f'/api/v1/tasks/{task2}/agent-grants',headers=headers,
+        json={'agent_id':created2.json()['agent']['id']})
+    assert grant2.status_code==200,grant2.text
+    with main_module.conn() as c:
+        main_module.begin_serialized_write(c)
+        main_module._lock_agent_policy_task(c,task2)
+        count2=main_module._close_task_agent_grants(c,task2,'CANCELLED',member_id)
+        row2=c.execute('SELECT status,revoke_reason,revoked_at FROM agent_task_grants WHERE id=?',
+            (grant2.json()['id'],)).fetchone()
+    assert count2==1
+    assert row2['status']=='REVOKED'
+    assert row2['revoke_reason']=='Task became CANCELLED'
+    assert row2['revoked_at'] is not None
+
