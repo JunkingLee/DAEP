@@ -472,3 +472,45 @@
 - 本轮代码提交：`fbbb99fb2ee24808f2422ee679c77e8357eccdeb`（MCP Grant 切换）；随后修正 allowlist 的 task progress/blocked 路由段位判断，代码提交 `f82c613e6bf599f52cf488667f08a91be0b70577`。最新代码 HEAD 为该修正提交；本轮没有本地运行 pytest，必须以最新 HEAD 对应 CI 验证为准。
 - 已知限制：Agent Task events 读取仍未开放；MCP 不提供 Agent 对项目审计、审批、治理、消息/通知、委派或 work-package 操作。旧 Member Token MCP 工具保留兼容，但 Agent Token 无法调用。
 - 下一步唯一任务：Stage B 后续安全收口——将 `GET /api/v1/tasks/{tid}/events` 改为 Agent 仅持有 `task.read` Grant 才能读取，确认事件 payload 不泄露无关项目/成员敏感信息；随后实现 Task 完成/关闭/撤销时 AgentTaskGrant 自动 COMPLETED/REVOKED 的生命周期联动，并补充跨租户与多责任人负向测试。禁止 Agent 访问项目级审计 API。
+
+
+---
+
+## 22. 正式冻结：TEAM 多 Agent 协作与无固定数量上限（2026-11-24）
+
+### 用户已确认的产品规则
+- 协作模式：`TEAM`，Agent 团队协作。
+- 最大数量：不设置固定数量，由任务负责人决定。
+- 每个 Agent 仍归属其 Member；任务负责人开放多 Agent 不代表代替各 Agent Owner 授权。
+- Agent Runtime 完全运行在各 Member 自己的环境；DAEP 只负责接入、授权、协作治理和审计，不启动/托管 Runtime。
+
+### 本轮实时仓库核验
+- 仓库：`JunkingLee/DAEP`
+- 分支：`release/1.0.0-rc9`
+- 实时分支 HEAD：`d09eb19e9eed9646b1b4fdca763f03e76745c15e`
+- 该 HEAD 的 combined status 查询未返回 status checks；commit workflow runs 查询返回空列表。当前不能据此宣称该 HEAD CI 通过，也没有可确认的 pending run。
+- 原领域模型和迁移设计存在冲突：迁移设计旧版规定同一 Task 仅一个有效 Grant，并把多 Agent 推迟到未来；本轮已用下列正式规则覆盖旧条款。
+
+### 冻结的领域/数据库规则
+- `AgentTaskExecutionPolicy`：每 Task 一条；`collaboration_mode='TEAM'`；由人类任务负责人维护 `allow_multiple_agents`。
+- `max_agents` 为 nullable positive integer；NULL 明确表示负责人不设置任务级固定上限；不得隐式默认 3/5/10。
+- `AgentTaskGrant` 改为 Task 1:N；有效 Grant 唯一性改为 `(task_id, agent_id)`，不再对 task_id 单独唯一。
+- 多 Grant 创建必须在事务中锁定 Task/Policy 行，并校验 allow_multiple_agents、max_agents 和同 Agent 重复授权。
+- 新增 `AgentTaskContribution`，按 grant_id/agent_id 分离进度、阻塞和产物贡献；Agent 不直接覆盖 Task 人类总体进度。
+- 新增独立 `AgentCollaborationGrant`，明确消息读写、Agent 发现、邀请/工作包/委派提议等协作 scopes 与 Task 资源范围。
+- 复用 messages、task_work_packages、task_delegations；Agent 消息以 Agent 身份署名；Agent proposal 不直接改变人类 assignee、正式工作包治理、审批或验收。
+- ProjectAgentPresence 只用于能力/在线发现，不构成执行或协作授权。
+- 旧 Agent Assignment 保留只读历史，不静默转换为新 Grant；旧 project binding 不构成授权。
+
+### 文档变更
+- `docs/DOMAIN_MODEL_AGENT_OWNERSHIP.md`：追加正式 TEAM 多 Agent 领域模型和授权边界，声明覆盖旧单 Agent 描述。
+- `docs/AGENT_TASK_GRANT_MIGRATION_DESIGN.md`：追加数据库实体、1:N 索引迁移、并发事务、协作授权、贡献模型、API/MCP 迁移顺序及负向测试矩阵。
+- 本次仅冻结文档设计，尚未实施数据库 migration、API、MCP 或前端改造。
+
+### 本轮提交与验证
+- 提交 SHA：见本节文档提交记录（更新完成后填入）。
+- 本轮未运行 pytest；未执行 PostgreSQL migration/RLS 或真实浏览器/MCP Host 测试。
+- CI 状态以本节提交对应的 GitHub workflow 为准；在结果可查之前不得声称通过。
+
+### 下一步唯一任务
+依据冻结设计实施数据库 schema/migration：新增 AgentTaskExecutionPolicy、AgentTaskContribution、AgentCollaborationGrant；将 AgentTaskGrant 有效唯一索引由 task_id 改为 (task_id, agent_id)；补充 PostgreSQL RLS、SQLite bootstrap/schema parity、历史数据检查与并发迁移测试。先完成数据库层，不提前开放协作 API/MCP。
