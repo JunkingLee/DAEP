@@ -3922,7 +3922,7 @@ def test_agent_task_grant_member_owner_create_list_revoke_and_audit():
     assert client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=outsider_headers).status_code==403
     assert client.delete(f"/api/v1/agent-grants/{grant['id']}",headers=outsider_headers).status_code==403
 
-    revoked=client.delete(f"/api/v1/agent-grants/{grant['id']}",headers=owner_headers,
+    revoked=client.request('DELETE',f"/api/v1/agent-grants/{grant['id']}",headers=owner_headers,
         json={'reason':'Owner no longer needs Agent execution'})
     assert revoked.status_code==200,revoked.text
     assert revoked.json()['status']=='REVOKED'
