@@ -5646,7 +5646,7 @@ def test_member_notification_delivery_view_correlates_outbox_and_inbox_ack():
 
 
 def test_member_notification_preferences_defaults_validation_and_scope():
-    _, owner_id, owner_token, task_id = setup_project_task()
+    project_id, owner_id, owner_token, task_id = setup_project_task()
     headers = {'Authorization': f'Bearer {owner_token}'}
 
     defaults = client.get('/api/v1/me/notification-preferences', headers=headers)
@@ -5676,6 +5676,16 @@ def test_member_notification_preferences_defaults_validation_and_scope():
     persisted = client.get('/api/v1/me/notification-preferences', headers=headers)
     assert persisted.json()['reminder_days'] == [3, 1]
     assert persisted.json()['collaboration_grant_events'] is False
+
+    # Disabling grant-event notifications suppresses only the notification;
+    # it does not alter the underlying collaboration grant lifecycle.
+    with main_module.conn() as c:
+        suppressed = main_module.enqueue_member_notification(
+            c, owner_id, 'tenant-default', task_id, project_id,
+            'AGENT_COLLABORATION_GRANT', 'Suppressed preference test',
+            'This message must not enter the inbox or outbox.',
+            'NORMAL', 'preference-disabled:' + task_id)
+    assert suppressed is None
 
     denied = client.get('/api/v1/me/notification-preferences',
                         headers={'Authorization': 'Bearer invalid-agent-token'})
