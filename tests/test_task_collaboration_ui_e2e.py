@@ -74,6 +74,9 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             modal = page.locator("#modalBody")
             expect(modal).to_contain_text("Task 协作空间")
             expect(modal).to_contain_text("Session OPEN")
+            expect(modal).to_contain_text("Agent 授权")
+            expect(modal).to_contain_text("已生效")
+            expect(modal).to_contain_text("读取协作历史")
             expect(modal).to_contain_text("Agent collaboration message from browser E2E")
             expect(modal).to_contain_text("Need human review from browser E2E")
             expect(modal.get_by_role("button", name="接受建议")).to_be_visible()
@@ -124,5 +127,23 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             assert lifecycle["message"] == 409, lifecycle
             assert lifecycle["proposal"] == 409, lifecycle
             assert lifecycle["grant"] == 409, lifecycle
+            # Owner revocation from the Task workspace removes history and write access.
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.once("dialog", lambda dialog: dialog.accept("Owner revoked from browser E2E"))
+            modal.get_by_role("button", name="撤销我的授权").click()
+            expect(modal).to_contain_text("已撤销", timeout=15000)
+            revoked_access = page.evaluate("""async ({taskId,grantId,agentToken}) => {
+                const call=async(path,method,body) => {
+                    const response=await fetch(path,{method,headers:{
+                        'Authorization':'Bearer '+agentToken,'Content-Type':'application/json'
+                    },body:body===undefined?undefined:JSON.stringify(body)});
+                    return response.status;
+                };
+                const history=await call('/api/v1/tasks/'+taskId+'/collaboration-messages?grant_id='+grantId,'GET');
+                const message=await call('/api/v1/tasks/'+taskId+'/collaboration-messages','POST',{grant_id:grantId,content:'must be rejected after revoke'});
+                const proposal=await call('/api/v1/tasks/'+taskId+'/collaboration-proposals','POST',{grant_id:grantId,proposal_type:'HELP_REQUEST',payload:{summary:'must be rejected'}});
+                return {history,message,proposal};
+            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"]})
+            assert revoked_access == {"history":403,"message":403,"proposal":403}, revoked_access
         finally:
             browser.close()
