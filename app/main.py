@@ -1215,8 +1215,19 @@ def disable_member(member_id:str,authorization:str=Header(None)):
                 event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
                     'assignment_id':assignment['id'],'agent_id':agent_id,
                     'reason':'Agent owner account disabled'},tenant_override=target['tenant_id'])
+            grants=c.execute("""SELECT id,task_id FROM agent_task_grants
+                WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(agent_id,)).fetchall()
+            for grant in grants:
+                c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
+                    revoked_by_member_id=?,revoke_reason='Agent owner account disabled'
+                    WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                    (stamp,stamp,a['id'],grant['id']))
+                event(c,'agent.task_grant.revoked',a['id'],grant['task_id'],{
+                    'grant_id':grant['id'],'agent_id':agent_id,
+                    'reason':'Agent owner account disabled'},tenant_override=target['tenant_id'])
             event(c,'agent.owner_account_disabled',a['id'],None,{'agent_id':agent_id,
-                'revoked_assignment_count':len(assignments)},tenant_override=target['tenant_id'])
+                'revoked_assignment_count':len(assignments),'revoked_grant_count':len(grants)},
+                tenant_override=target['tenant_id'])
         event(c,'member.account.disabled',a['id'],None,{'member_id':member_id,
             'disabled_agent_count':len(owned_agents)},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED',
