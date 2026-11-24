@@ -3801,12 +3801,14 @@ def dispatch_collaboration_grant_reminders(authorization:str=Header(None)):
 
 @app.get('/api/v1/me/notifications')
 def notifications(authorization:str=Header(None),after:int=0,limit:int=50,status:str='PENDING'):
-    a=actor(authorization); limit=max(1,min(limit,100)); status=status.upper()
+    a=actor(authorization)
+    if a.get('actor_type')!='MEMBER': raise HTTPException(403,'Member authentication required')
+    limit=max(1,min(limit,100)); status=status.upper()
     if status not in ('PENDING','ACKNOWLEDGED','REJECTED','ALL'):
         raise HTTPException(422,'status must be PENDING, ACKNOWLEDGED, REJECTED or ALL')
     with conn() as c:
         if status=='ALL':
-            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND seq>? ORDER BY seq DESC LIMIT ?', (a['id'],after,limit))]
+            rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND seq>? ORDER BY seq LIMIT ?', (a['id'],after,limit))]
         else:
             rows=[dict(x) for x in c.execute('SELECT * FROM messages WHERE recipient_member_id=? AND status=? AND seq>? ORDER BY seq DESC LIMIT ?', (a['id'],status,after,limit))]
         for row in rows:
@@ -3817,6 +3819,7 @@ def notifications(authorization:str=Header(None),after:int=0,limit:int=50,status
 @app.post('/api/v1/messages/{mid}/ack')
 def ack(mid:str,b:AckIn,authorization: str=Header(None)):
     a=actor(authorization)
+    if a.get('actor_type')!='MEMBER': raise HTTPException(403,'Member authentication required')
     if b.status not in ('ACKNOWLEDGED','REJECTED'): raise HTTPException(422,'Invalid acknowledgement status')
     with conn() as c:
         existing=c.execute('SELECT status,task_id,tenant_id FROM messages WHERE id=? AND recipient_member_id=?',(mid,a['id'])).fetchone()
