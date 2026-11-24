@@ -191,6 +191,75 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             # unbindAgentProject refreshes the detail modal after the DELETE.
             page.locator("#modal .modal-head button").click()
 
+            # Seed real Task Execution and Collaboration grants, accept both with the
+            # Agent credential, revoke both through Owner governance, and verify the
+            # Agent detail UI surfaces the resulting authorization state.
+            grant_setup = page.evaluate(
+                """async ({agentId, agentToken, projectId}) => {
+                    const webToken = localStorage.getItem('daep.web.access_token');
+                    const auth = {'Authorization': 'Bearer ' + webToken, 'Content-Type': 'application/json'};
+                    const me = await (await fetch('/api/v1/me', {headers: {'Authorization': 'Bearer ' + webToken}})).json();
+                    const requirement = await (await fetch('/api/v1/requirements', {
+                        method: 'POST', headers: auth,
+                        body: JSON.stringify({project_id: projectId, title: 'Authorization state UI task'})
+                    })).json();
+                    const task = await (await fetch('/api/v1/tasks', {
+                        method: 'POST', headers: auth,
+                        body: JSON.stringify({requirement_id: requirement.id, title: 'Authorization state UI task', assignee_member_ids: [me.id]})
+                    })).json();
+                    const taskGrantResponse = await fetch('/api/v1/tasks/' + encodeURIComponent(task.id) + '/agent-grants', {
+                        method: 'POST', headers: auth,
+                        body: JSON.stringify({agent_id: agentId, requested_scope: ['task.read']})
+                    });
+                    const taskGrant = await taskGrantResponse.json();
+                    const taskAcceptResponse = await fetch('/api/v1/agent-grants/' + encodeURIComponent(taskGrant.id) + '/accept', {
+                        method: 'POST', headers: {'Authorization': 'Bearer ' + agentToken, 'Content-Type': 'application/json'}, body: '{}'
+                    });
+                    const sessionResponse = await fetch('/api/v1/tasks/' + encodeURIComponent(task.id) + '/collaboration-session', {
+                        headers: {'Authorization': 'Bearer ' + webToken}
+                    });
+                    const session = await sessionResponse.json();
+                    const collaborationGrantResponse = await fetch('/api/v1/tasks/' + encodeURIComponent(task.id) + '/collaboration-grants', {
+                        method: 'POST', headers: auth,
+                        body: JSON.stringify({agent_id: agentId, scopes: ['session.read']})
+                    });
+                    const collaborationGrant = await collaborationGrantResponse.json();
+                    const collaborationAcceptResponse = await fetch('/api/v1/collaboration-grants/' + encodeURIComponent(collaborationGrant.id) + '/accept', {
+                        method: 'POST', headers: {'Authorization': 'Bearer ' + agentToken, 'Content-Type': 'application/json'}, body: '{}'
+                    });
+                    const taskRevokeResponse = await fetch('/api/v1/agent-grants/' + encodeURIComponent(taskGrant.id), {
+                        method: 'DELETE', headers: auth,
+                        body: JSON.stringify({reason: 'Browser authorization-state regression'})
+                    });
+                    const collaborationRevokeResponse = await fetch('/api/v1/collaboration-grants/' + encodeURIComponent(collaborationGrant.id), {
+                        method: 'DELETE', headers: auth,
+                        body: JSON.stringify({reason: 'Browser authorization-state regression'})
+                    });
+                    return {
+                        taskId: task.id,
+                        sessionId: session.id,
+                        taskGrantStatus: taskGrantResponse.status,
+                        taskAcceptStatus: taskAcceptResponse.status,
+                        collaborationGrantStatus: collaborationGrantResponse.status,
+                        collaborationAcceptStatus: collaborationAcceptResponse.status,
+                        taskRevokeStatus: taskRevokeResponse.status,
+                        collaborationRevokeStatus: collaborationRevokeResponse.status
+                    };
+                }""",
+                {"agentId": agent_id, "agentToken": rotated_token, "projectId": project_id},
+            )
+            assert grant_setup['taskGrantStatus'] == 200, grant_setup
+            assert grant_setup['taskAcceptStatus'] == 200, grant_setup
+            assert grant_setup['collaborationGrantStatus'] == 200, grant_setup
+            assert grant_setup['collaborationAcceptStatus'] == 200, grant_setup
+            assert grant_setup['taskRevokeStatus'] == 200, grant_setup
+            assert grant_setup['collaborationRevokeStatus'] == 200, grant_setup
+            agent_card.get_by_role("button", name="管理").click()
+            expect(page.locator("#modalBody")).to_contain_text("Task Execution Grants")
+            expect(page.locator("#modalBody")).to_contain_text("Collaboration Grants")
+            expect(page.locator("#modalBody")).to_contain_text("REVOKED")
+            page.locator("#modal .modal-head button").click()
+
             # Revoke the currently active rotated token and verify history.
             agent_card.get_by_role("button", name="管理").click()
             page.once("dialog", lambda dialog: dialog.accept())
