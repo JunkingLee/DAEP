@@ -455,6 +455,210 @@ def register_agent_collaboration_routes(
             raise HTTPException(409, "Collaboration Session project relationship is invalid")
         return session
 
+
+    @router.get("/api/v1/tasks/{task_id}/collaboration-proposals")
+    def list_task_collaboration_proposals(task_id: str, grant_id: str = None, authorization: str = Header(None)):
+        current = actor(authorization)
+        stamp = now()
+        with conn() as c:
+            begin_serialized_write(c)
+            lock_task(c, task_id)
+            if current.get("actor_type") == "MEMBER":
+                task, session = _member_task_session(c, task_id, current, stamp)
+                rows = c.execute(
+                    """SELECT p.*,a.name agent_name
+                       FROM agent_collaboration_proposals p
+                       JOIN agents a ON a.id=p.proposed_by_agent_id
+                       WHERE p.tenant_id=? AND p.task_id=?
+                       ORDER BY p.created_at DESC""",
+                    (task["project_tenant_id"], task_id),
+                ).fetchall()
+            elif current.get("actor_type") == "AGENT":
+                if not isinstance(grant_id, str) or not grant_id.strip():
+                    raise HTTPException(422, "grant_id is required for Agent proposal access")
+                grant, session, task = _agent_collaboration_grant_context(
+                    c, grant_id.strip(), current, task_id=task_id, required_scope="session.read")
+                rows = c.execute(
+                    """SELECT p.*,a.name agent_name
+                       FROM agent_collaboration_proposals p
+                       JOIN agents a ON a.id=p.proposed_by_agent_id
+                       WHERE p.tenant_id=? AND p.task_id=? AND p.collaboration_grant_id=?
+                       ORDER BY p.created_at DESC""",
+                    (grant["tenant_id"], task_id, grant["id"]),
+                ).fetchall()
+            else:
+                raise HTTPException(403, "Member or Agent authentication required")
+            return {
+                "task_id": task_id,
+                "session_id": session["id"],
+                "items": [
+                    {
+                        **dict(row),
+                        "payload": json.loads(row["payload_json"]),
+                    }
+                    for row in rows
+                ],
+            }
+
+    @router.post("/api/v1/tasks/{task_id}/collaboration-proposals")
+    def create_task_collaboration_proposal(task_id: str, body: dict, authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "AGENT":
+            raise HTTPException(403, "Agent authentication required to create collaboration proposals")
+        grant_id = body.get("grant_id")
+        if not isinstance(grant_id, str) or not grant_id.strip():
+            raise HTTPException(422, "grant_id is required")
+        proposal_type = str(body.get("proposal_type", "")).upper().strip()
+        if proposal_type not in ("INVITE_AGENT", "WORK_PACKAGE", "MEMBER_DELEGATION", "HELP_REQUEST"):
+            raise HTTPException(422, "proposal_type must be INVITE_AGENT, WORK_PACKAGE, MEMBER_DELEGATION or HELP_REQUEST")
+        payload = body.get("payload", {})
+        if not isinstance(payload, dict):
+            raise HTTPException(422, "payload must be an object")
+        payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        if len(payload_json) > 32000:
+            raise HTTPException(422, "payload must be at most 32000 encoded characters")
+        with conn() as c:
+            begin_serialized_write(c)
+            lock_task(c, task_id)
+            grant, session, task = _agent_collaboration_grant_context(
+                c, grant_id.strip(), current, task_id=task_id, required_scope="session.proposal.create")
+            if session["status"] != "OPEN":
+                raise HTTPException(409, "Only an OPEN collaboration Session accepts new proposals")
+            if task["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
+                raise HTTPException(409, "Only an active Task accepts new collaboration proposals")
+            proposal_id = "acp_" + uuid.uuid4().hex[:20]
+            stamp = now()
+            c.execute(
+                """INSERT INTO agent_collaboration_proposals
+                   (id,tenant_id,project_id,task_id,session_id,proposal_type,
+                    proposed_by_agent_id,owner_member_id,collaboration_grant_id,payload_json,
+                    status,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?, 'PENDING',?)""",
+                (proposal_id, grant["tenant_id"], task["project_id"], task_id, session["id"],
+                 proposal_type, current["agent_id"], grant["owner_member_id"], grant["id"],
+                 payload_json, stamp),
+            )
+            event(
+                c, "agent.collaboration_proposal.created", None, task_id,
+                {"proposal_id": proposal_id, "session_id": session["id"],
+                 "agent_id": current["agent_id"], "owner_member_id": grant["owner_member_id"],
+                 "collaboration_grant_id": grant["id"], "proposal_type": proposal_type},
+                tenant_override=grant["tenant_id"],
+            )
+            row = c.execute(
+                """SELECT p.*,a.name agent_name
+                   FROM agent_collaboration_proposals p
+                   JOIN agents a ON a.id=p.proposed_by_agent_id
+                   WHERE p.id=?""",
+                (proposal_id,),
+            ).fetchone()
+            return {**dict(row), "payload": payload}
+
+    @router.post("/api/v1/collaboration-proposals/{proposal_id}/decision")
+    def decide_collaboration_proposal(proposal_id: str, body: dict, authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "MEMBER":
+            raise HTTPException(403, "Member authentication required")
+        decision = str(body.get("decision", "")).upper().strip()
+        if decision not in ("ACCEPTED", "REJECTED"):
+            raise HTTPException(422, "decision must be ACCEPTED or REJECTED")
+        note = body.get("decision_note")
+        if note is not None and (not isinstance(note, str) or len(note) > 4000):
+            raise HTTPException(422, "decision_note must be a string of at most 4000 characters")
+        with conn() as c:
+            begin_serialized_write(c)
+            lookup = c.execute(
+                "SELECT task_id FROM agent_collaboration_proposals WHERE id=? AND tenant_id=?",
+                (proposal_id, current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not lookup:
+                raise HTTPException(404, "Collaboration proposal not found")
+            lock_task(c, lookup["task_id"])
+            row = c.execute(
+                """SELECT p.*,s.status session_status,t.status task_status,
+                          a.status agent_status,a.owner_member_id current_owner
+                   FROM agent_collaboration_proposals p
+                   JOIN agent_collaboration_sessions s ON s.id=p.session_id
+                   JOIN tasks t ON t.id=p.task_id
+                   JOIN agents a ON a.id=p.proposed_by_agent_id
+                   WHERE p.id=? AND p.tenant_id=?""",
+                (proposal_id, current.get("tenant_id", "tenant-default")),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Collaboration proposal not found")
+            if row["owner_member_id"] != current["id"]:
+                raise HTTPException(403, "Only the Agent Owner who authorized the proposal can decide it")
+            if row["status"] != "PENDING":
+                raise HTTPException(409, "Collaboration proposal is no longer pending")
+            if row["current_owner"] != row["owner_member_id"] or row["agent_status"] != "ACTIVE":
+                raise HTTPException(409, "The proposing Agent identity is no longer active for this proposal")
+            if row["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
+                raise HTTPException(409, "A terminal Task cannot receive a proposal decision")
+            stamp = now()
+            c.execute(
+                """UPDATE agent_collaboration_proposals
+                   SET status=?,decided_by_member_id=?,decision_note=?,decided_at=?
+                   WHERE id=? AND status='PENDING'""",
+                (decision, current["id"], note.strip() if isinstance(note, str) else None, stamp, proposal_id),
+            )
+            event(
+                c, "agent.collaboration_proposal.decided", current["id"], row["task_id"],
+                {"proposal_id": proposal_id, "session_id": row["session_id"],
+                 "agent_id": row["proposed_by_agent_id"], "decision": decision},
+                tenant_override=row["tenant_id"],
+            )
+            return {
+                "id": proposal_id,
+                "status": decision,
+                "decided_by_member_id": current["id"],
+                "decision_note": note.strip() if isinstance(note, str) else None,
+                "decided_at": stamp,
+                "formal_mutation_required": True,
+            }
+
+    @router.post("/api/v1/collaboration-proposals/{proposal_id}/withdraw")
+    def withdraw_collaboration_proposal(proposal_id: str, authorization: str = Header(None)):
+        current = actor(authorization)
+        if current.get("actor_type") != "AGENT":
+            raise HTTPException(403, "Agent authentication required")
+        with conn() as c:
+            begin_serialized_write(c)
+            lookup = c.execute(
+                """SELECT task_id FROM agent_collaboration_proposals
+                   WHERE id=? AND tenant_id=? AND proposed_by_agent_id=?""",
+                (proposal_id, current.get("tenant_id", "tenant-default"), current["agent_id"]),
+            ).fetchone()
+            if not lookup:
+                raise HTTPException(404, "Collaboration proposal not found")
+            lock_task(c, lookup["task_id"])
+            row = c.execute(
+                """SELECT p.*,a.owner_member_id current_owner,a.status agent_status
+                   FROM agent_collaboration_proposals p
+                   JOIN agents a ON a.id=p.proposed_by_agent_id
+                   WHERE p.id=? AND p.tenant_id=? AND p.proposed_by_agent_id=?""",
+                (proposal_id, current.get("tenant_id", "tenant-default"), current["agent_id"]),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Collaboration proposal not found")
+            if row["current_owner"] != row["owner_member_id"] or row["agent_status"] != "ACTIVE":
+                raise HTTPException(404, "Collaboration proposal not found")
+            if row["status"] != "PENDING":
+                raise HTTPException(409, "Only a pending collaboration proposal can be withdrawn")
+            stamp = now()
+            c.execute(
+                """UPDATE agent_collaboration_proposals
+                   SET status='WITHDRAWN',decided_by_member_id=NULL,decision_note=NULL,decided_at=?
+                   WHERE id=? AND status='PENDING'""",
+                (stamp, proposal_id),
+            )
+            event(
+                c, "agent.collaboration_proposal.withdrawn", None, row["task_id"],
+                {"proposal_id": proposal_id, "session_id": row["session_id"],
+                 "agent_id": current["agent_id"]},
+                tenant_override=row["tenant_id"],
+            )
+            return {"id": proposal_id, "status": "WITHDRAWN", "withdrawn_at": stamp}
+
     @router.get("/api/v1/tasks/{task_id}/collaboration-messages")
     def list_task_collaboration_messages(task_id: str, grant_id: str = None, limit: int = 50,
                                          authorization: str = Header(None)):
