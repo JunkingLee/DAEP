@@ -4511,3 +4511,158 @@ def test_agent_task_grant_concurrent_create_and_revoke_share_task_lock():
         task_grants=c.execute("SELECT COUNT(*) AS n FROM agent_task_grants WHERE task_id=? "
             "AND status IN ('AUTHORIZED','ACCEPTED')",(task_id,)).fetchone()
     assert task_grants['n']<=1
+
+
+
+def test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle():
+    pid, member_id, token, task_id = setup_project_task()
+    headers = {"Authorization": "Bearer " + token}
+
+    session_response = client.get(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers
+    )
+    assert session_response.status_code == 200, session_response.text
+    session = session_response.json()
+    assert session["status"] == "OPEN"
+    assert session["responsible_member_id"] == member_id
+
+    repeated = client.get(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["id"] == session["id"]
+
+    created = client.post(
+        "/api/v1/agents", headers=headers,
+        json={"name": "Collaboration Owner Agent"},
+    )
+    assert created.status_code == 200, created.text
+    agent = created.json()["agent"]
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+
+    execution_grant = client.post(
+        f"/api/v1/tasks/{task_id}/agent-grants", headers=headers,
+        json={"agent_id": agent["id"], "requested_scope": ["task.read"]},
+    )
+    assert execution_grant.status_code == 200, execution_grant.text
+
+    paused = client.patch(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers,
+        json={"status": "PAUSED"},
+    )
+    assert paused.status_code == 200, paused.text
+    blocked = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=headers,
+        json={"agent_id": agent["id"]},
+    )
+    assert blocked.status_code == 409, blocked.text
+
+    reopened = client.patch(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers,
+        json={"status": "OPEN", "title": "Task collaboration"},
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["title"] == "Task collaboration"
+
+    collaboration_grant = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=headers,
+        json={
+            "agent_id": agent["id"],
+            "scopes": ["session.read", "session.message.send"],
+            "resource_scope": {"resource_ids": ["artifact-1"]},
+            "expires_in_days": 7,
+        },
+    )
+    assert collaboration_grant.status_code == 200, collaboration_grant.text
+    grant = collaboration_grant.json()
+    assert grant["owner_member_id"] == member_id
+    assert grant["resource_scope"] == {"resource_ids": ["artifact-1"]}
+
+    inbox = client.get("/api/v1/agents/me/collaboration-grants", headers=agent_headers)
+    assert inbox.status_code == 200, inbox.text
+    assert [item["id"] for item in inbox.json()["items"]] == [grant["id"]]
+
+    accepted = client.post(
+        f"/api/v1/collaboration-grants/{grant['id']}/accept", headers=agent_headers
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "ACCEPTED"
+
+    agent_session_write = client.patch(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=agent_headers,
+        json={"status": "CLOSED"},
+    )
+    assert agent_session_write.status_code == 403, agent_session_write.text
+
+    revoked = client.request(
+        "DELETE", f"/api/v1/collaboration-grants/{grant['id']}",
+        headers=headers, json={"reason": "Owner ended collaboration"},
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "REVOKED"
+
+    closed = client.patch(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers,
+        json={"status": "CLOSED"},
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["closed_at"]
+    cannot_reopen = client.patch(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=headers,
+        json={"status": "OPEN"},
+    )
+    assert cannot_reopen.status_code == 409, cannot_reopen.text
+
+    cannot_join_closed = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=headers,
+        json={"agent_id": agent["id"]},
+    )
+    assert cannot_join_closed.status_code == 409, cannot_join_closed.text
+
+    # Closing the collaboration Session must not revoke the independent execution Grant.
+    grants = client.get(f"/api/v1/tasks/{task_id}/agent-grants", headers=headers)
+    assert grants.status_code == 200, grants.text
+    execution = next(item for item in grants.json()["items"]
+                     if item["id"] == execution_grant.json()["id"])
+    assert execution["status"] == "AUTHORIZED"
+
+    with main_module.conn() as c:
+        sessions = c.execute(
+            "SELECT COUNT(*) AS n FROM agent_collaboration_sessions WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+        audit = c.execute(
+            """SELECT COUNT(*) AS n FROM events
+               WHERE task_id=? AND event_type LIKE 'agent.collaboration_%'""",
+            (task_id,),
+        ).fetchone()
+    assert sessions["n"] == 1
+    assert audit["n"] >= 3
+
+
+def test_agent_collaboration_grant_cannot_be_authorized_by_non_owner():
+    _, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    other = client.post(
+        "/api/v1/members", headers=ADMIN, json={"name": "Different Agent Owner"}
+    )
+    assert other.status_code == 200, other.text
+    other_headers = {"Authorization": "Bearer " + other.json()["token"]}
+
+    created = client.post(
+        "/api/v1/agents", headers=owner_headers, json={"name": "Private Agent"}
+    )
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+
+    # A different Member cannot manage the Task Session or authorize another
+    # Member's private Agent on that Task.
+    session = client.get(
+        f"/api/v1/tasks/{task_id}/collaboration-session", headers=owner_headers
+    )
+    assert session.status_code == 200, session.text
+    denied = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=other_headers,
+        json={"agent_id": agent_id},
+    )
+    assert denied.status_code == 403, denied.text
