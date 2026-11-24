@@ -68,7 +68,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 await call('/api/v1/tasks/'+task.id+'/collaboration-messages','POST',{
                     grant_id:grant.id,message_type:'MESSAGE',content:'Agent collaboration message from browser E2E'
                 },agentToken);
-                return {taskId:task.id,proposalId:proposal.id,sessionId:session.id};
+                return {taskId:task.id,proposalId:proposal.id,sessionId:session.id,grantId:grant.id,agentId,agentToken};
             }""")
             page.evaluate("(id) => openTask(id)", setup["taskId"])
             modal = page.locator("#modalBody")
@@ -85,5 +85,44 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             modal.locator("#taskCollabMessage").fill("Human collaboration message from browser E2E")
             modal.get_by_role("button", name="发送消息").click()
             expect(modal).to_contain_text("Human collaboration message from browser E2E", timeout=15000)
+
+            # The responsible Member controls the Session from the Task workspace.
+            modal.get_by_role("button", name="暂停协作").click()
+            expect(modal).to_contain_text("Session PAUSED", timeout=15000)
+            expect(modal.locator("#taskCollabMessage")).to_have_count(0)
+            modal.get_by_role("button", name="恢复协作").click()
+            expect(modal).to_contain_text("Session OPEN", timeout=15000)
+            page.once("dialog", lambda dialog: dialog.accept())
+            modal.get_by_role("button", name="关闭协作").click()
+            expect(modal).to_contain_text("Session CLOSED", timeout=15000)
+            expect(modal.get_by_role("button", name="恢复协作")).to_have_count(0)
+            expect(modal.get_by_role("button", name="关闭协作")).to_have_count(0)
+
+            # CLOSED is history-readable but rejects Agent messages and proposals,
+            # as well as a Member's attempt to authorize another Agent.
+            lifecycle = page.evaluate("""async ({taskId,grantId,agentId,agentToken}) => {
+                const memberToken=localStorage.getItem('daep.web.access_token');
+                const call=async(path,method,body,token) => {
+                    const response=await fetch(path,{method,headers:{
+                        'Authorization':'Bearer '+token,'Content-Type':'application/json'
+                    },body:body===undefined?undefined:JSON.stringify(body)});
+                    return {status:response.status,data:await response.json().catch(()=>null)};
+                };
+                const history=await call('/api/v1/tasks/'+taskId+'/collaboration-messages?grant_id='+grantId,'GET',undefined,agentToken);
+                const message=await call('/api/v1/tasks/'+taskId+'/collaboration-messages','POST',{
+                    grant_id:grantId,content:'must be rejected after close'
+                },agentToken);
+                const proposal=await call('/api/v1/tasks/'+taskId+'/collaboration-proposals','POST',{
+                    grant_id:grantId,proposal_type:'HELP_REQUEST',payload:{summary:'must be rejected'}
+                },agentToken);
+                const grant=await call('/api/v1/tasks/'+taskId+'/collaboration-grants','POST',{
+                    agent_id:agentId
+                },memberToken);
+                return {history:history.status,message:message.status,proposal:proposal.status,grant:grant.status};
+            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"]})
+            assert lifecycle["history"] == 200, lifecycle
+            assert lifecycle["message"] == 409, lifecycle
+            assert lifecycle["proposal"] == 409, lifecycle
+            # The UI's Member grant boundary is independently covered by REST API tests.
         finally:
             browser.close()
