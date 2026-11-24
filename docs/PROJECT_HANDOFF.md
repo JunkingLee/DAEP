@@ -893,3 +893,10 @@
 - 核验本轮 API CI 的 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
 - 若失败按日志修复；通过后继续实现 Agent Collaboration Grant 的统一有效性/Scope/Resource Scope 校验 helper，并以此为基础增加 Session 消息读写 API。Agent 消息必须携带有效 CollaborationGrant；Session 非 OPEN 时禁止新消息；消息历史和 Owner 归属可审计。
 - 继续保持：DAEP 不创建、不启动、不托管 Agent Runtime；Agent 始终归属 Member；Presence 发现不代表调用授权；不新增历史迁移、回填或利旧逻辑。
+
+### 首轮 CI 反馈与测试断言修正（补记）
+- 首轮 API 测试 run `45335647552` 的 Python 3.11 和 3.13 均定位到同一测试断言问题：`test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle` 将 Agent 协作授权 Inbox 字段误读为 `id`。
+- 实际 API 为兼容 Agent Task Grant Inbox 结构，返回字段名是 `grant_id`；授权创建响应仍返回 `id`。服务端行为正确，失败是测试读取字段错误。
+- 失败版本各自为 226 passed、1 failed、1 skipped；PostgreSQL migrations 和 Production Compose 已 SUCCESS。该 run 其余尚未结束的 jobs 因后续提交触发新 workflow 被 CANCELLED，不能视为全绿。
+- 已修正测试断言为 `item["grant_id"]`，提交：`b7daf0ad6fdd8e787fa15174d8c530f702b68782` — `test: use collaboration grant inbox identifier`。
+- 修复后 CI 尚待检查；本轮 API 仍不得标记为验证通过。
