@@ -225,8 +225,21 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
                         'assignment_id':assignment['id'],'agent_id':agent_id,
                         'reason':'Agent identity disabled'})
                 revoked_assignment_count=len(assignments)
+                grants=c.execute("""SELECT id,task_id FROM agent_task_grants
+                    WHERE agent_id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(agent_id,)).fetchall()
+                for grant in grants:
+                    c.execute("""UPDATE agent_task_grants SET status='REVOKED',revoked_at=?,updated_at=?,
+                        revoked_by_member_id=?,revoke_reason='Agent identity disabled'
+                        WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                        (stamp,stamp,a['id'],grant['id']))
+                    event(c,'agent.task_grant.revoked',a['id'],grant['task_id'],{
+                        'grant_id':grant['id'],'agent_id':agent_id,'reason':'Agent identity disabled'})
+                revoked_grant_count=len(grants)
+            else:
+                revoked_grant_count=0
             event(c,'agent.updated',a['id'],None,{'agent_id':agent_id,'status':body.status,
-                'revoked_assignment_count':revoked_assignment_count})
+                'revoked_assignment_count':revoked_assignment_count,
+                'revoked_grant_count':revoked_grant_count})
             return dict(c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE id=?",(agent_id,)).fetchone())
 
     @app.post('/api/v1/agents/{agent_id}/tokens/rotate')
