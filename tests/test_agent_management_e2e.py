@@ -164,6 +164,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
 
             # Rotate the token; the replacement must differ from the initial
             # one and is displayed only in the rotation response modal.
+            page.once("dialog", lambda dialog: dialog.accept())
             agent_card.get_by_role("button", name="重新生成 Token").click()
             expect(page.locator("#modal")).to_be_visible()
             rotated_token = page.evaluate("window.__daepLastAgentToken")
@@ -192,10 +193,18 @@ def test_agent_management_full_browser_lifecycle(daep_server):
 
             # Revoke the currently active rotated token and verify history.
             agent_card.get_by_role("button", name="管理").click()
+            page.once("dialog", lambda dialog: dialog.accept())
             page.get_by_role("button", name="撤销当前 Token").click()
             expect(page.get_by_test_id("toast")).to_contain_text("Token 已撤销")
             agent_card.get_by_role("button", name="管理").click()
             expect(page.locator("#modalBody")).to_contain_text("REVOKED")
+
+            # Disabling an Agent is also destructive and requires confirmation.
+            page.locator("#editAgentStatus").select_option("DISABLED")
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.get_by_role("button", name="保存").click()
+            expect(page.get_by_test_id("toast")).to_contain_text("Agent 已更新")
+            expect(agent_card).to_contain_text("DISABLED")
 
             # The detail response must never expose either raw token again.
             detail = page.evaluate(

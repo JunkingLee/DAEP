@@ -46,6 +46,10 @@ def test_agent_management_actions_are_wired_to_api_endpoints():
     for contract in contracts:
         assert contract in AGENTS, f"missing Agent management action: {contract}"
 
+    assert "重新生成 Token 会立即使当前 Token 失效" in AGENTS
+    assert "撤销 Token 后，使用该凭证的 MCP 连接将立即失效" in AGENTS
+    assert "停用 Agent 将撤销其当前 Token 和有效 Task Execution Grant" in AGENTS
+
 
 def test_agent_project_binding_is_restricted_to_project_managers_in_ui():
     assert "if(!isManager()){toast('只有当前项目管理员可以绑定 Agent');return}" in AGENTS

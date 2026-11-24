@@ -1131,3 +1131,22 @@
 - 将「我的 Agent」页面中不成立的 `/docs/MCP_INTEGRATION.md` 超链接改为明确的仓库文档路径提示，避免用户点击后进入 404。
 - 不新增文档静态公开路由，避免意外暴露仓库内部文档目录。
 - 本修正提交待 CI 验证。
+
+
+## 41. Agent Token / 身份高影响操作二次确认（2026-11-24）
+
+### 审计发现
+- 「我的 Agent」页面的 Token 轮换、Token 撤销和 Agent 停用均会影响运行中的 Agent 连接，但此前 UI 直接执行，没有确认步骤。
+- 后端已有相应生命周期处理：Token 轮换立即撤销旧 Token；Token 撤销同步撤销有效 Task Execution Grant；Agent 停用撤销活动 Token 和有效 Task Execution Grant。此轮不改变后端生命周期语义。
+
+### 本轮修改
+- Token 轮换前增加确认提示，说明旧 Token 立即失效，Owner 应准备更新本机 MCP Host 配置。
+- Token 撤销前增加确认提示，说明使用该凭证的连接立即失效。
+- Agent 状态切换为 DISABLED 时增加确认提示，明确活动 Token 和有效 Task Execution Grant 会被撤销。
+- 扩展 UI 静态契约测试，锁定三种确认提示。
+- 扩展真实浏览器 E2E：轮换、撤销、停用操作均显式接受浏览器确认对话框，并验证停用后的 UI 状态。
+- 本轮未修改 REST API、数据库 Schema 或迁移文件；不涉及历史迁移、回填或利旧。
+
+### 验证状态
+- 前一轮 MCP 接入文档/UI 提交 `fef5971c254b600576faeae93d92f366b1bc001a` 对应 CI run `45343938237` 七个 Job 全部 SUCCESS。
+- 当前二次确认变更待 CI 验证；本地 pytest 未执行，不宣称测试通过。
