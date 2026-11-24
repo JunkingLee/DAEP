@@ -4379,3 +4379,42 @@ def test_task_terminal_lifecycle_completes_or_revokes_agent_grants():
     assert row2['revoke_reason']=='Task became CANCELLED'
     assert row2['revoked_at'] is not None
 
+def test_workflow_transition_http_revokes_agent_grant_on_task_cancellation():
+    pid,member_id,member_token,task_id=setup_project_task()
+    member_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=member_headers,json={
+        'name':'Workflow Cancellation Agent'})
+    assert created.status_code==200,created.text
+    agent_id=created.json()['agent']['id']
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=member_headers,
+        json={'agent_id':agent_id})
+    assert grant.status_code==200,grant.text
+
+    workflow=client.put(f'/api/v1/projects/{pid}/workflow',headers=ADMIN,json={
+        'enabled':True,
+        'stages':[
+            {'key':'OPEN','name':'Open','order':1},
+            {'key':'IN_PROGRESS','name':'In progress','order':2},
+            {'key':'REVIEW','name':'Review','order':3,'approval_role':'reviewer'},
+            {'key':'DONE','name':'Done','order':4},
+            {'key':'CANCELLED','name':'Cancelled','order':5}
+        ]
+    })
+    assert workflow.status_code==200,workflow.text
+
+    transitioned=client.post(f'/api/v1/tasks/{task_id}/workflow-transition',
+        headers=member_headers,json={'target_stage':'CANCELLED','comment':'Cancelled by owner'})
+    assert transitioned.status_code==200,transitioned.text
+    assert transitioned.json()['status']=='CANCELLED'
+
+    with main_module.conn() as c:
+        task=c.execute('SELECT status FROM tasks WHERE id=?',(task_id,)).fetchone()
+        row=c.execute('SELECT status,revoke_reason,revoked_by_member_id FROM agent_task_grants WHERE id=?',
+            (grant.json()['id'],)).fetchone()
+        events=c.execute("SELECT COUNT(*) AS n FROM events WHERE task_id=? AND event_type='agent.task_grant.revoked'",
+            (task_id,)).fetchone()
+    assert task['status']=='CANCELLED'
+    assert row['status']=='REVOKED'
+    assert row['revoke_reason']=='Task became CANCELLED'
+    assert row['revoked_by_member_id']==member_id
+    assert events['n']==1
