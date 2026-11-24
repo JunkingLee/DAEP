@@ -43,7 +43,9 @@ async function openCollaborationGrantAudit(){
  const agentId=prompt('按 Agent ID 筛选（留空表示全部）','');if(agentId===null)return;
  const taskId=prompt('按 Task ID 筛选（留空表示全部）','');if(taskId===null)return;
  const status=prompt('状态筛选：AUTHORIZED / ACCEPTED / RENEWED / REVOKED / EXPIRED（留空表示全部）','');if(status===null)return;
- const query=new URLSearchParams();if(agentId.trim())query.set('agent_id',agentId.trim());if(taskId.trim())query.set('task_id',taskId.trim());if(status.trim())query.set('status',status.trim().toUpperCase());
+ const startAt=prompt('起始时间 ISO-8601（留空表示不限）','');if(startAt===null)return;
+ const endAt=prompt('结束时间 ISO-8601（留空表示不限）','');if(endAt===null)return;
+ const query=new URLSearchParams();if(agentId.trim())query.set('agent_id',agentId.trim());if(taskId.trim())query.set('task_id',taskId.trim());if(status.trim())query.set('status',status.trim().toUpperCase());if(startAt.trim())query.set('start_at',startAt.trim());if(endAt.trim())query.set('end_at',endAt.trim());
  try{const result=await api('/api/v1/members/me/collaboration-grant-audit?'+query.toString());const labels={'agent.collaboration_grant.authorized':'创建授权','agent.collaboration_grant.accepted':'Agent 接受','agent.collaboration_grant.renewed':'续期','agent.collaboration_grant.revoked':'撤销','agent.collaboration_grant.expired':'过期'};const rows=(result.items||[]).map(x=>'<div class="list-row"><div><b>'+esc(labels[x.event_type]||x.event_type)+'</b><div class="muted small">'+esc(x.payload?.agent_id||'')+' · '+esc(x.task_id||'')+' · '+esc(x.payload?.grant_id||'')+'</div><div class="muted small">'+esc(x.created_at)+'</div></div></div>').join('')||'<div class="empty">没有符合条件的授权审计记录</div>';openModal('协作授权审计','<p class="muted small">仅查询当前用户作为 Agent Owner 的授权审计记录。</p><div class="list">'+rows+'</div>')}catch(e){showError(e)}
 }
 async function revokeOwnedCollaborationGrant(grantId){
