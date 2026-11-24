@@ -71,3 +71,13 @@ def test_member_collaboration_grant_inbox_ui_is_owner_scoped_and_supports_revoke
     assert "window.loadCollaborationGrantInbox=loadCollaborationGrantInbox" in AGENTS
     assert "window.revokeOwnedCollaborationGrant=revokeOwnedCollaborationGrant" in AGENTS
     assert "撤销后 Agent 将立即失去该 Task 的协作访问权限" in AGENTS or "撤销后 Agent 将立即失去该 Task 的协作访问权限" in AGENTS
+
+def test_collaboration_grant_renewal_reauthorization_and_audit_ui_contract():
+    assert "renewOwnedCollaborationGrant" in AGENTS
+    assert "reauthorizeOwnedCollaborationGrant" in AGENTS
+    assert "openCollaborationGrantAudit" in AGENTS
+    assert "/renew" in AGENTS
+    assert "/api/v1/members/me/collaboration-grant-audit" in AGENTS
+    assert "原授权记录会保留，不会恢复" in AGENTS
+    assert "window.renewOwnedCollaborationGrant=renewOwnedCollaborationGrant" in AGENTS
+    assert "window.reauthorizeOwnedCollaborationGrant=reauthorizeOwnedCollaborationGrant" in AGENTS
