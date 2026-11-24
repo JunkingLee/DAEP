@@ -54,4 +54,12 @@ def test_agent_management_actions_are_wired_to_api_endpoints():
 def test_agent_project_binding_is_restricted_to_project_managers_in_ui():
     assert "if(!isManager()){toast('只有当前项目管理员可以绑定 Agent');return}" in AGENTS
     assert "if(!isManager()||!confirm(" in AGENTS
-\n\ndef test_agent_detail_authorization_state_ui_contract():\n    source=Path('web/agents.js').read_text()\n    assert 'Task Execution Grants' in source\n    assert 'Collaboration Grants' in source\n    assert 'Credential validity' in source\n    assert 'resource_scope_json' in source\n    assert 'Presence' in source\n
+
+    
+def test_agent_detail_authorization_state_ui_contract():
+    source=Path('web/agents.js').read_text()
+    assert 'Task Execution Grants' in source
+    assert 'Collaboration Grants' in source
+    assert 'Credential validity' in source
+    assert 'resource_scope_json' in source
+    assert 'Presence' in source

@@ -1233,3 +1233,11 @@
 - 本环境未直接运行 pytest/node；代码提交后以 CI 为准。
 - 当前恢复提交 87dc507bd88481d68362ed2567152c5e847d3665 尚待 CI。
 - 下一步：核验本轮完整 CI，并补充真实浏览器对 DISABLED Agent、REVOKED/EXPIRED Grant 状态展示的回归；Browser E2E 若安装/执行继续耗时，不无限等待。
+
+
+## 48. Authorization-state test collection fix（2026-11-24）
+
+- CI run 45350956647 对提交 6fc4247b878c072637c1eaa5fcddab5e1de699f6 的 Python 3.12 Job 暴露测试文件插入时把换行写成字面量 \\n，导致 tests/test_agent_management_ui.py 与 tests/test_api.py 在 collection 阶段 SyntaxError。
+- 已修正为真实换行；这是测试文件格式问题，不改变 Agent 详情 API 或 UI 运行逻辑。
+- 同一 CI run 中 node --check web/agents.js、Python compile 已通过；其他 Job 尚在运行或已通过，最终结论以修复提交后的完整 CI 为准。
+- 下一步唯一任务：核验修复提交的完整 CI。
