@@ -275,3 +275,44 @@
 - 当前完成状态：领域模型和迁移设计均已文档化；尚未创建 `agent_task_grants` 表、尚未修改 API/MCP/UI，现有 binding/assignment 运行行为仍未改变。
 - 下一步唯一任务：进入阶段 A，先审计数据库迁移体系与 assignments/task/project/agent 的复合一致性约束，设计并实现仅新增 `agent_task_grants` 表的迁移（含 PostgreSQL RLS、唯一有效 Grant 约束、索引和 SQLite schema parity），并补充 migration/RLS smoke/API schema 测试；本阶段不切换旧执行 API。
 
+## 16. AgentTaskGrant schema / RLS Stage A（2026-11-24）
+
+- 承接第 15 节唯一任务，已完成 Stage A 的数据库层第一步：新增独立 `agent_task_grants`，未切换旧 Agent assignment/inbox/accept/execution API，也未改 UI/MCP。
+- 新增 Alembic migration：`alembic/versions/0036_rc46_agent_task_grants.py`，revision `0036_rc46_agent_task_grants`，down_revision `0035_rc45_agent_auth_lookup`。
+- 新表字段覆盖：
+  - 身份/归属：`tenant_id`、`project_id`、`task_id`、`agent_id`、`owner_member_id`、`human_assignee_member_id`、`authorized_by_member_id`。
+  - 授权范围/状态：`scope_json`、`status`。
+  - 生命周期：`created_at`、`updated_at`、`expires_at`、`accepted_at`、`revoked_at`、`completed_at`、`revoked_by_member_id`、`revoke_reason`、`last_activity_at`。
+  - 兼容审计：`legacy_assignment_id` 仅保留来源 ID，不建立旧 assignment 外键，避免新表生命周期继续依赖 legacy 表。
+- 数据库约束和索引：
+  - 状态白名单：AUTHORIZED / ACCEPTED / REVOKED / COMPLETED / EXPIRED。
+  - expires_at 必须晚于 created_at；ACCEPTED/REVOKED/COMPLETED 分别要求对应生命周期时间戳。
+  - PostgreSQL 与 SQLite 均有 partial unique index：同一 task 同时最多一个 AUTHORIZED/ACCEPTED Grant。
+  - 查询索引：tenant+agent+status+expiry、tenant+task+status、owner+status+created_at。
+  - PostgreSQL ENABLE + FORCE RLS，policy 复用 `daep_tenant_visible(tenant_id)`；显式 REVOKE `daep_authenticator` 对新表的全部权限。
+- SQLite bootstrap 增加同构表、检查约束和索引。PostgreSQL bootstrap 特意跳过新表及其索引，由 RC46 Alembic migration 在 Agent identity/legacy assignment 表创建完成后创建，避免核心 bootstrap 依赖尚未执行的后续迁移。
+- 新增/更新测试：
+  - `tests/test_api.py`：Alembic head contract 更新至 RC46；检查 migration 的 RLS、权限撤销、partial unique index；检查 SQLite schema 字段和索引（包括真实 app bootstrap）。
+  - `tests/postgres_rls_smoke.sql`：加入两个租户的 AgentTaskGrant fixture，验证租户隔离；验证 Agent authenticator role 无权 SELECT 新表。
+  - PostgreSQL migrations job 实际完成 core bootstrap、Alembic upgrade、SQL 生成、RLS policy 检查和 restricted-role smoke。
+- 实施过程中修复的验证问题：
+  - 初版 bootstrap 因引用尚未创建的 legacy assignment 表失败；改为 legacy ID 只作审计引用。
+  - 随后修复新建表约束列表尾逗号导致的 PostgreSQL/SQLite SQL 语法错误。
+  - PostgreSQL core bootstrap 先于 Alembic，因此新表及索引只由 RC46 migration 创建；SQLite 继续由应用 bootstrap 创建。
+  - RLS smoke 新增权限检查时改用具名 dollar-quote delimiter，避免 SQL 文件中的匿名 delimiter 被错误截断。
+- 关键提交（均在 `release/1.0.0-rc9`）：
+  - `a6f997997bb4f42723597891c4431807692c73a1` — 新增 RC46 AgentTaskGrant PostgreSQL migration。
+  - `f420b48f178ef2502960eb65aecea269f3d1173e` — SQLite bootstrap schema parity。
+  - `246fdc63d1fecad0ef524ad97fcde9eb1fa8e51c` — PostgreSQL RLS tenant fixtures。
+  - `338b993cfd1bd61f05655bd0e3e5abdc3d3d71ad`、`7998bbdbc6c8093562ab39ee3a21fe2e11842628`、`a4428c796b0ce138e851e35b09b0abe099635513`、`7a7b13d93a32355aecf4b255d7bbe2bc222648a0` — 修复 bootstrap 顺序、SQL 语法和 schema contract。
+  - `1b943461f6ac184292f1ac5e8cb1110b0cc041e7` — SQLite bootstrap schema 实测。
+  - `c57e9aed37e4c36b0a213d53f8b2b0912a077dc7`、`b0b9eef6754bec2959759ba14284b8c55375fbb2` — RLS authenticator 权限测试及 SQL delimiter 修复。
+- 验证结果：run `45303582212`，对应代码 HEAD `b0b9eef6754bec2959759ba14284b8c55375fbb2`，所有 jobs 均成功：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS smoke、production-compose、container-build、browser-e2e。此前失败/取消的中间 runs 不作为最终验证依据。
+- 当前分支：`release/1.0.0-rc9`。本节交接文档提交后产生的新 HEAD/CI 状态仍需重新核实。
+- 已知边界：
+  - 当前仅完成数据模型、约束、索引、RLS 和 SQLite parity；Member 创建/查看/撤销 Grant API、Agent inbox/accept API、Grant 执行校验器尚未实现。
+  - `scope_json` 目前是 TEXT 存储，固定白名单解析与接口级 scope 校验必须由下一阶段服务端实现。
+  - 表的基础 FK 与 tenant RLS 已建立；跨实体的 tenant/project/task/agent/owner 组合一致性仍必须在 Grant API 事务中再次校验，不得仅依赖传入 ID 或项目 binding。
+  - 旧 `agent_project_bindings` / `agent_task_assignments` 仍按旧路径运行；没有自动迁移旧 assignment，也没有提前撤销历史任务授权。
+- 下一步唯一任务：Stage A API 第一批——实现 Member 主动创建 Grant、按任务/个人列表查看 Grant、授权人撤销 Grant；创建必须校验当前 Member 是任务唯一 assignee、Agent 属于当前 Member 且同 Tenant，期限默认 30 天/最大 90 天，同任务最多一个有效 Grant，写审计事件。先不切换 Agent 执行 API/MCP。
+
