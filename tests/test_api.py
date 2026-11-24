@@ -2816,16 +2816,19 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     assert accepted.status_code==200,accepted.text
 
     grant=client.post(f'/api/v1/tasks/{tid_a}/agent-grants',headers=owner_headers,json={
-        'agent_id':agent_id,'requested_scope':['task.read','task.progress.report']})
+        'agent_id':agent_id,'requested_scope':['task.read','task.progress.report','task.artifact.submit']})
     assert grant.status_code==200,grant.text
     accepted_grant=client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",headers=agent_h)
     assert accepted_grant.status_code==200,accepted_grant.text
 
-    # Artifact submission remains on its legacy route in this first Stage B slice.
+    # Artifact submission and reads use the owner-issued Grant, independent of project binding.
     artifact=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent',
         'commit_sha':'a9e0001','metadata':{'source':'agent'}})
     assert artifact.status_code==200,artifact.text
+    assert client.get(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h).status_code==200
+    assert client.get(f'/api/v1/tasks/{tid_a}/artifact-versions',headers=agent_h).status_code==200
+    assert client.get(f'/api/v1/tasks/{tid_a}/artifact-quality',headers=agent_h).status_code==200
     audit=client.get(f'/api/v1/projects/{pid_a}/audit',headers=ADMIN)
     assert audit.status_code==200,audit.text
     submitted=[x for x in audit.json()['items'] if x['event_type']=='artifact.submitted'
@@ -3297,7 +3300,8 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
         'project_id':pid,'title':'Versioned delivery','acceptance_criteria':['Latest artifact approved']})
     assert requirement.status_code==200,requirement.text
     task=client.post('/api/v1/tasks',headers=ADMIN,json={
-        'requirement_id':requirement.json()['id'],'title':'Submit versioned evidence'})
+        'requirement_id':requirement.json()['id'],'title':'Submit versioned evidence',
+        'assignee_member_ids':['member-admin']})
     assert task.status_code==200,task.text
     tid=task.json()['id']
 
@@ -3312,13 +3316,11 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
     assert created.status_code==200,created.text
     agent=created.json()['agent']
     agent_headers={'Authorization':'Bearer '+created.json()['token']}
-    bound=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=ADMIN,json={
-        'project_id':pid,'role':'member','work_function':'developer'})
-    assert bound.status_code==200,bound.text
-    assigned=client.post(f'/api/v1/tasks/{tid}/agent-assignments',headers=ADMIN,json={
-        'agent_id':agent['id']})
-    assert assigned.status_code==200,assigned.text
-    accepted=client.post(f"/api/v1/agent-assignments/{assigned.json()['id']}/accept",headers=agent_headers)
+    # No project binding or legacy assignment is needed: the human assignee authorizes this Agent.
+    grant=client.post(f'/api/v1/tasks/{tid}/agent-grants',headers=ADMIN,json={
+        'agent_id':agent['id'],'requested_scope':['task.artifact.submit','task.read']})
+    assert grant.status_code==200,grant.text
+    accepted=client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",headers=agent_headers)
     assert accepted.status_code==200,accepted.text
 
     submitted=[]
@@ -3348,6 +3350,13 @@ def test_artifact_versions_are_monotonic_immutable_and_reviewed_by_exact_version
         headers=ADMIN,json={'decision':'APPROVE','comment':'Latest version verified'})
     assert approved.status_code==200,approved.text
 
+    # The Agent can read only the artifacts and quality evidence of its granted task.
+    agent_artifacts=client.get(f'/api/v1/tasks/{tid}/artifacts',headers=agent_headers)
+    assert agent_artifacts.status_code==200 and len(agent_artifacts.json())==4
+    agent_versions=client.get(f'/api/v1/tasks/{tid}/artifact-versions',headers=agent_headers)
+    assert agent_versions.status_code==200 and len(agent_versions.json())==4
+    agent_quality=client.get(f'/api/v1/tasks/{tid}/artifact-quality',headers=agent_headers)
+    assert agent_quality.status_code==200 and agent_quality.json()['artifact_count']==4
     versions=client.get(f'/api/v1/tasks/{tid}/artifact-versions',headers=ADMIN)
     assert versions.status_code==200,versions.text
     rows=versions.json()

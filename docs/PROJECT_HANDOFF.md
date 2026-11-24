@@ -433,3 +433,25 @@
   - 旧 Agent inbox/accept/heartbeat/assignment API 保留兼容；新 Grant 已成为 task detail/progress/blocked 的唯一 Agent 授权来源。
   - Grant 在 Task 完成后目前仍保留 ACCEPTED 状态；后续应评估任务完成时将 Grant 标记 COMPLETED 的生命周期联动。
 - 下一步唯一任务：将 Artifact submit/read 入口迁移到同一 Grant guard：`task.artifact.submit`、`task.read`，逐条审查 artifact quality、artifact versions、events 的数据暴露和副作用；保证 Agent 只能提交自己授权任务的产物，不能 review/approve 或改变质量治理数据。为迁移后的 artifact API 增加无 binding、scope 不足、过期/撤销、租户隔离、任务改派、审计归属测试。MCP task tools 暂不同时切换，待 REST API 完成后单独迁移。
+
+
+## 20. Stage B Artifact REST API Grant 切换（2026-11-24）
+
+- 承接第 19 节唯一任务，将 Artifact 提交、Artifact 列表、Artifact Versions 和单任务 Artifact Quality 读取切换到 AgentTaskGrant。
+- Agent 执行入口规则：
+  - `POST /api/v1/tasks/{tid}/artifacts`：Agent 必须通过 `require_agent_task_grant(c, actor, tid, 'task.artifact.submit')`；Member 继续使用原有 assigned-task 权限。
+  - `GET /api/v1/tasks/{tid}/artifacts`、`GET /api/v1/tasks/{tid}/artifact-versions`、`GET /api/v1/tasks/{tid}/artifact-quality`：Agent 必须持有 ACCEPTED 且包含 `task.read` 的 Grant；Member 权限路径不变。
+  - 所有历史重复定义的 artifact submit/list handler 均同步更新，避免同一路由的备用定义保留旧权限行为。
+- 权限边界：
+  - Agent 不需要、也不依赖 `agent_project_bindings` 或 `agent_task_assignments`；只有其 owner Member 对当前唯一责任人任务签发并由目标 Agent 接受的 Grant 才能执行。
+  - Agent 的 artifact review/approve 路由继续显式拒绝 Agent；项目质量策略、风险整改、审批/验收等治理 API 未开放给 Agent。
+  - Artifact 提交触发的质量评估与风险事件归并属于服务端既有自动化，不代表 Agent 获得风险治理写权限；审计仍使用 actor_type=AGENT、agent_id，actor_member_id 为空。
+  - Task events 列表和 MCP task tools 尚未切换；本轮没有扩大 Agent 对审计事件或项目治理数据的读取范围。
+- 测试更新：
+  - 生命周期回归使用包含 `task.artifact.submit` 的 owner Grant；在解绑项目后仍能提交/读取该任务 Artifact，证明 Grant 独立于项目 binding。
+  - Artifact version 测试改为 owner Member 主动授权，无项目绑定、无旧 assignment；覆盖 Agent 提交多个版本、读取 artifact/version/quality、审计身份和人类审核边界。
+  - 测试源已更新；本轮不声称本地 pytest 已运行，提交后的 GitHub CI 负责执行 Python 矩阵、PostgreSQL RLS/migration、容器和浏览器检查。
+- 代码文件：`app/main.py`、`tests/test_api.py`。
+- 当前分支：`release/1.0.0-rc9`；本节提交后的 HEAD/CI 以本节提交和随后实时查询为准。
+- 已知限制：Task events 读取仍走原权限入口；MCP tools 仍待单独盘点迁移；Artifact quality 自动生成风险事件沿用现有后端服务逻辑，Agent 不可直接调用风险治理 API。
+- 下一步唯一任务：Stage B 下一片——逐条盘点并迁移 MCP task tools 到 AgentTaskGrant，区分 task.read、progress/blocked、artifact.submit 的精确 scope；保持 Agent 不可读取未授权任务、不可访问项目审计/治理工具、不可审批验收。MCP 切换完成后再处理 Task events 的读取授权与 Grant 完成生命周期联动。

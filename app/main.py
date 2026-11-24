@@ -2821,7 +2821,10 @@ def record_project_quality_risks(c, version_id, report, actor_id=None):
 def task_artifact_quality(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         rows=c.execute("""SELECT v.id AS artifact_version_id,v.version_number,v.review_status,v.quality_policy_snapshot,
             a.id AS artifact_id,a.artifact_type,a.uri,a.commit_sha,a.metadata
             FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
@@ -2847,7 +2850,10 @@ def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
         begin_serialized_write(c)
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.artifact.submit')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         task_sql='SELECT id FROM tasks WHERE id=?'
         if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
         if not c.execute(task_sql,(tid,)).fetchone(): raise HTTPException(404,'Task not found')
@@ -3585,14 +3591,20 @@ def task_events(tid:str,authorization:str=Header(None)):
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
 
 @app.get('/api/v1/tasks/{tid}/artifact-versions')
 def task_artifact_versions(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         rows=c.execute("""SELECT v.*,a.artifact_type,a.uri,a.commit_sha,a.metadata,
             m.name AS actor_name,rm.name AS reviewer_name
             FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
@@ -4903,7 +4915,10 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.artifact.submit')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid}
 @app.post('/api/v1/tasks/{tid}/review')
@@ -5513,7 +5528,10 @@ def task_events(tid:str,authorization:str=Header(None)):
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
 @app.post('/internal/v1/outbox/claim')
 def claim_outbox(body:dict,authorization:str=Header(None)):
@@ -6762,7 +6780,10 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.artifact.submit')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid}
 @app.post('/api/v1/tasks/{tid}/review')
@@ -7371,7 +7392,10 @@ def task_events(tid:str,authorization:str=Header(None)):
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
 @app.post('/internal/v1/outbox/claim')
 def claim_outbox(body:dict,authorization:str=Header(None)):
@@ -8746,7 +8770,10 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.artifact.submit')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid}
 @app.post('/api/v1/tasks/{tid}/review')
@@ -9355,7 +9382,10 @@ def task_events(tid:str,authorization:str=Header(None)):
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
 @app.post('/internal/v1/outbox/claim')
 def claim_outbox(body:dict,authorization:str=Header(None)):
@@ -10604,7 +10634,10 @@ def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(No
 def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
     a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
     with conn() as c:
-        require_task_access(c,tid,a,assigned_only=True)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.artifact.submit')
+        else:
+            require_task_access(c,tid,a,assigned_only=True)
         c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
     return {'id':aid,'task_id':tid}
 @app.post('/api/v1/tasks/{tid}/review')
@@ -11215,7 +11248,10 @@ def task_events(tid:str,authorization:str=Header(None)):
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
     with conn() as c:
-        require_task_access(c,tid,a)
+        if a.get('actor_type')=='AGENT':
+            require_agent_task_grant(c,a,tid,'task.read')
+        else:
+            require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
 @app.post('/internal/v1/outbox/claim')
 def claim_outbox(body:dict,authorization:str=Header(None)):
