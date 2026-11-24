@@ -57,7 +57,8 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
         'acceptance_criteria':['Implementation verified']})
     assert req.status_code==200,req.text
     task=client.post('/api/v1/tasks',headers=ADMIN,json={
-        'requirement_id':req.json()['id'],'title':'Governed task'})
+        'requirement_id':req.json()['id'],'title':'Governed task',
+        'assignee_member_ids':[owner_body['id']]})
     assert task.status_code==200,task.text
     tid=task.json()['id']
 
@@ -78,10 +79,15 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     assignment_id=assigned.json()['id']
     accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah)
     assert accepted.status_code==200,accepted.text
+    task_grant=client.post(f'/api/v1/tasks/{tid}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read','task.progress.report']})
+    assert task_grant.status_code==200,task_grant.text
+    accepted_task_grant=client.post(f"/api/v1/agent-grants/{task_grant.json()['id']}/accept",headers=ah)
+    assert accepted_task_grant.status_code==200,accepted_task_grant.text
 
     # An Agent cannot use its owner's reviewer membership to self-close work.
     progress_100=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':100})
-    assert progress_100.status_code==409,progress_100.text
+    assert progress_100.status_code==403,progress_100.text
     close=client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=ah,json={'target_stage':'DONE'})
     assert close.status_code==403,close.text
     governance_write=client.put(f'/api/v1/projects/{pid}/workflow',headers=ah,json={
@@ -106,8 +112,10 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
     assert client.get('/api/v1/mcp/context',headers=ah).status_code==401
     with main_module.conn() as c:
         state=c.execute("SELECT status FROM agent_task_assignments WHERE id=?",(assignment_id,)).fetchone()
+        grant_state=c.execute("SELECT status FROM agent_task_grants WHERE id=?",(task_grant.json()['id'],)).fetchone()
         token_state=c.execute("SELECT status FROM agent_tokens WHERE agent_id=?",(agent['id'],)).fetchone()
     assert state['status']=='REVOKED'
+    assert grant_state['status']=='REVOKED'
     assert token_state['status']=='REVOKED'
 
     reenabled=client.patch(f"/api/v1/agents/{agent['id']}",headers=owner_headers,json={
@@ -122,8 +130,9 @@ def test_agent_cannot_review_accept_or_close_and_disable_revokes_grants():
 def test_agent_task_assignment_is_identity_scoped_and_revocable():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
-    pid,_,_,tid=setup_project_task()
-    created=client.post('/api/v1/agents',headers=ADMIN,json={
+    pid,member_id,member_token,tid=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
         'name':'Assigned Agent','description':'Agent assignment regression test'})
     assert created.status_code==200,created.text
     agent=created.json()['agent']; agent_token=created.json()['token']
@@ -139,6 +148,10 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
     assert inbox.status_code==200 and any(x['task_id']==tid for x in inbox.json()['items'])
     accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=ah,json={})
     assert accepted.status_code==200 and accepted.json()['status']=='ACCEPTED'
+    task_grant=client.post(f'/api/v1/tasks/{tid}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read','task.progress.report']})
+    assert task_grant.status_code==200,task_grant.text
+    assert client.post(f"/api/v1/agent-grants/{task_grant.json()['id']}/accept",headers=ah).status_code==200
     progress=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':25,'note':'Agent execution'})
     assert progress.status_code==200,progress.text
     import json
@@ -156,9 +169,14 @@ def test_agent_task_assignment_is_identity_scoped_and_revocable():
     assert denied.status_code==403
 
     revoked=client.post(f'/api/v1/agent-assignments/{assignment_id}/revoke',headers=ADMIN,json={
-        'reason':'Reassigned by project manager'})
+        'reason':'Legacy assignment retired'})
     assert revoked.status_code==200 and revoked.json()['status']=='REVOKED'
-    denied_after_revoke=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':50})
+    # The legacy assignment lifecycle is independent; the accepted owner Grant still authorizes progress.
+    still_allowed=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':50})
+    assert still_allowed.status_code==200,still_allowed.text
+    grant_revoked=client.delete(f"/api/v1/agent-grants/{task_grant.json()['id']}",headers=owner_headers)
+    assert grant_revoked.status_code==200,grant_revoked.text
+    denied_after_revoke=client.post(f'/api/v1/tasks/{tid}/progress',headers=ah,json={'progress':60})
     assert denied_after_revoke.status_code==403
 
 
@@ -2733,40 +2751,44 @@ def test_rc35_sqlite_upgrade_adds_active_project_status():
 
 
 def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
     project_a=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC9 Agent Lifecycle A'}).json()
     project_b=client.post('/api/v1/projects',headers=ADMIN,json={'name':'RC9 Agent Lifecycle B'}).json()
     pid_a,pid_b=project_a['id'],project_b['id']
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'RC9 Task Owner'})
+    assert owner.status_code==200,owner.text
+    owner_id=owner.json()['id']
+    owner_headers={'Authorization':'Bearer '+owner.json()['token']}
 
     req_a=client.post('/api/v1/requirements',headers=ADMIN,json={
         'project_id':pid_a,'title':'RC9 Agent lifecycle requirement',
         'acceptance_criteria':['Agent delivery artifact is present']}).json()
     task_a=client.post('/api/v1/tasks',headers=ADMIN,json={
-        'requirement_id':req_a['id'],'title':'RC9 Agent lifecycle task'}).json()
+        'requirement_id':req_a['id'],'title':'RC9 Agent lifecycle task',
+        'assignee_member_ids':[owner_id]}).json()
     tid_a=task_a['id']
-
     req_b=client.post('/api/v1/requirements',headers=ADMIN,json={
         'project_id':pid_b,'title':'RC9 Agent isolation requirement'}).json()
     task_b=client.post('/api/v1/tasks',headers=ADMIN,json={
-        'requirement_id':req_b['id'],'title':'RC9 Agent isolation task'}).json()
+        'requirement_id':req_b['id'],'title':'RC9 Agent isolation task',
+        'assignee_member_ids':[owner_id]}).json()
     tid_b=task_b['id']
 
-    created=client.post('/api/v1/agents',headers=ADMIN,json={
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
         'name':'RC9 lifecycle Agent','description':'unbind/rebind regression'})
     assert created.status_code==200,created.text
     agent=created.json()
     agent_id=agent['agent']['id']
     agent_h={'Authorization':'Bearer '+agent['token']}
 
-    # A task may only be assigned when the Agent is actively bound to the
-    # target project; binding to another project is not sufficient.
+    # Project binding remains legacy discovery/assignment compatibility, not task execution authority.
     assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
         'project_id':pid_b,'role':'member','work_function':'developer'}).status_code==200
     cross=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
         'agent_id':agent_id})
     assert cross.status_code==409,cross.text
 
-    # Once bound to the target project, assignment and acceptance establish
-    # the execution grant independently from the project binding itself.
     assert client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
         'project_id':pid_a,'role':'member','work_function':'developer'}).status_code==200
     assigned=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
@@ -2776,8 +2798,13 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     accepted=client.post(f'/api/v1/agent-assignments/{assignment_id}/accept',headers=agent_h)
     assert accepted.status_code==200,accepted.text
 
-    # Execution is attributable to the Agent identity, never to the owner's
-    # human member row.
+    grant=client.post(f'/api/v1/tasks/{tid_a}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent_id,'requested_scope':['task.read','task.progress.report']})
+    assert grant.status_code==200,grant.text
+    accepted_grant=client.post(f"/api/v1/agent-grants/{grant.json()['id']}/accept",headers=agent_h)
+    assert accepted_grant.status_code==200,accepted_grant.text
+
+    # Artifact submission remains on its legacy route in this first Stage B slice.
     artifact=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent',
         'commit_sha':'a9e0001','metadata':{'source':'agent'}})
@@ -2791,55 +2818,53 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     assert submitted[0]['payload']['actor_type']=='AGENT'
     assert submitted[0]['payload']['agent_id']==agent_id
 
-    # Unbinding is a security revocation boundary: accepted execution grants
-    # are revoked immediately and must not be resurrected by a later rebind.
+    # Removing a project binding revokes the legacy assignment but does not revoke
+    # the independently owner-authorized AgentTaskGrant.
     unbound=client.delete(f'/api/v1/agents/{agent_id}/projects/{pid_a}',headers=ADMIN)
     assert unbound.status_code==200,unbound.text
     assert unbound.json()['revoked_assignment_count']==1
-
     mine=client.get('/api/v1/agents/me/tasks',headers=agent_h)
     assert mine.status_code==200 and mine.json()['items']==[]
-    denied=client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h)
-    assert denied.status_code==403,denied.text
-
-    db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
-    status=db.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()[0]
-    db.close()
-    assert status=='REVOKED'
+    with main_module.conn() as c:
+        legacy=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()
+        grant_state=c.execute('SELECT status FROM agent_task_grants WHERE id=?',(grant.json()['id'],)).fetchone()
+    assert legacy['status']=='REVOKED'
+    assert grant_state['status']=='ACCEPTED'
+    assert client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h).status_code==200
+    progress=client.post(f'/api/v1/tasks/{tid_a}/progress',headers=agent_h,json={'progress':35})
+    assert progress.status_code==200,progress.text
 
     rebound=client.post(f'/api/v1/agents/{agent_id}/projects',headers=ADMIN,json={
         'project_id':pid_a,'role':'member','work_function':'developer'})
     assert rebound.status_code==200,rebound.text
     mine_again=client.get('/api/v1/agents/me/tasks',headers=agent_h)
     assert mine_again.status_code==200 and mine_again.json()['items']==[]
-    still_denied=client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h)
-    assert still_denied.status_code==403,still_denied.text
-
-    # Rebinding restores project visibility only; it does not resurrect the
-    # revoked task grant.
+    # Rebinding restores only legacy project visibility; the Grant remains the execution authority.
+    assert client.get(f'/api/v1/tasks/{tid_a}',headers=agent_h).status_code==200
     rows=client.get(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN)
     assert rows.status_code==200
     restored=[x for x in rows.json()['items'] if x['id']==assignment_id]
     assert restored and restored[0]['status']=='REVOKED'
 
-    # The Agent can be newly assigned after the explicit rebind, proving that
-    # a new execution grant is required.
     reassigned=client.post(f'/api/v1/tasks/{tid_a}/agent-assignments',headers=ADMIN,json={
         'agent_id':agent_id})
     assert reassigned.status_code==200,reassigned.text
-    assert reassigned.json()['id']!=assignment_id
-
-    # Complete a fresh execution grant through the full human-review boundary.
     new_assignment_id=reassigned.json()['id']
-    accepted_grant=client.post(f'/api/v1/agent-assignments/{new_assignment_id}/accept',headers=agent_h)
-    assert accepted_grant.status_code==200 and accepted_grant.json()['status']=='ACCEPTED'
+    assert new_assignment_id!=assignment_id
+    accepted_legacy=client.post(f'/api/v1/agent-assignments/{new_assignment_id}/accept',headers=agent_h)
+    assert accepted_legacy.status_code==200 and accepted_legacy.json()['status']=='ACCEPTED'
     delivered=client.post(f'/api/v1/tasks/{tid_a}/artifacts',headers=agent_h,json={
         'artifact_type':'git_commit','uri':'https://example.invalid/rc9-agent-final',
         'commit_sha':'a9e0002','metadata':{'acceptance_criterion':0}})
     assert delivered.status_code==200,delivered.text
+
+    # Agent progress can report implementation state but cannot request human review.
     requested_review=client.post(f'/api/v1/tasks/{tid_a}/progress',headers=agent_h,json={
         'progress':100,'note':'Implementation and evidence delivered'})
-    assert requested_review.status_code==200,requested_review.text
+    assert requested_review.status_code==403,requested_review.text
+    admin_progress=client.post(f'/api/v1/tasks/{tid_a}/progress',headers=ADMIN,json={
+        'progress':100,'note':'Human review requested'})
+    assert admin_progress.status_code==200,admin_progress.text
     agent_approval=client.post(f'/api/v1/tasks/{tid_a}/review',headers=agent_h,json={
         'decision':'APPROVE'})
     assert agent_approval.status_code==403,agent_approval.text
@@ -2852,9 +2877,14 @@ def test_agent_lifecycle_unbind_rebind_and_audit_attribution_rc9():
     assert accepted_requirement.status_code==200
     assert accepted_requirement.json()['status']=='ACCEPTED'
     with main_module.conn() as c:
-        grant=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',
-                        (new_assignment_id,)).fetchone()
-    assert grant['status']=='COMPLETED'
+        legacy_final=c.execute('SELECT status FROM agent_task_assignments WHERE id=?',
+            (new_assignment_id,)).fetchone()
+        grant_final=c.execute('SELECT status FROM agent_task_grants WHERE id=?',
+            (grant.json()['id'],)).fetchone()
+    assert legacy_final['status']=='COMPLETED'
+    # Completion is still guarded by task state; a later Stage B step will persist Grant completion.
+    assert grant_final['status']=='ACCEPTED'
+
 
 
 def test_agent_assignment_active_uniqueness_and_state_machine():
