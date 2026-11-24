@@ -2160,6 +2160,8 @@ def enforce_task_review_request(c,tid,a):
     enforce_workflow_stage(c,pid,'REVIEW',a['id'],tid)
 
 def transition_task_workflow(c,tid,target_stage,actor_member_id,comment=''):
+    begin_serialized_write(c)
+    _lock_agent_policy_task(c,tid)
     pid=task_project(c,tid)
     if not pid: raise HTTPException(404,'Task not found')
     task=c.execute('SELECT status,progress FROM tasks WHERE id=?',(tid,)).fetchone()
