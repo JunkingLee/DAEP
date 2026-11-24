@@ -946,3 +946,10 @@
   - 05a8719e9f5c23e085a2d84f99284d5a714c7a9d — test: make collaboration message assertions order independent。
 - 初始代码/测试 CI run 45337149416 与 45337154182 因同分支后续提交触发并发取消/部分 Job 被取消，不作为验证结果。以本补充提交后的最新 CI 为准。
 - 当前消息 API 仍待完整 CI 验证；没有本地 pytest 执行证据。
+
+
+### 31 节最终收口补充
+- Member 历史读取不再依赖 Task 仍处于可执行状态：改为校验当前唯一人类 assignee、有效 Member、Policy 责任人、Tenant/Project/Session 关系后读取既有消息；不自动创建新 Session。Task 已结束时保留历史读取能力。
+- Agent 发送消息继续拒绝 Task 终态；Agent 读取历史在 Grant 仍有效且具备 session.read 时可访问。
+- 新增 session.read-only Agent 负向测试，确保没有 session.message.send 时不能发送消息。
+- 本轮最终原子提交包含 API、测试和本交接文件；以该提交 SHA 和其 CI run 为最终验证依据。

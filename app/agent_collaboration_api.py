@@ -416,6 +416,45 @@ def register_agent_collaboration_routes(
             "metadata": json.loads(row["metadata_json"] or "{}"), "created_at": row["created_at"],
         }
 
+
+    def _member_collaboration_history_session(c, task_id, member):
+        task = c.execute(
+            """SELECT t.id task_id,r.project_id,p.tenant_id project_tenant_id,p.status project_status
+               FROM tasks t JOIN requirements r ON r.id=t.requirement_id
+               JOIN projects p ON p.id=r.project_id WHERE t.id=?""",
+            (task_id,),
+        ).fetchone()
+        if not task or task["project_tenant_id"] != member.get("tenant_id", "tenant-default"):
+            raise HTTPException(404, "Task not found")
+        if task["project_status"] != "ACTIVE":
+            raise HTTPException(409, "Project is not active")
+        assignees = c.execute(
+            """SELECT a.member_id,m.tenant_id,m.password_status FROM assignments a
+               JOIN members m ON m.id=a.member_id WHERE a.task_id=?""",
+            (task_id,),
+        ).fetchall()
+        if (len(assignees) != 1 or assignees[0]["member_id"] != member["id"]
+            or assignees[0]["tenant_id"] != task["project_tenant_id"]
+            or assignees[0]["password_status"] != "ACTIVE"):
+            raise HTTPException(403, "Only the active human Task assignee can read collaboration history")
+        policy = c.execute(
+            """SELECT responsible_member_id FROM agent_task_execution_policies
+               WHERE task_id=? AND tenant_id=?""",
+            (task_id, task["project_tenant_id"]),
+        ).fetchone()
+        if not policy or policy["responsible_member_id"] != member["id"]:
+            raise HTTPException(403, "Task Agent execution policy responsibility is required")
+        session = c.execute(
+            """SELECT * FROM agent_collaboration_sessions
+               WHERE task_id=? AND tenant_id=?""",
+            (task_id, task["project_tenant_id"]),
+        ).fetchone()
+        if not session:
+            raise HTTPException(404, "Task collaboration Session not found")
+        if session["project_id"] != task["project_id"]:
+            raise HTTPException(409, "Collaboration Session project relationship is invalid")
+        return session
+
     @router.get("/api/v1/tasks/{task_id}/collaboration-messages")
     def list_task_collaboration_messages(task_id: str, grant_id: str = None, limit: int = 50,
                                          authorization: str = Header(None)):
@@ -424,9 +463,7 @@ def register_agent_collaboration_routes(
             raise HTTPException(422, "limit must be between 1 and 100")
         with conn() as c:
             if current.get("actor_type") == "MEMBER":
-                begin_serialized_write(c)
-                lock_task(c, task_id)
-                _, session = _member_task_session(c, task_id, current, now())
+                session = _member_collaboration_history_session(c, task_id, current)
                 allowed_resources = None
             elif current.get("actor_type") == "AGENT":
                 if not grant_id:

@@ -4721,6 +4721,28 @@ def test_agent_collaboration_messages_enforce_grants_scopes_resources_and_sessio
     assert agent_row["collaboration_grant_id"] == grant_id
 
 
+
+def test_agent_collaboration_message_send_requires_message_scope():
+    _, _, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Read Only Collaboration Agent"})
+    assert created.status_code == 200, created.text
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session", headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": created.json()["agent"]["id"],
+        "scopes": ["session.read"]})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept",
+                           headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+    denied = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "content": "read-only agent"})
+    assert denied.status_code == 403, denied.text
+
 def test_agent_collaboration_grant_cannot_be_authorized_by_non_owner():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
