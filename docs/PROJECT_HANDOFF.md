@@ -1123,3 +1123,11 @@
 ### 下一步
 - 验证本轮文档/UI 提交的 Browser E2E 与完整 CI。
 - 下一阶段核对「我的 Agent」页面 Token 轮换、撤销、停用和项目绑定流程，与 Task/Collaboration Grant 生命周期是否一致；补充真实浏览器交互覆盖。
+
+
+## 40. Agent 页面帮助入口路径修正（2026-11-24）
+
+- 复核发现 DAEP Web 服务只挂载 `/static` 静态目录，仓库 `docs/MCP_INTEGRATION.md` 并未通过 `/docs/` 路径提供服务。
+- 将「我的 Agent」页面中不成立的 `/docs/MCP_INTEGRATION.md` 超链接改为明确的仓库文档路径提示，避免用户点击后进入 404。
+- 不新增文档静态公开路由，避免意外暴露仓库内部文档目录。
+- 本修正提交待 CI 验证。
