@@ -1054,8 +1054,8 @@ def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_ne
         old_identity_grant=c.execute('SELECT status,revoke_reason,revoked_by_member_id FROM agent_task_grants WHERE id=?',
             (old_grant.json()['id'],)).fetchone()
     assert old_identity_grant['status']=='REVOKED'
-    assert old_identity_grant['revoke_reason']=='Task assignee changed'
-    assert old_identity_grant['revoked_by_member_id'] is None
+    assert old_identity_grant['revoke_reason']=='Human task assignee changed'
+    assert old_identity_grant['revoked_by_member_id'] is not None
 
     new_identity=client.post('/api/v1/agents',headers=new_headers,json={'name':'New Assignee Private Agent'})
     assert new_identity.status_code==200,new_identity.text
