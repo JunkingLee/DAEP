@@ -4849,6 +4849,93 @@ def test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle()
 
 
 
+def test_collaboration_session_pause_close_history_and_owner_boundaries():
+    _, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    other = client.post("/api/v1/members", headers=ADMIN,
+                        json={"name": "Non Responsible Collaborator"})
+    assert other.status_code == 200, other.text
+    other_headers = {"Authorization": "Bearer " + other.json()["token"]}
+
+    agent = client.post("/api/v1/agents", headers=owner_headers,
+                        json={"name": "Session Lifecycle Agent"})
+    assert agent.status_code == 200, agent.text
+    agent_id = agent.json()["agent"]["id"]
+    agent_headers = {"Authorization": "Bearer " + agent.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id,
+        "scopes": ["session.read", "session.message.send", "session.proposal.create"]})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+    assert client.post(f"/api/v1/collaboration-grants/{grant_id}/accept",
+                       headers=agent_headers).status_code == 200
+
+    # Non-responsible Members cannot change Session governance or decide
+    # proposals owned by a different Agent Owner.
+    denied_session = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+        headers=other_headers, json={"status": "PAUSED"})
+    assert denied_session.status_code in (403, 409), denied_session.text
+    proposal = client.post(f"/api/v1/tasks/{task_id}/collaboration-proposals",
+        headers=agent_headers, json={"grant_id": grant_id,
+        "proposal_type": "HELP_REQUEST", "payload": {"summary": "owner-only decision"}})
+    assert proposal.status_code == 200, proposal.text
+    denied_decision = client.post(
+        f"/api/v1/collaboration-proposals/{proposal.json()['id']}/decision",
+        headers=other_headers, json={"decision": "ACCEPTED"})
+    assert denied_decision.status_code == 403, denied_decision.text
+
+    agent_message = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "content": "before pause"})
+    assert agent_message.status_code == 200, agent_message.text
+    member_message = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=owner_headers, json={"content": "member history"})
+    assert member_message.status_code == 200, member_message.text
+
+    paused = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+        headers=owner_headers, json={"status": "PAUSED"})
+    assert paused.status_code == 200, paused.text
+    history_url = f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}"
+    assert client.get(history_url, headers=agent_headers).status_code == 200
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "content": "paused send"}).status_code == 409
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-proposals",
+        headers=agent_headers, json={"grant_id": grant_id, "proposal_type": "HELP_REQUEST",
+        "payload": {"summary": "paused proposal"}}).status_code == 409
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id}).status_code == 409
+
+    resumed = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+        headers=owner_headers, json={"status": "OPEN"})
+    assert resumed.status_code == 200, resumed.text
+    closed = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+        headers=owner_headers, json={"status": "CLOSED"})
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["closed_at"]
+    # Closed Sessions retain readable history but reject every new collaboration write.
+    history = client.get(history_url, headers=agent_headers)
+    assert history.status_code == 200, history.text
+    assert {item["content"] for item in history.json()["items"]} >= {"before pause", "member history"}
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "content": "closed send"}).status_code == 409
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=owner_headers, json={"content": "closed member send"}).status_code == 409
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-proposals",
+        headers=agent_headers, json={"grant_id": grant_id, "proposal_type": "HELP_REQUEST",
+        "payload": {"summary": "closed proposal"}}).status_code == 409
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id}).status_code == 409
+    assert client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+        headers=owner_headers, json={"status": "OPEN"}).status_code == 409
+
+    # Session closure is independent of the Agent Task Execution Grant lifecycle.
+    assert client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                      headers=owner_headers).json()["status"] == "CLOSED"
+
+
+
 def test_agent_collaboration_messages_enforce_grants_scopes_resources_and_session_state():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
