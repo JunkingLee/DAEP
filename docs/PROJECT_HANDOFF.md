@@ -936,3 +936,13 @@
 - 检查本轮最新 CI 的 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
 - 若失败，按失败日志修复；若通过，再审计现有 MCP 身份认证/工具注册边界，评估消息 API 的 MCP 暴露与前端协作时间线接线。
 - 继续遵守：Agent 属于 Member，Runtime 自托管，DAEP 不创建/启动/调度 Agent；Presence 不构成授权；不做历史迁移、回填或利旧。
+
+
+### 31 节补充：关系校验加固与 CI 调度情况
+- 在统一 Grant helper 中进一步验证 Task 实际所属 Project、Owner Member Tenant 与 Grant/Agent/Session/Project 的一致性；Agent 消息发送还会拒绝 Task 已进入 DONE/CANCELLED/CLOSED/ARCHIVED 的情况。
+- 测试中不再依赖消息时间戳/ID 的排序来断言 Agent 消息先后，按 author_type 定位对应记录。
+- 补充提交：
+  - 81eb905e5e1e4cce8c3bfb2b3423a031deb4a3bd — fix: tighten collaboration grant relationship checks。
+  - 05a8719e9f5c23e085a2d84f99284d5a714c7a9d — test: make collaboration message assertions order independent。
+- 初始代码/测试 CI run 45337149416 与 45337154182 因同分支后续提交触发并发取消/部分 Job 被取消，不作为验证结果。以本补充提交后的最新 CI 为准。
+- 当前消息 API 仍待完整 CI 验证；没有本地 pytest 执行证据。
