@@ -41,3 +41,35 @@ def test_deliver_sends_auth_and_stable_idempotency_headers(monkeypatch):
     assert headers["x-daep-delivery-attempt"] == "3"
     assert headers["x-daep-message-id"] == "msg-1"
     assert captured["body"] == item["payload"]
+
+
+def test_run_once_dispatches_grant_reminders_without_blocking_outbox(monkeypatch):
+    calls = []
+    def fake_call(method, path, payload=None):
+        calls.append((method, path, payload))
+        if path == "/internal/v1/outbox/claim":
+            return {"items": [], "count": 0}
+        if path == "/internal/v1/collaboration-grants/reminders/dispatch":
+            return {"dispatched": 2, "checked": 3}
+        raise AssertionError(path)
+    monkeypatch.setattr(worker, "call", fake_call)
+    assert worker.run_once() == 0
+    assert [path for _, path, _ in calls] == [
+        "/internal/v1/outbox/claim",
+        "/internal/v1/collaboration-grants/reminders/dispatch",
+    ]
+
+
+def test_run_once_keeps_outbox_working_when_reminder_dispatch_fails(monkeypatch):
+    calls = []
+    def fake_call(method, path, payload=None):
+        calls.append(path)
+        if path == "/internal/v1/outbox/claim":
+            return {"items": [], "count": 0}
+        raise RuntimeError("reminder endpoint unavailable")
+    monkeypatch.setattr(worker, "call", fake_call)
+    assert worker.run_once() == 0
+    assert calls == [
+        "/internal/v1/outbox/claim",
+        "/internal/v1/collaboration-grants/reminders/dispatch",
+    ]
