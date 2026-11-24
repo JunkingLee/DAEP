@@ -34,7 +34,7 @@ def upgrade():
             revoked_by_member_id TEXT REFERENCES members(id),
             revoke_reason TEXT,
             last_activity_at TEXT,
-            legacy_assignment_id TEXT REFERENCES agent_task_assignments(id),
+            legacy_assignment_id TEXT,
             CHECK (expires_at > created_at),
             CHECK (
                 (status <> 'ACCEPTED' OR accepted_at IS NOT NULL)
