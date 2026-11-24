@@ -97,6 +97,7 @@ def ensure_agent_collaboration_schema(conn_factory):
             FOREIGN KEY (owner_member_id) REFERENCES members(id),
             FOREIGN KEY (authorized_by_member_id) REFERENCES members(id),
             FOREIGN KEY (revoked_by_member_id) REFERENCES members(id),
+            UNIQUE (id, session_id, task_id, agent_id, owner_member_id),
             CHECK (expires_at > created_at),
             CHECK ((status <> 'ACCEPTED' OR accepted_at IS NOT NULL) AND
                    (status <> 'REVOKED' OR revoked_at IS NOT NULL))
