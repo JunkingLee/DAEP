@@ -4810,8 +4810,8 @@ def test_agent_collaboration_message_access_rejects_unaccepted_wrong_agent_and_e
 
     # Expiration is enforced on every read and write, not only by inbox display.
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  ("2000-01-01T00:00:00+00:00", grant_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  ("1999-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00", grant_id))
     assert client.get(history_url, headers=agent_headers).status_code == 403
     assert client.post(message_url, headers=agent_headers,
                        json={"grant_id": grant_id, "content": "expired"}).status_code == 403

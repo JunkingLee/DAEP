@@ -1014,3 +1014,5 @@
 - 本轮测试变更提交后需重新核验 Python 3.11/3.12/3.13、migrations/RLS、容器构建、Production Compose 和 Browser E2E；本地 pytest 未执行，测试结果以 CI 为准。
 
 - 提交前复核发现成员创建 API 返回的成员 ID 位于顶层 `id`，并非 `member.id`；已修正 Owner 关系漂移测试使用 `other.json()["id"]`。该更正先于本轮 CI 结果，后续 CI 将验证最终测试版本。
+
+- 后续 CI（run `45340136793`，基于提交 `e5b83676f0f687fca58b3187beac4040febf1feb`）在新增测试中暴露两个夹具问题：SQLite Grant 表要求 `expires_at > created_at`，过期模拟需同时回拨创建时间；成员创建 API 的 ID 顶层字段修正已进入下一提交 `88cdf4292648ae8aff1b0d8a1020c2ac15aff4e3`。当前进一步修复过期夹具，将 `created_at` 设为 1999、`expires_at` 设为 2000，保证约束成立且相对当前时间已过期。
