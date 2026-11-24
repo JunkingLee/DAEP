@@ -1012,3 +1012,5 @@
 - 增加真实 FastAPI TestClient 集成测试，验证未接受邀请不能读/写；其他 Agent 不能借用目标 Agent 的 Grant；Grant 到期后读/写均拒绝；Agent 当前 Owner 与 Grant Owner 关系不一致时 fail-closed。
 - 测试直接操作当前开发 SQLite 测试库模拟过期和 Owner 关系漂移，不改变生产 Schema/API。
 - 本轮测试变更提交后需重新核验 Python 3.11/3.12/3.13、migrations/RLS、容器构建、Production Compose 和 Browser E2E；本地 pytest 未执行，测试结果以 CI 为准。
+
+- 提交前复核发现成员创建 API 返回的成员 ID 位于顶层 `id`，并非 `member.id`；已修正 Owner 关系漂移测试使用 `other.json()["id"]`。该更正先于本轮 CI 结果，后续 CI 将验证最终测试版本。

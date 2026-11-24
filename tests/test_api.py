@@ -4843,7 +4843,7 @@ def test_agent_collaboration_message_access_rejects_owner_relationship_drift():
     # Simulate an inconsistent ownership relationship; the API must fail closed.
     with main_module.conn() as c:
         c.execute("UPDATE agents SET owner_member_id=? WHERE id=?",
-                  (other.json()["member"]["id"], agent_id))
+                  (other.json()["id"], agent_id))
     denied = client.get(
         f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}",
         headers=agent_headers)
