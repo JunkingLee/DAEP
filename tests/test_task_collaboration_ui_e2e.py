@@ -73,9 +73,9 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             # Grant lifecycle events appear in the durable Member inbox and can be marked read.
             page.evaluate("go('inbox'); loadInbox('ALL')")
             inbox = page.locator("#inbox")
-            notice = inbox.locator(".list-row").first
-            expect(notice).to_be_visible()
-            notice.get_by_role("button", name="标记已读").click()
+            notice_button = inbox.get_by_role("button", name="标记已读").first
+            expect(notice_button).to_be_visible()
+            notice_button.click()
             expect(page.locator("#toast")).to_contain_text("消息已标记为已读", timeout=10000)
             page.evaluate("loadInbox('ACKNOWLEDGED')")
             expect(inbox).to_contain_text("已读")
