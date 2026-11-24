@@ -1175,3 +1175,11 @@
 
 ### 下一步
 - 核验本轮 CI；通过后继续补充 Owner 账户停用对 CollaborationGrant 的专项回归，以及 Agent Token 撤销/轮换、项目解绑的生命周期契约测试。
+
+
+## 43. Agent 停用生命周期回归断言修正（2026-11-24）
+
+- CI run `45345525862` 的三个 Python 版本均定位到同一测试断言：撤销的 CollaborationGrant 访问消息接口返回 403（已认证 Agent 缺少有效 Grant），测试错误期待 404。修正为 403，保持 fail-closed 授权语义，不修改 API 行为。
+- 新增 Owner Member 账户停用专项集成测试：接受的协作授权被同步撤销，撤销人/时间/原因被记录；Owner 重新启用后 Agent 仍保持 DISABLED，旧 CollaborationGrant 不恢复。
+- 上一提交中 Agent 自身停用专项测试仍覆盖重新启用 + Token 轮换后旧 Grant 不复活。
+- 本轮测试和文档随修复一次性提交；等待新 CI 验证。

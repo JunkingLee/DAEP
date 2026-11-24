@@ -226,6 +226,43 @@ def test_disabling_agent_owner_revokes_agent_identity_and_assignments_permanentl
         assert c.execute("SELECT status FROM agents WHERE id=?",(agent['id'],)).fetchone()['status']=='DISABLED'
 
 
+
+def test_disabling_agent_owner_account_revokes_collaboration_grants():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    _, owner_id, owner_token, task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+owner_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Owner Disable Collaboration Agent'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    agent_headers={'Authorization':'Bearer '+created.json()['token']}
+    client.get(f'/api/v1/tasks/{task_id}/collaboration-session',headers=owner_headers)
+    grant=client.post(f'/api/v1/tasks/{task_id}/collaboration-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'scopes':['session.read']})
+    assert grant.status_code==200,grant.text
+    grant_id=grant.json()['id']
+    accepted=client.post(f'/api/v1/collaboration-grants/{grant_id}/accept',headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+
+    disabled=client.post(f'/api/v1/members/{owner_id}/disable',headers=ADMIN)
+    assert disabled.status_code==200,disabled.text
+    with main_module.conn() as c:
+        row=c.execute("""SELECT status,revoked_at,revoked_by_member_id,revoke_reason
+            FROM agent_collaboration_grants WHERE id=?""",(grant_id,)).fetchone()
+    assert row['status']=='REVOKED' and row['revoked_at']
+    assert row['revoked_by_member_id']==ADMIN_ID
+    assert row['revoke_reason']=='Agent owner account disabled'
+
+    enabled=client.post(f'/api/v1/members/{owner_id}/enable',headers=ADMIN)
+    assert enabled.status_code==200,enabled.text
+    assert client.get('/api/v1/mcp/context',headers=agent_headers).status_code==401
+    with main_module.conn() as c:
+        assert c.execute("SELECT status FROM agents WHERE id=?",(agent['id'],)).fetchone()['status']=='DISABLED'
+        assert c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+            (grant_id,)).fetchone()['status']=='REVOKED'
+
+
 def test_agent_unbind_revokes_legacy_assignment_but_not_owner_task_grant():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
@@ -4136,7 +4173,7 @@ def test_agent_disable_revokes_accepted_collaboration_grants_without_revival():
     assert inbox.status_code==200,inbox.text
     assert not any(item['grant_id']==grant_id for item in inbox.json()['items'])
     assert client.get(f'/api/v1/tasks/{task_id}/collaboration-messages',
-        headers=new_agent_headers,params={'grant_id':grant_id}).status_code==404
+        headers=new_agent_headers,params={'grant_id':grant_id}).status_code==403
 
 
 def test_agent_grant_inbox_and_accept_without_project_binding():
