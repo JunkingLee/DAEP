@@ -1097,3 +1097,11 @@
 - 修复仅在 PAUSED Session 发送断言前恢复主 Agent Token；保留只读 Agent 读取允许、发送拒绝的独立断言，不放宽任何 REST 授权逻辑。
 - 本修复提交待 CI 验证；未在本地运行 pytest，不宣称测试通过。
 - 未修改 REST API、数据库 Schema 或迁移；不做历史数据迁移、回填和利旧。
+
+
+## 38. MCP 端到端测试双 Agent Token 顺序修正（2026-11-24）
+
+- 修复提交 `8321af00af1da664a75af140596bc627323ef9c3` 对应 CI run `45343235417`：Python 3.11/3.12 仍在端到端测试失败，根因是上一次 Token 恢复插入位置不正确，导致只读 Agent 的 Grant 历史读取使用了主 Agent Token。
+- 正确测试顺序现为：切换只读 Agent Token → 验证只读 Agent 可读/不可发送 → PAUSED 后仍用只读 Agent Token 读取历史 → 切换主 Agent Token → 验证主 Agent 的发送因 Session PAUSED 被拒绝。
+- 该修复只调整测试中的身份切换顺序，不改变任何产品授权逻辑。
+- 修复提交待 CI 验证；本地 pytest 未执行，不宣称通过。
