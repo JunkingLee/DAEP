@@ -900,3 +900,39 @@
 - 失败版本各自为 226 passed、1 failed、1 skipped；PostgreSQL migrations 和 Production Compose 已 SUCCESS。该 run 其余尚未结束的 jobs 因后续提交触发新 workflow 被 CANCELLED，不能视为全绿。
 - 已修正测试断言为 `item["grant_id"]`，提交：`b7daf0ad6fdd8e787fa15174d8c530f702b68782` — `test: use collaboration grant inbox identifier`。
 - 修复后 CI 尚待检查；本轮 API 仍不得标记为验证通过。
+
+
+## 31. Agent Collaboration 消息 API 第一阶段（2026-11-24）
+
+### CI 核验
+- 上一阶段 Session/CollaborationGrant API 及 Inbox 字段修复对应 run 45335830556，提交 d93743564ab912dab5c00807faf70dcbb3bea32b，七个 Job 全部 SUCCESS：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
+- 本轮开始时分支 HEAD 为 d93743564ab912dab5c00807faf70dcbb3bea32b，分支仍为 release/1.0.0-rc9。
+
+### 本轮实现
+- app/agent_collaboration_api.py：
+  - 新增统一 _agent_collaboration_grant_context 校验入口，按 Agent Token 身份加载 Grant，并校验 Tenant、Agent、Owner、Project、Task、Session 关系。
+  - 仅接受 ACCEPTED、未过期、未撤销、Agent ACTIVE、Project ACTIVE 的 CollaborationGrant。
+  - 按操作校验 session.read / session.message.send Scope。
+  - Resource Scope 非空时，Agent 发送消息必须指定允许的 resource_id；Agent 读取历史时只返回授权资源范围内的消息。
+  - 新增 GET /api/v1/tasks/{task_id}/collaboration-messages：Member 使用当前 Task 负责人权限查看；Agent 必须显式传 grant_id 并持有 session.read。PAUSED/CLOSED 保留历史读取。
+  - 新增 POST /api/v1/tasks/{task_id}/collaboration-messages：Member 以本人身份发言；Agent 必须携带 Grant、拥有 session.message.send 且 Session OPEN。
+  - Agent 作者身份、Owner 和 Grant 来源由服务端从认证上下文和 Grant 推导，不能通过请求体伪装为 Member。
+  - 消息写入 agent_collaboration_messages 并记录 agent.collaboration_message.created 审计事件；消息 API 不修改 Task 总体进度、assignee、审批或工作包治理。
+- tests/test_api.py 新增消息生命周期集成测试，覆盖授权与接受、Resource Scope 拒绝、Agent 作者身份防伪、Member/Agent 双向消息、历史读取、PAUSED/CLOSED 只读、撤销后访问拒绝和审计记录。
+
+### 本轮提交
+- 52c7ad308a577b1f7a8fa5a7f48930aec8200807 — feat: add scoped collaboration message API。
+- e6c0b4d15c6368efa4ca1fb09f81f5cd43a914a4 — test: cover scoped collaboration message lifecycle。
+- 代码提交已完成；当前待补交接文档并核验最新 CI。当前执行环境未直接运行 pytest。
+
+### 验证状态与限制
+- 本轮消息 API 尚未通过 CI 验证，不得宣称测试通过。
+- 未新增数据库表或历史迁移；复用现有 agent_collaboration_messages Schema。
+- PostgreSQL migration/RLS job 通过只验证建库和租户隔离，不等于真实 PostgreSQL 多连接并发压力测试。
+- 当前 Member 历史读取沿用 Task 当前负责人/Policy 责任权校验；Agent 历史读取要求有效 Accepted CollaborationGrant 和 session.read。
+- 本轮未开放 MCP 工具或前端界面。
+
+### 下一步唯一任务
+- 检查本轮最新 CI 的 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、container-build、production-compose、browser-e2e。
+- 若失败，按失败日志修复；若通过，再审计现有 MCP 身份认证/工具注册边界，评估消息 API 的 MCP 暴露与前端协作时间线接线。
+- 继续遵守：Agent 属于 Member，Runtime 自托管，DAEP 不创建/启动/调度 Agent；Presence 不构成授权；不做历史迁移、回填或利旧。
