@@ -4478,7 +4478,7 @@ def test_agent_task_grant_concurrent_create_and_revoke_share_task_lock():
     first=next(response for response in responses if response.status_code==200)
     active=client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers)
     assert active.status_code==200,active.text
-    active_rows=[row for row in active.json() if row['status'] in ('AUTHORIZED','ACCEPTED')]
+    active_rows=[row for row in active.json()['items'] if row['status'] in ('AUTHORIZED','ACCEPTED')]
     assert len(active_rows)==1
     existing=active_rows[0]
 
@@ -4500,7 +4500,7 @@ def test_agent_task_grant_concurrent_create_and_revoke_share_task_lock():
     assert replacement.status_code in (200,409),replacement.text
     final_list=client.get(f'/api/v1/tasks/{task_id}/agent-grants',headers=headers)
     assert final_list.status_code==200,final_list.text
-    final_active=[row for row in final_list.json() if row['status'] in ('AUTHORIZED','ACCEPTED')]
+    final_active=[row for row in final_list.json()['items'] if row['status'] in ('AUTHORIZED','ACCEPTED')]
     assert len(final_active)<=1
     if replacement.status_code==200:
         assert len(final_active)==1
