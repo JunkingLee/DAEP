@@ -4580,7 +4580,7 @@ def test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle()
 
     inbox = client.get("/api/v1/agents/me/collaboration-grants", headers=agent_headers)
     assert inbox.status_code == 200, inbox.text
-    assert [item["id"] for item in inbox.json()["items"]] == [grant["id"]]
+    assert [item["grant_id"] for item in inbox.json()["items"]] == [grant["id"]]
 
     accepted = client.post(
         f"/api/v1/collaboration-grants/{grant['id']}/accept", headers=agent_headers
