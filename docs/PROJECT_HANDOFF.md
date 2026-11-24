@@ -679,3 +679,11 @@
 3. 若失败，定位并修复实际问题，更新本文件并提交。
 4. 若通过，继续审查任务重新分配、Task 终态、Agent 禁用/Token 撤销与 Policy/Grant 生命周期的一致性；确保所有任务责任人变化路径与 Grant 创建共享同一 Task 锁定约定。
 
+### Policy 负责人变更收口补充（2026-11-24）
+- 复核任务重新分配场景后，补充 app/main.py：
+  - Policy GET 现在也在写事务中锁定 Task，避免首次惰性初始化策略时与 Grant 创建并发竞争。
+  - 当前 Task assignee 可通过 PUT 策略接口接管原负责人留下的 Policy；接管时更新 responsible_member_id 并递增 policy_version。
+  - 普通读取和 Grant 创建仍拒绝使用负责人已过期的 Policy，只有当前 assignee 主动 PUT 才能接管，防止旧 assignee 继续控制策略。
+- 修复提交：53d7274c2e65472258e0b90392c065e00c4e83c4 — fix: allow task assignee to take over agent policy。
+- 此修复提交触发的新 CI 运行应作为当前最终验证依据；此前 run 45330959551 可能因新提交被取消，不能据此宣称完整通过。
+
