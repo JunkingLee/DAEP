@@ -771,3 +771,14 @@
 - 继续补充真实 HTTP 集成测试：任务重新分配给另一 Member 后，原 Owner 的 Agent Grant 必须撤销；新 assignee 必须先通过策略接管，再由其 Owner 身份授权自己的 Agent。
 - 随后补充并发 Grant 创建与撤销的事务一致性测试；确认 SQLite 与 PostgreSQL 使用同一 Task 串行化约定。
 - 这些测试通过并完成 CI 核验后，再进入 `AgentCollaborationSession` / `AgentCollaborationGrant` 服务 API。仍不考虑数据库历史迁移、回填或利旧。
+
+### CI 反馈与测试夹具修正（补记）
+- 查询 run `45332129938` 的 jobs/logs 后确认：
+  - Python 3.11/3.12/3.13 均失败于同一既有测试 `test_task_terminal_lifecycle_completes_or_revokes_agent_grants`。
+  - 失败点是该测试用普通 Member Token 创建第二个 Requirement；当前权限模型要求 Project Manager 或 product work function，接口正确返回 403。
+  - 每个 Python 版本为 222 passed、1 failed、1 skipped。
+  - PostgreSQL migrations/RLS、production-compose、container-build、browser-e2e 均 SUCCESS。
+- 已修正测试夹具：第二个 Requirement/Task 由 ADMIN 创建并分配给 Member；Agent 仍由该 Member 自己创建并授权，保留 Owner 私有归属边界。
+- 修复提交：`4375e1baba63cc363a07579c784267f76e46761f` — `test: use project admin for lifecycle fixture`。
+- 本轮新增真实 HTTP workflow 测试提交：`b76ca38cd9f36a4803fa806e7e8dacb4d761444c` — `test: cover HTTP workflow grant lifecycle`。
+- 交接文档补记之前，CI 运行 `45332129938` 只覆盖此前代码；修复提交和 HTTP 集成测试尚待新 CI 验证。
