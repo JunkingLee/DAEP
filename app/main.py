@@ -812,6 +812,93 @@ def _grant_task_context(c, task_id, member):
         raise HTTPException(403,'Active Member account required')
     return row
 
+def _lock_agent_policy_task(c, task_id):
+    sql="SELECT id FROM tasks WHERE id=?"
+    if DATABASE_URL.startswith(('postgresql://','postgres://')):
+        sql += " FOR UPDATE"
+    if not c.execute(sql,(task_id,)).fetchone():
+        raise HTTPException(404,'Task not found')
+
+def _ensure_agent_task_policy(c, task, responsible_member_id, stamp=None):
+    stamp=stamp or now()
+    c.execute("""INSERT INTO agent_task_execution_policies
+        (id,tenant_id,project_id,task_id,responsible_member_id,allow_multiple_agents,
+         max_agents,collaboration_mode,policy_version,created_at,updated_at)
+        VALUES(?,?,?,?,?,0,NULL,'TEAM',1,?,?)
+        ON CONFLICT(task_id) DO NOTHING""",
+        ('atp_'+uuid.uuid4().hex[:20],task['project_tenant_id'],task['project_id'],
+         task['task_id'],responsible_member_id,stamp,stamp))
+    sql="""SELECT id,tenant_id,project_id,task_id,responsible_member_id,
+        allow_multiple_agents,max_agents,collaboration_mode,policy_version,created_at,updated_at
+        FROM agent_task_execution_policies WHERE task_id=? AND tenant_id=?"""
+    if DATABASE_URL.startswith(('postgresql://','postgres://')):
+        sql += " FOR UPDATE"
+    policy=c.execute(sql,(task['task_id'],task['project_tenant_id'])).fetchone()
+    if not policy:
+        raise HTTPException(500,'Task execution policy could not be initialized')
+    if policy['project_id']!=task['project_id']:
+        raise HTTPException(409,'Task execution policy project relationship is invalid')
+    if policy['responsible_member_id']!=responsible_member_id:
+        raise HTTPException(409,'Task assignee changed; the new assignee must take ownership of the Agent execution policy')
+    return policy
+
+def _active_agent_grants(c, task_id, stamp):
+    c.execute("""UPDATE agent_task_grants SET status='EXPIRED',updated_at=?
+        WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED') AND expires_at<=?""",
+        (stamp,task_id,stamp))
+    return c.execute("""SELECT id,agent_id,status,expires_at FROM agent_task_grants
+        WHERE task_id=? AND status IN ('AUTHORIZED','ACCEPTED') AND expires_at>?""",
+        (task_id,stamp)).fetchall()
+
+def _agent_policy_payload(policy):
+    return {**dict(policy),'allow_multiple_agents':bool(policy['allow_multiple_agents'])}
+
+@app.get('/api/v1/tasks/{task_id}/agent-execution-policy')
+def get_agent_task_execution_policy(task_id:str,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')!='MEMBER':
+        raise HTTPException(403,'Member authentication required')
+    with conn() as c:
+        task=_grant_task_context(c,task_id,a)
+        policy=_ensure_agent_task_policy(c,task,a['id'])
+        return _agent_policy_payload(policy)
+
+@app.put('/api/v1/tasks/{task_id}/agent-execution-policy')
+def update_agent_task_execution_policy(task_id:str,body:dict,authorization:str=Header(None)):
+    a=actor(authorization)
+    if a.get('actor_type')!='MEMBER':
+        raise HTTPException(403,'Member authentication required')
+    allow_multiple=body.get('allow_multiple_agents')
+    max_agents=body.get('max_agents')
+    if not isinstance(allow_multiple,bool):
+        raise HTTPException(422,'allow_multiple_agents must be a boolean')
+    if max_agents is not None and (isinstance(max_agents,bool) or not isinstance(max_agents,int) or max_agents<1):
+        raise HTTPException(422,'max_agents must be null or a positive integer')
+    if not allow_multiple and max_agents not in (None,1):
+        raise HTTPException(422,'max_agents must be null or 1 when multiple Agents are disabled')
+    with conn() as c:
+        begin_serialized_write(c)
+        _lock_agent_policy_task(c,task_id)
+        task=_grant_task_context(c,task_id,a)
+        policy=_ensure_agent_task_policy(c,task,a['id'])
+        stamp=now()
+        active=_active_agent_grants(c,task_id,stamp)
+        effective_limit=1 if not allow_multiple else max_agents
+        if effective_limit is not None and len(active)>effective_limit:
+            raise HTTPException(409,'The new Agent execution policy is below the number of active grants')
+        c.execute("""UPDATE agent_task_execution_policies
+            SET allow_multiple_agents=?,max_agents=?,policy_version=policy_version+1,updated_at=?
+            WHERE id=? AND task_id=? AND responsible_member_id=?""",
+            (1 if allow_multiple else 0,max_agents,stamp,policy['id'],task_id,a['id']))
+        updated=c.execute("""SELECT id,tenant_id,project_id,task_id,responsible_member_id,
+            allow_multiple_agents,max_agents,collaboration_mode,policy_version,created_at,updated_at
+            FROM agent_task_execution_policies WHERE id=?""",(policy['id'],)).fetchone()
+        event(c,'agent.task_execution_policy.updated',a['id'],task_id,{
+            'policy_id':policy['id'],'allow_multiple_agents':allow_multiple,
+            'max_agents':max_agents,'policy_version':updated['policy_version']},
+            tenant_override=task['project_tenant_id'])
+        return _agent_policy_payload(updated)
+
 @app.post('/api/v1/tasks/{task_id}/agent-grants')
 def create_agent_task_grant(task_id:str, body:dict, authorization:str=Header(None)):
     a=actor(authorization)
@@ -832,23 +919,28 @@ def create_agent_task_grant(task_id:str, body:dict, authorization:str=Header(Non
         raise HTTPException(422,'requested_scope contains unsupported or duplicate actions')
     with conn() as c:
         begin_serialized_write(c)
+        _lock_agent_policy_task(c,task_id)
         task=_grant_task_context(c,task_id,a)
+        policy=_ensure_agent_task_policy(c,task,a['id'])
         agent=c.execute("""SELECT id,name,status,owner_member_id,tenant_id
             FROM agents WHERE id=? AND tenant_id=?""",(agent_id,task['project_tenant_id'])).fetchone()
         if not agent or agent['status']!='ACTIVE':
             raise HTTPException(404,'Active Agent not found in this tenant')
         if agent['owner_member_id'] != a['id']:
             raise HTTPException(403,'You may authorize only an Agent that you own')
-        existing=c.execute("""SELECT id,agent_id,status,expires_at FROM agent_task_grants
-            WHERE tenant_id=? AND task_id=? AND status IN ('AUTHORIZED','ACCEPTED')
-            ORDER BY created_at DESC LIMIT 1""",(task['project_tenant_id'],task_id)).fetchone()
         stamp=now()
-        if existing and existing['expires_at']>stamp:
-            raise HTTPException(409,detail={'message':'Task already has an active Agent grant',
+        active=_active_agent_grants(c,task_id,stamp)
+        if any(row['agent_id']==agent_id for row in active):
+            existing=next(row for row in active if row['agent_id']==agent_id)
+            raise HTTPException(409,detail={'message':'This Agent already has an active grant for the task',
                 'grant_id':existing['id'],'status':existing['status']})
-        if existing:
-            c.execute("""UPDATE agent_task_grants SET status='EXPIRED',updated_at=?
-                WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",(stamp,existing['id']))
+        if active and not bool(policy['allow_multiple_agents']):
+            raise HTTPException(409,detail={'message':'Task policy does not allow multiple Agents',
+                'policy_id':policy['id'],'active_agent_count':len(active)})
+        effective_limit=1 if not bool(policy['allow_multiple_agents']) else policy['max_agents']
+        if effective_limit is not None and len(active)>=effective_limit:
+            raise HTTPException(409,detail={'message':'Task Agent limit has been reached',
+                'policy_id':policy['id'],'max_agents':effective_limit,'active_agent_count':len(active)})
         expires=(datetime.now(timezone.utc)+timedelta(days=days)).isoformat()
         grant_id='agtg_'+uuid.uuid4().hex[:20]
         scope_json=json.dumps(sorted(requested),separators=(',',':'))
@@ -860,11 +952,15 @@ def create_agent_task_grant(task_id:str, body:dict, authorization:str=Header(Non
              a['id'],scope_json,stamp,stamp,expires))
         event(c,'agent.task_grant.authorized',a['id'],task_id,{
             'grant_id':grant_id,'agent_id':agent_id,'scope':sorted(requested),
-            'expires_at':expires},tenant_override=task['project_tenant_id'])
+            'policy_id':policy['id'],'policy_version':policy['policy_version'],
+            'active_agent_count':len(active)+1,'expires_at':expires},
+            tenant_override=task['project_tenant_id'])
         return {'id':grant_id,'task_id':task_id,'project_id':task['project_id'],
             'agent_id':agent_id,'agent_name':agent['name'],'owner_member_id':a['id'],
             'human_assignee_member_id':a['id'],'authorized_by_member_id':a['id'],
-            'scope':sorted(requested),'status':'AUTHORIZED','created_at':stamp,'expires_at':expires}
+            'scope':sorted(requested),'status':'AUTHORIZED','created_at':stamp,'expires_at':expires,
+            'policy_id':policy['id'],'policy_version':policy['policy_version'],
+            'active_agent_count':len(active)+1}
 
 @app.get('/api/v1/agent-grants/me')
 def list_my_agent_task_grants(authorization:str=Header(None)):
