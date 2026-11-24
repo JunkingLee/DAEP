@@ -4935,10 +4935,11 @@ def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_t
     assert client.get("/api/v1/members/me/collaboration-grants",
                       headers=observer_headers).json()["items"] == []
 
+    expired_created_at = "1999-12-31T23:59:59+00:00"
     expired_at = "2000-01-01T00:00:00+00:00"
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  (expired_at, grant_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  (expired_created_at, expired_at, grant_id))
     expired_inbox = client.get("/api/v1/members/me/collaboration-grants",
                                headers=owner_headers)
     assert expired_inbox.status_code == 200, expired_inbox.text
