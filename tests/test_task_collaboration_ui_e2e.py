@@ -70,6 +70,16 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 },agentToken);
                 return {taskId:task.id,proposalId:proposal.id,sessionId:session.id,grantId:grant.id,agentId,agentToken};
             }""")
+            # Collaboration grant creation and Agent acceptance produce durable Owner inbox notices.
+            page.evaluate("go('inbox'); loadInbox('PENDING')")
+            inbox = page.locator("#inbox")
+            expect(inbox).to_contain_text("Agent 协作授权已创建")
+            expect(inbox).to_contain_text("Agent 已接受协作授权")
+            inbox.get_by_role("button", name="标记已读").first.click()
+            page.evaluate("loadInbox('ACKNOWLEDGED')")
+            expect(inbox).to_contain_text("已读")
+            expect(inbox).to_contain_text("Agent 协作授权已创建")
+
             page.evaluate("(id) => openTask(id)", setup["taskId"])
             modal = page.locator("#modalBody")
             expect(modal).to_contain_text("Task 协作空间")
