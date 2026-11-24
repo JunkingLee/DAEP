@@ -1282,3 +1282,12 @@
 
 ### 下一步
 - CI 通过后进入 Task Collaboration UI：展示 Session、消息、Proposal 状态，并提供仅限当前 Task 负责人/Agent Owner 的人类决策入口；继续补充浏览器回归。
+
+
+## 52. Proposal CI 首次失败修正（2026-11-24）
+
+- CI run `45353488944` 的 Python 3.11 已执行 241 passed、1 failed、1 skipped；失败仅来自本轮新增 Proposal 测试对应的实现 bug。
+- 根因：`_agent_collaboration_grant_context()` 的返回值是 `(grant, scopes, allowed_resources)`，新 Proposal 路由误把第二项当成 Session；导致创建 Proposal 时出现 `TypeError: 'set' object is not subscriptable`。
+- 已修正为从 Grant 的 `session_id` 查询 Session，并显式查询 Task 上下文；不改变 Grant 授权边界或 Proposal 语义。
+- 同一 run 的 migrations、container-build、production-compose 已 SUCCESS；3.12/3.13 与 Browser E2E 当时仍在执行。
+- 修复提交后的 CI 尚待验证，不能提前宣称通过。
