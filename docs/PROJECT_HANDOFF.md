@@ -1183,3 +1183,25 @@
 - 新增 Owner Member 账户停用专项集成测试：接受的协作授权被同步撤销，撤销人/时间/原因被记录；Owner 重新启用后 Agent 仍保持 DISABLED，旧 CollaborationGrant 不恢复。
 - 上一提交中 Agent 自身停用专项测试仍覆盖重新启用 + Token 轮换后旧 Grant 不复活。
 - 本轮测试和文档随修复一次性提交；等待新 CI 验证。
+
+
+## 44. Token 生命周期与授权分层契约测试（2026-11-24）
+
+### CI 失败修正
+- 提交 `a7ebe97aa1792b86d0310890caa28f9d66c6394e` 对应 CI run `45345723269`：三个 Python 版本均为 238 passed、1 failed、1 skipped。唯一失败是 Owner disable 测试引用未定义的 `ADMIN_ID`，不是后端逻辑失败。
+- 测试改为通过 `GET /api/v1/me` 读取当前 Admin 的真实 Member ID，再核验 `revoked_by_member_id`，不硬编码系统身份。
+
+### Token 与 Grant 契约
+- 扩展 Token 生命周期集成测试，同时创建并接受 Task Execution Grant 和 CollaborationGrant。
+- Token rotate：旧 Token 立即 401，新 Token 生效；Task Execution Grant 与 CollaborationGrant 均保持 ACCEPTED。
+- Token revoke：旧 Token 立即 401；按现有明确策略撤销 Task Execution Grant 和旧 Assignment；不撤销 CollaborationGrant（它是独立的 Agent 身份级协作授权）。
+- Revoke 后由 Owner 再次签发凭证：新 Token 可继续使用仍有效的 CollaborationGrant，但不能恢复已撤销的 Task Execution Grant。
+- 这明确区分凭证状态、任务执行授权与协作授权，不因 Token 撤销而意外扩大/缩小另一类授权。
+
+### 项目解绑契约复核
+- 既有 `test_agent_unbind_revokes_legacy_assignment_but_not_owner_task_grant` 已覆盖：解绑撤销旧 Assignment；Owner 明确授予的 Task Execution Grant 保持 ACCEPTED，任务读取/进度报告继续受该 Grant 控制；显式撤销 Task Grant 后访问才被拒绝。
+- 本轮不改变项目绑定和 Grant 的独立语义；项目绑定不是 Owner 授权本身。
+
+### 变更边界与验证
+- 仅修改 `tests/test_api.py` 和本交接文档；不修改 REST API、数据库 Schema 或迁移文件，不做历史迁移、回填或利旧。
+- 本轮提交后需验证 Python 3.11/3.12/3.13、PostgreSQL migrations/RLS、Container Build、Production Compose、Browser E2E；本地 pytest 未执行，结果以 CI 为准。

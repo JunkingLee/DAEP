@@ -251,7 +251,8 @@ def test_disabling_agent_owner_account_revokes_collaboration_grants():
         row=c.execute("""SELECT status,revoked_at,revoked_by_member_id,revoke_reason
             FROM agent_collaboration_grants WHERE id=?""",(grant_id,)).fetchone()
     assert row['status']=='REVOKED' and row['revoked_at']
-    assert row['revoked_by_member_id']==ADMIN_ID
+    admin_id=client.get('/api/v1/me',headers=ADMIN).json()['id']
+    assert row['revoked_by_member_id']==admin_id
     assert row['revoke_reason']=='Agent owner account disabled'
 
     enabled=client.post(f'/api/v1/members/{owner_id}/enable',headers=ADMIN)
@@ -329,17 +330,35 @@ def test_agent_unbind_revokes_legacy_assignment_but_not_owner_task_grant():
         json={'progress':50,'note':'Grant was revoked'}).status_code==403
 
 
-def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
+def test_agent_token_rotation_and_revocation_preserve_collaboration_grant_only():
     from app.agent_identity import ensure_agent_schema
     ensure_agent_schema(main_module.conn)
-    created=client.post('/api/v1/agents',headers=ADMIN,json={
-        'name':'Token Lifecycle Agent','description':'Token rotation and revocation regression'})
+    project_id,member_id,member_token,task_id=setup_project_task()
+    owner_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Token Lifecycle Agent','description':'Token rotation and revocation contract'})
     assert created.status_code==200,created.text
     agent=created.json()['agent']
     original=created.json()['token']
     assert created.json()['token_once'] is True
-
     original_headers={'Authorization':'Bearer '+original}
+
+    task_grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read','task.progress.report']})
+    assert task_grant.status_code==200,task_grant.text
+    task_grant_id=task_grant.json()['id']
+    session=client.get(f'/api/v1/tasks/{task_id}/collaboration-session',headers=owner_headers)
+    assert session.status_code==200,session.text
+    collaboration_grant=client.post(f'/api/v1/tasks/{task_id}/collaboration-grants',
+        headers=owner_headers,json={'agent_id':agent['id'],'scopes':['session.read']})
+    assert collaboration_grant.status_code==200,collaboration_grant.text
+    collaboration_grant_id=collaboration_grant.json()['id']
+    accepted_task=client.post(f'/api/v1/agent-grants/{task_grant_id}/accept',headers=original_headers)
+    assert accepted_task.status_code==200,accepted_task.text
+    accepted_collaboration=client.post(
+        f'/api/v1/collaboration-grants/{collaboration_grant_id}/accept',headers=original_headers)
+    assert accepted_collaboration.status_code==200,accepted_collaboration.text
+
     # Credential verification must return identity data without mutating request-scoped audit context.
     from app.agent_identity import authenticate_agent_token
     prior_agent_context=main_module._agent_ctx.get()
@@ -348,34 +367,56 @@ def test_agent_token_rotation_and_revocation_invalidate_previous_credentials():
     assert main_module._agent_ctx.get()==prior_agent_context
     assert client.get('/api/v1/mcp/context',headers=original_headers).status_code==200
 
-    rotated=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=ADMIN)
+    rotated=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=owner_headers)
     assert rotated.status_code==200,rotated.text
     replacement=rotated.json()['token']
     assert rotated.json()['token_once'] is True
     assert replacement != original
     assert client.get('/api/v1/mcp/context',headers=original_headers).status_code==401
-
     replacement_headers={'Authorization':'Bearer '+replacement}
     context=client.get('/api/v1/mcp/context',headers=replacement_headers)
     assert context.status_code==200,context.text
     assert context.json()['actor_type']=='AGENT'
     assert context.json()['agent_id']==agent['id']
+    with main_module.conn() as c:
+        task_state=c.execute("SELECT status FROM agent_task_grants WHERE id=?",(task_grant_id,)).fetchone()
+        collaboration_state=c.execute(
+            "SELECT status FROM agent_collaboration_grants WHERE id=?",(collaboration_grant_id,)).fetchone()
+    assert task_state['status']=='ACCEPTED'
+    assert collaboration_state['status']=='ACCEPTED'
+    assert client.get(f'/api/v1/tasks/{task_id}/collaboration-messages',
+        headers=replacement_headers,params={'grant_id':collaboration_grant_id}).status_code==200
 
-    revoked=client.post(f"/api/v1/agents/{agent['id']}/tokens/revoke",headers=ADMIN)
+    revoked=client.post(f"/api/v1/agents/{agent['id']}/tokens/revoke",headers=owner_headers)
     assert revoked.status_code==200 and revoked.json()['status']=='REVOKED'
     assert client.get('/api/v1/mcp/context',headers=replacement_headers).status_code==401
+    with main_module.conn() as c:
+        task_state=c.execute("SELECT status FROM agent_task_grants WHERE id=?",(task_grant_id,)).fetchone()
+        collaboration_state=c.execute(
+            "SELECT status FROM agent_collaboration_grants WHERE id=?",(collaboration_grant_id,)).fetchone()
+    assert task_state['status']=='REVOKED'
+    assert collaboration_state['status']=='ACCEPTED'
+
+    # A fresh credential can use the still-valid identity-level CollaborationGrant,
+    # while the revoked Task Execution Grant remains permanently revoked.
+    reissued=client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate",headers=owner_headers)
+    assert reissued.status_code==200,reissued.text
+    reissued_headers={'Authorization':'Bearer '+reissued.json()['token']}
+    assert client.get('/api/v1/mcp/context',headers=reissued_headers).status_code==200
+    assert client.get(f'/api/v1/tasks/{task_id}/collaboration-messages',
+        headers=reissued_headers,params={'grant_id':collaboration_grant_id}).status_code==200
+    assert client.get(f'/api/v1/tasks/{task_id}',headers=reissued_headers).status_code==403
 
     with main_module.conn() as c:
         token_rows=c.execute("SELECT token_hash,status FROM agent_tokens WHERE agent_id=?",(agent['id'],)).fetchall()
-        events=c.execute("SELECT event_type,payload FROM events WHERE actor_member_id IS NOT NULL ORDER BY created_at DESC LIMIT 20").fetchall()
-    assert len(token_rows)>=2
-    assert all(row['token_hash'] not in (original,replacement) for row in token_rows)
+        events=c.execute("SELECT event_type,payload FROM events WHERE actor_member_id=? ORDER BY created_at DESC LIMIT 30",
+            (member_id,)).fetchall()
+    assert len(token_rows)>=3
+    assert all(row['token_hash'] not in (original,replacement,reissued.json()['token']) for row in token_rows)
     assert all(row['status']=='REVOKED' for row in token_rows)
     event_types={row['event_type'] for row in events}
     assert 'agent.token.rotated' in event_types
     assert 'agent.token.revoked' in event_types
-
-
 
 
 def test_agent_management_is_scoped_to_owning_member_identity():
