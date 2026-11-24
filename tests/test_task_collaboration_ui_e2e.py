@@ -96,14 +96,16 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             modal.get_by_role("button", name="接受建议").click()
             expect(modal).to_contain_text("已接受", timeout=15000)
 
-            modal.locator("#taskCollabMessage").fill("Human collaboration message from browser E2E")
+            message_input = modal.locator("#taskCollabMessage")
+            message_input.fill("Human collaboration message from browser E2E")
+            expect(message_input).to_have_value("Human collaboration message from browser E2E")
             # Wait for the actual write request rather than the transient toast: the
             # proposal decision and message composer both refresh this modal async.
             with page.expect_response(
                 lambda response: "/api/v1/tasks/" + setup["taskId"] + "/collaboration-messages" in response.url
                 and response.request.method == "POST"
             ) as message_response:
-                modal.get_by_role("button", name="发送消息").click()
+                modal.get_by_test_id("task-collab-send").click()
             assert message_response.value.status == 200, message_response.value.text()
             expect(modal).to_contain_text("Human collaboration message from browser E2E", timeout=15000)
 
