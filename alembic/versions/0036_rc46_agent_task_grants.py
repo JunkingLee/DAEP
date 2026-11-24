@@ -93,7 +93,7 @@ def upgrade():
             tenant_id TEXT NOT NULL,
             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
             task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            grant_id TEXT NOT NULL REFERENCES agent_task_grants(id) ON DELETE CASCADE,
+            grant_id TEXT NOT NULL,
             agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
             contribution_type TEXT NOT NULL CHECK (contribution_type IN ('PROGRESS','BLOCKER','ACTIVITY','DELIVERY')),
             progress INTEGER CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
@@ -187,7 +187,7 @@ def upgrade():
                 CHECK (proposal_type IN ('INVITE_AGENT','WORK_PACKAGE','MEMBER_DELEGATION','HELP_REQUEST')),
             proposed_by_agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
             owner_member_id TEXT NOT NULL REFERENCES members(id),
-            collaboration_grant_id TEXT NOT NULL REFERENCES agent_collaboration_grants(id),
+            collaboration_grant_id TEXT NOT NULL,
             payload_json TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'PENDING'
                 CHECK (status IN ('PENDING','ACCEPTED','REJECTED','WITHDRAWN')),
