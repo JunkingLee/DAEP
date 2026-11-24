@@ -4849,6 +4849,52 @@ def test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle()
 
 
 
+def test_collaboration_grant_owner_revoke_invalidates_all_agent_access_and_is_audited():
+    _, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    other = client.post("/api/v1/members", headers=ADMIN, json={"name": "Different Grant Owner"})
+    assert other.status_code == 200, other.text
+    other_headers = {"Authorization": "Bearer " + other.json()["token"]}
+    created = client.post("/api/v1/agents", headers=owner_headers, json={"name": "Revocation Lifecycle Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session", headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers, json={
+        "agent_id": agent_id, "scopes": ["session.read", "session.message.send", "session.proposal.create"],
+        "resource_scope": {"resource_ids": ["artifact-1"]}, "expires_in_days": 12})
+    assert grant.status_code == 200, grant.text
+    grant_id = grant.json()["id"]
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept", headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+    listed = client.get(f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers)
+    assert listed.status_code == 200, listed.text
+    item = next(x for x in listed.json()["items"] if x["id"] == grant_id)
+    assert item["effective_status"] == "ACCEPTED" and item["owner_member_id"] == owner_id
+    assert item["scopes"] == ["session.read", "session.message.send", "session.proposal.create"]
+    assert item["resource_scope"] == {"resource_ids": ["artifact-1"]} and item["expires_at"]
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages", headers=agent_headers,
+        json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "before revoke"}).status_code == 200
+    denied = client.delete(f"/api/v1/collaboration-grants/{grant_id}", headers=other_headers, json={"reason": "not my Agent"})
+    assert denied.status_code == 403, denied.text
+    revoked = client.delete(f"/api/v1/collaboration-grants/{grant_id}", headers=owner_headers, json={"reason": "Owner withdrew authorization"})
+    assert revoked.status_code == 200 and revoked.json()["status"] == "REVOKED", revoked.text
+    assert revoked.json()["revoked_by_member_id"] == owner_id
+    assert client.get(f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}", headers=agent_headers).status_code == 403
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-messages", headers=agent_headers,
+        json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "after revoke"}).status_code == 403
+    assert client.post(f"/api/v1/tasks/{task_id}/collaboration-proposals", headers=agent_headers,
+        json={"grant_id": grant_id, "proposal_type": "HELP_REQUEST", "payload": {"summary": "after revoke"}}).status_code == 403
+    assert client.delete(f"/api/v1/collaboration-grants/{grant_id}", headers=owner_headers).status_code == 409
+    after = client.get(f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers).json()
+    revoked_item = next(x for x in after["items"] if x["id"] == grant_id)
+    assert revoked_item["effective_status"] == "REVOKED" and revoked_item["revoked_at"]
+    with sqlite3.connect(os.environ["DAEP_DB_PATH"]) as db:
+        events = db.execute("SELECT event_type,payload FROM events WHERE event_type=?", ("agent.collaboration_grant.revoked",)).fetchall()
+    assert any(json.loads(payload).get("grant_id") == grant_id and
+        json.loads(payload).get("reason") == "Owner withdrew authorization" for _, payload in events)
+
 def test_collaboration_session_pause_close_history_and_owner_boundaries():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
