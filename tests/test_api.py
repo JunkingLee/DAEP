@@ -903,7 +903,7 @@ def test_rc44_alembic_head_and_quality_risk_rls_migration_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0036_rc46_agent_task_grants (head)' in heads
+    assert '0037_rc47_notify_prefs (head)' in heads
     agent_auth_migration=(root/'alembic/versions/0035_rc45_agent_auth_lookup.py').read_text()
     assert 'daep_authenticate_agent_token' in agent_auth_migration
     assert 'SECURITY DEFINER' in agent_auth_migration
@@ -4051,7 +4051,7 @@ def test_rc46_agent_task_grants_initial_schema_contract():
     import subprocess
     root=Path(__file__).resolve().parents[1]
     heads=subprocess.check_output(['alembic','heads'],cwd=root,text=True)
-    assert '0036_rc46_agent_task_grants (head)' in heads
+    assert '0037_rc47_notify_prefs (head)' in heads
     migration=(root/'alembic/versions/0036_rc46_agent_task_grants.py').read_text()
     assert 'ENABLE ROW LEVEL SECURITY' in migration
     assert 'FORCE ROW LEVEL SECURITY' in migration
