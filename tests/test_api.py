@@ -4640,6 +4640,87 @@ def test_task_collaboration_session_owner_grant_and_agent_acceptance_lifecycle()
     assert audit["n"] >= 3
 
 
+
+def test_agent_collaboration_messages_enforce_grants_scopes_resources_and_session_state():
+    _, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    created = client.post("/api/v1/agents", headers=owner_headers,
+                          json={"name": "Message Collaboration Agent"})
+    assert created.status_code == 200, created.text
+    agent_id = created.json()["agent"]["id"]
+    agent_headers = {"Authorization": "Bearer " + created.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session", headers=owner_headers)
+    assert session.status_code == 200, session.text
+    grant_response = client.post(f"/api/v1/tasks/{task_id}/collaboration-grants",
+        headers=owner_headers, json={"agent_id": agent_id,
+        "scopes": ["session.read", "session.message.send"],
+        "resource_scope": {"resource_ids": ["artifact-1"]}})
+    assert grant_response.status_code == 200, grant_response.text
+    grant_id = grant_response.json()["id"]
+    accepted = client.post(f"/api/v1/collaboration-grants/{grant_id}/accept", headers=agent_headers)
+    assert accepted.status_code == 200, accepted.text
+
+    missing_resource = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "content": "outside scope"})
+    assert missing_resource.status_code == 403, missing_resource.text
+    wrong_resource = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "resource_id": "artifact-2", "content": "outside"})
+    assert wrong_resource.status_code == 403, wrong_resource.text
+    agent_message = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "resource_id": "artifact-1",
+        "content": "Agent progress update", "author_type": "MEMBER", "author_member_id": owner_id})
+    assert agent_message.status_code == 200, agent_message.text
+    assert agent_message.json()["author_type"] == "AGENT"
+    assert agent_message.json()["author_member_id"] is None
+    assert agent_message.json()["author_agent_id"] == agent_id
+    assert agent_message.json()["agent_owner_member_id"] == owner_id
+    assert agent_message.json()["collaboration_grant_id"] == grant_id
+
+    member_message = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=owner_headers, json={"content": "Human response"})
+    assert member_message.status_code == 200, member_message.text
+    assert member_message.json()["author_type"] == "MEMBER"
+    assert member_message.json()["author_member_id"] == owner_id
+    assert member_message.json()["author_agent_id"] is None
+    history_url = f"/api/v1/tasks/{task_id}/collaboration-messages?grant_id={grant_id}"
+    history = client.get(history_url, headers=agent_headers)
+    assert history.status_code == 200, history.text
+    assert len(history.json()["items"]) == 2
+
+    paused = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+                          headers=owner_headers, json={"status": "PAUSED"})
+    assert paused.status_code == 200, paused.text
+    assert client.get(history_url, headers=agent_headers).status_code == 200
+    blocked_send = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "blocked"})
+    assert blocked_send.status_code == 409, blocked_send.text
+    closed = client.patch(f"/api/v1/tasks/{task_id}/collaboration-session",
+                          headers=owner_headers, json={"status": "CLOSED"})
+    assert closed.status_code == 200, closed.text
+    assert client.get(history_url, headers=agent_headers).status_code == 200
+    blocked_closed = client.post(f"/api/v1/tasks/{task_id}/collaboration-messages",
+        headers=agent_headers, json={"grant_id": grant_id, "resource_id": "artifact-1", "content": "closed"})
+    assert blocked_closed.status_code == 409, blocked_closed.text
+    revoked = client.request("DELETE", f"/api/v1/collaboration-grants/{grant_id}",
+                             headers=owner_headers, json={"reason": "End message access"})
+    assert revoked.status_code == 200, revoked.text
+    denied = client.get(history_url, headers=agent_headers)
+    assert denied.status_code == 403, denied.text
+
+    with main_module.conn() as c:
+        rows = c.execute("""SELECT author_type,author_member_id,author_agent_id,
+            agent_owner_member_id,collaboration_grant_id FROM agent_collaboration_messages
+            WHERE task_id=? ORDER BY created_at,id""", (task_id,)).fetchall()
+        audit = c.execute("""SELECT COUNT(*) AS n FROM events WHERE task_id=?
+            AND event_type='agent.collaboration_message.created'""", (task_id,)).fetchone()
+    assert len(rows) == 2
+    assert audit["n"] == 2
+    assert rows[0]["author_type"] == "AGENT"
+    assert rows[0]["author_member_id"] is None
+    assert rows[0]["agent_owner_member_id"] == owner_id
+    assert rows[0]["collaboration_grant_id"] == grant_id
+
+
 def test_agent_collaboration_grant_cannot_be_authorized_by_non_owner():
     _, owner_id, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
