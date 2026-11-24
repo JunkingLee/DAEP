@@ -1359,3 +1359,38 @@
 - 继续遵守既定规则：Agent 只提案，Member 决策，正式 Task / Work Package / 审批 / 验收变更必须走既有正式业务流程；Agent Owner 只能授权自己的 Agent。
 - 本阶段仍不做数据库迁移、历史数据兼容或利旧。
 - 当前验证基准 HEAD：`2839c1742db12666f6319544f0a3f40b5e8c1e40`；本交接更新提交后，以新 HEAD 和新 CI 为准。
+
+
+## 57. Task Collaboration Session 治理闭环强化（2026-11-24）
+
+### 本轮实现
+- Task 详情的 Task Collaboration 面板增加 Session 负责人操作入口：
+  - OPEN：可暂停或关闭。
+  - PAUSED：可恢复或关闭。
+  - CLOSED：不显示恢复/关闭操作；关闭前有二次确认。
+- 管理按钮仅在当前 Member ID 与 Session `responsible_member_id` 一致时显示。后端仍以现有 Session 负责人/Task Policy 责任人授权校验为准，前端隐藏按钮不作为安全边界。
+- 新增 REST 生命周期边界测试，覆盖 PAUSED/CLOSED 下的历史读取、Agent/Member 消息发送拒绝、Proposal 创建拒绝、Grant 创建拒绝、CLOSED 不可重开。
+- 新增权限负向验证：非负责人不能管理 Session；非 Agent Owner 不能决策其 Agent 的 Proposal。
+- 扩展 Playwright 浏览器 E2E：从 Task 详情实际执行暂停、恢复、关闭；验证页面状态和按钮变化；关闭后验证 Agent 历史读取成功、Agent 消息/Proposal 与 Member 新 Grant 被拒绝。
+- 保持 Session 与 Task Execution Grant 生命周期独立；关闭 Session 不撤销 Agent 的 Task Execution Grant。
+
+### 提交与 CI 验证
+- Session 控制 UI：`9559a5a1d16a00bbf87f235f8e79afb3850f0938`。
+- REST 生命周期/权限边界测试：`c6ea426b46623cde48029831115153d6fec41ea2`。
+- 浏览器生命周期测试：`93a84f7f871446c7eb014fee6f1481a7559b2bd3`。
+- 修正浏览器测试向关闭后授权检查传递 Agent ID：`dc533f2206e9d708a623b6bfd1349b80862f4771`。
+- CI run `45358239090`，HEAD `dc533f2206e9d708a623b6bfd1349b80862f4771`：整体 SUCCESS，七个 Job 全部 SUCCESS（Python 3.11/3.12/3.13、migrations/RLS、container-build、production-compose、Browser E2E）。
+- Browser E2E 实际执行 `pytest -q tests/test_agent_management_e2e.py tests/test_task_collaboration_ui_e2e.py`，结果 `3 passed in 10.10s`；Chromium 已实际安装并运行，不是跳过测试。
+- Python 三个版本、数据库/RLS、容器构建和生产 Compose 均通过。
+
+### 规则与范围
+- Session CLOSED 后保留历史记录；不允许重开，不接受新消息、Proposal 或新 CollaborationGrant。
+- PAUSED 与 CLOSED 都保留历史读取能力；PAUSED 可恢复，CLOSED 不可恢复。
+- Agent Owner 只授权自己的 Agent；Task Session 负责人负责 Session 管理；Proposal 由对应 Agent Owner 决策。
+- Session 关闭不自动撤销独立的 Task Execution Grant。
+- 本轮不修改数据库 Schema 或迁移，不涉及历史数据迁移、回填、兼容或利旧；DAEP 仍不托管 Agent Runtime。
+
+### 下一步
+- 进入 **Task Collaboration 授权与治理可观测性**：在 Task 协作空间增加 CollaborationGrant 状态/Scope/有效期/撤销信息展示，以及仅 Agent Owner 可执行的授权撤销入口；补齐撤销后 Agent 消息、Proposal、历史读取权限即时失效的 API 与浏览器回归。
+- 继续保持 Agent 提案、人类治理决策和正式 Task/Work Package/审批/验收操作分离。
+- 当前功能验证基准 HEAD：`dc533f2206e9d708a623b6bfd1349b80862f4771`；本交接更新提交后，以新 HEAD 和新 CI 为准。
