@@ -5600,8 +5600,24 @@ def test_member_notification_delivery_view_correlates_outbox_and_inbox_ack():
     assert item['delivery']['event_type'] == 'message.created'
     assert item['delivery']['attempts'] == 0
 
+    # A terminal broker failure remains visible to the owning Member without
+    # exposing operator-only replay controls or lease credentials.
     with main_module.conn() as c:
-        c.execute("UPDATE outbox SET status='SENT',sent_at=? WHERE id IN "
+        c.execute("UPDATE outbox SET status='DEAD',attempts=8,last_error=? "
+                  "WHERE event_type='message.created' AND payload LIKE ?",
+                  ('broker permanently unavailable', '%' + message_id + '%'))
+    dead = client.get('/api/v1/me/notification-delivery',
+                      headers=owner_headers, params={'status':'PENDING'})
+    assert dead.status_code == 200, dead.text
+    dead_item = next(x for x in dead.json()['items'] if x['id'] == message_id)
+    assert dead_item['delivery_status'] == 'DEAD'
+    assert dead_item['delivery']['attempts'] == 8
+    assert dead_item['delivery']['last_error'] == 'broker permanently unavailable'
+    assert 'lease_owner' not in dead_item['delivery']
+    assert 'lease_token' not in dead_item['delivery']
+
+    with main_module.conn() as c:
+        c.execute("UPDATE outbox SET status='SENT',sent_at=?,last_error=NULL WHERE id IN "
                   "(SELECT id FROM outbox WHERE payload LIKE ?)",
                   (main_module.now(), '%' + message_id + '%'))
     ack = client.post(f'/api/v1/messages/{message_id}/ack',
