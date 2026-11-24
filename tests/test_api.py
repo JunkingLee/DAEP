@@ -4931,7 +4931,7 @@ def test_collaboration_grant_expiry_materializes_and_owner_inbox_isolated_from_t
     inbox_item = next(x for x in inbox.json()["items"] if x["grant_id"] == grant_id)
     assert inbox_item["agent_name"] == "Owner Inbox Agent"
     assert inbox_item["effective_status"] == "AUTHORIZED"
-    assert inbox_item["task_title"] == "Grant visibility task"
+    assert inbox_item["task_title"] == "Implement API"
     assert client.get("/api/v1/members/me/collaboration-grants",
                       headers=observer_headers).json()["items"] == []
 
