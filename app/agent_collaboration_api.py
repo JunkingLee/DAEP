@@ -18,7 +18,7 @@ COLLABORATION_SCOPES = {
 
 def register_agent_collaboration_routes(
     app, conn, actor, event, now, begin_serialized_write,
-    lock_task, task_context, ensure_policy, database_url,
+    lock_task, task_context, ensure_policy, database_url, notify_member,
 ):
     router = APIRouter()
 
@@ -179,6 +179,10 @@ def register_agent_collaboration_routes(
                         {"grant_id": row["id"], "agent_id": row["agent_id"], "source": "task_grant_list"},
                         tenant_override=row["tenant_id"],
                     )
+                    notify_member(c,row["owner_member_id"],row["tenant_id"],task_id,row["project_id"],
+                        "AGENT_COLLABORATION_GRANT","Agent 协作授权已过期",
+                        f"Agent「{row['agent_name']}」在 Task「{task_id}」的协作授权已过期。若仍需协作，请由你本人重新授权。",
+                        "HIGH",f"agent-collaboration-grant:expired:{row['id']}")
                 items.append({**dict(row), "scopes": json.loads(row["scopes_json"]),
                               "resource_scope": json.loads(row["resource_scope_json"]),
                               "effective_status": effective})
@@ -266,6 +270,10 @@ def register_agent_collaboration_routes(
                  "expires_at": expires},
                 tenant_override=task["project_tenant_id"],
             )
+            notify_member(c,current["id"],task["project_tenant_id"],task_id,task["project_id"],
+                "AGENT_COLLABORATION_GRANT","Agent 协作授权已创建",
+                f"你已为 Agent「{agent['name']}」创建 Task「{task.get('title') or task_id}」的协作授权，等待 Agent 接受。",
+                "NORMAL",f"agent-collaboration-grant:authorized:{grant_id}")
             return {
                 "id": grant_id, "task_id": task_id, "session_id": session["id"],
                 "agent_id": agent_id, "agent_name": agent["name"],
@@ -320,6 +328,10 @@ def register_agent_collaboration_routes(
                  "agent_id": row["agent_id"], "reason": reason or "Owner revoked collaboration grant"},
                 tenant_override=row["tenant_id"],
             )
+            notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                "AGENT_COLLABORATION_GRANT","Agent 协作授权已撤销",
+                f"你已撤销 Agent「{row['agent_id']}」的 Task「{row['task_id']}」协作授权。",
+                "NORMAL",f"agent-collaboration-grant:revoked:{grant_id}")
             return {"id": grant_id, "status": "REVOKED", "revoked_at": stamp,
                     "revoked_by_member_id": current["id"]}
 
@@ -370,6 +382,10 @@ def register_agent_collaboration_routes(
                     {"grant_id": grant_id, "agent_id": row["agent_id"], "source": "renewal_attempt"},
                     tenant_override=row["tenant_id"],
                 )
+                notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                    "AGENT_COLLABORATION_GRANT","Agent 协作授权已过期",
+                    f"Agent「{row['agent_id']}」在 Task「{row['task_id']}」的协作授权已过期，不能续期原记录；请重新授权。",
+                    "HIGH",f"agent-collaboration-grant:expired:{grant_id}")
                 return {"id": grant_id, "status": "EXPIRED", "renewal_required": True,
                         "message": "Expired grants cannot be renewed; create a new authorization"}
             if row["session_status"] != "OPEN" or row["project_status"] != "ACTIVE" or row["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
@@ -386,6 +402,10 @@ def register_agent_collaboration_routes(
                  "expires_in_days": days},
                 tenant_override=row["tenant_id"],
             )
+            notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                "AGENT_COLLABORATION_GRANT","Agent 协作授权已续期",
+                f"Agent「{row['agent_id']}」的 Task「{row['task_id']}」协作授权已由你续期至 {expires}。",
+                "NORMAL",f"agent-collaboration-grant:renewed:{grant_id}:{expires}")
             return {"id": grant_id, "status": row["status"], "previous_expires_at": row["expires_at"],
                     "expires_at": expires, "renewed_at": stamp}
 
@@ -530,6 +550,10 @@ def register_agent_collaboration_routes(
                         {"grant_id": row["grant_id"], "agent_id": row["agent_id"], "source": "owner_inbox"},
                         tenant_override=current.get("tenant_id", "tenant-default"),
                     )
+                    notify_member(c,current["id"],current.get("tenant_id","tenant-default"),row["task_id"],row["project_id"],
+                        "AGENT_COLLABORATION_GRANT","Agent 协作授权已过期",
+                        f"Agent「{row['agent_name']}」在 Task「{row['task_title'] or row['task_id']}」的协作授权已过期。若仍需协作，请由你本人重新授权。",
+                        "HIGH",f"agent-collaboration-grant:expired:{row['grant_id']}")
                 item = dict(row)
                 item["scopes"] = json.loads(item.pop("scopes_json"))
                 item["resource_scope"] = json.loads(item.pop("resource_scope_json"))
@@ -585,6 +609,10 @@ def register_agent_collaboration_routes(
                  "agent_id": current["agent_id"], "owner_member_id": row["owner_member_id"]},
                 tenant_override=row["tenant_id"],
             )
+            notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                "AGENT_COLLABORATION_GRANT","Agent 已接受协作授权",
+                f"你的 Agent「{current['agent_id']}」已接受 Task「{row['task_id']}」的协作授权。",
+                "NORMAL",f"agent-collaboration-grant:accepted:{grant_id}")
             return {"id": grant_id, "status": "ACCEPTED", "accepted_at": stamp}
 
 
