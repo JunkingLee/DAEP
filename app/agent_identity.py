@@ -82,6 +82,8 @@ def ensure_agent_schema(conn):
         c.execute("CREATE INDEX IF NOT EXISTS idx_agent_task_assignments_agent ON agent_task_assignments(agent_id,status,created_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_agent_task_assignments_task ON agent_task_assignments(task_id,status)")
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_assignments_active ON agent_task_assignments(task_id,agent_id) WHERE status IN ('ASSIGNED','ACCEPTED')")
+    from app.agent_collaboration_schema import ensure_agent_collaboration_schema
+    ensure_agent_collaboration_schema(conn)
 
 def _token():
     return 'daep_at_' + secrets.token_urlsafe(36)
