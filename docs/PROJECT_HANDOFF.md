@@ -634,3 +634,48 @@
 - 修复提交：`484dc155f2203502e4aa7b2bdf377554e27e48e5`、`2424ca2bf6cdf519b591d72c842a3be0b3a2db69`、`2eb5699d0694d648ad70833ee349411f01ac0ee7`（最后一项修正测试 DDL 中误写的转义换行）。
 - 最新代码提交 `2eb5699d0694d648ad70833ee349411f01ac0ee7` 对应 CI run `45321394737` 已创建，当前查询状态为 pending；不得提前宣称通过。
 - 旧 run 的 browser-e2e 因新提交触发后续运行而 cancelled，不作为结果。继续以最新 run 为准。
+
+## 25. AgentTaskExecutionPolicy 与多 Agent Grant 事务服务（2026-11-24）
+
+### 本轮恢复核验
+- 分支：release/1.0.0-rc9
+- 本轮开始 HEAD：156df1ee5a49a7ee88b96b22a0e5a56204c66456
+- 上一阶段数据库 Schema CI run 45321445919 已完成且所有 jobs 成功：Python 3.11/3.12/3.13、PostgreSQL migrations（包含 bootstrap、schema upgrade、migration SQL、RLS policy 和受限角色租户隔离步骤）、production-compose、browser-e2e、container-build。
+- 较早 run 45321394737 已取消，不作为最终验证依据。
+
+### 本轮代码实现
+- 修改 app/main.py：
+  - 新增 GET /api/v1/tasks/{task_id}/agent-execution-policy，读取/初始化任务的默认 TEAM 策略。
+  - 新增 PUT /api/v1/tasks/{task_id}/agent-execution-policy，仅当前唯一人类任务负责人可设置 allow_multiple_agents 和 max_agents。
+  - 默认策略为 collaboration_mode=TEAM、allow_multiple_agents=false、max_agents=NULL。
+  - allow_multiple_agents=false 时有效上限为 1；此时 max_agents 仅允许 NULL 或 1。
+  - allow_multiple_agents=true 且 max_agents=NULL 时不设置固定 Agent 数量上限。
+  - 更新策略前检查现有有效 Grant 数量，禁止把策略改成低于当前活跃授权数量的配置。
+  - Grant 创建现在在同一写事务中锁定 Task 行（PostgreSQL SELECT ... FOR UPDATE；SQLite BEGIN IMMEDIATE），再锁定/读取 Policy，清理过期 Grant，校验是否允许多 Agent、max_agents 数量上限、同一 Agent 重复授权。
+  - Policy/Grant 都验证 Task 当前只有一个人类 assignee、调用者就是该 assignee、Agent 与调用者同 Owner、Tenant/Project/Task 关系有效；不依赖 Presence 或 agent_project_bindings。
+  - Grant 审计事件增加 policy_id、policy_version 和授权后的活跃 Agent 数。
+- 修改 tests/test_api.py：
+  - 新增 test_agent_task_execution_policy_controls_team_grant_cardinality。
+  - 覆盖默认单 Agent 策略、打开多 Agent、max_agents=2 上限、max_agents=NULL 无固定上限、同一 Agent 重复授权拒绝、非任务负责人不可修改策略、无效策略参数拒绝，以及策略版本递增和 Grant 数量。
+- 保留既有 Grant 接受、撤销、Agent Inbox 和执行 scope API；本轮不改 Agent Runtime，也不开放 Session/CollaborationGrant/MCP 协作消息 API。
+
+### 本轮提交
+- d6056094c04a24ebca69a9a4fccb85d80b5592be — feat: enforce task agent execution policies
+- da59b59d724d56c2c239be27555569aca0356e56 — test: cover task agent execution policy limits
+- 本节文档更新前 HEAD：da59b59d724d56c2c239be27555569aca0356e56。
+
+### 验证状态与限制
+- 本轮未在当前执行环境直接运行 pytest。
+- 最新代码/测试提交对应 CI run 45330959551，查询时状态为 pending；不能提前宣称 Python 测试、PostgreSQL 或浏览器验证通过。
+- 需要重点观察新测试与既有单 Agent Grant 测试是否兼容；PostgreSQL 重点检查 Task/Policy 行锁和 RLS 下策略读写。
+- 当前 Policy 初始化为惰性初始化：首次读取策略或授权 Agent 时创建默认策略行；不会为历史任务批量回填。
+- SQLite 使用 BEGIN IMMEDIATE 串行化 Grant 写入；PostgreSQL 使用 Task 行锁作为同一 Task Policy/Grant 写入的串行化点。任务分配变更的其他写入口是否也统一锁 Task 行，仍需后续审查。
+- 当前不做历史数据迁移、旧结构兼容、数据回填或利旧。
+
+### 下一步唯一任务
+检查 CI run 45330959551（或其后续更新 run）：
+1. 检查 Python 3.11/3.12/3.13，尤其新 Policy/多 Agent Grant 测试和既有 Grant 生命周期测试。
+2. 检查 PostgreSQL migration/RLS job 与 browser-e2e。
+3. 若失败，定位并修复实际问题，更新本文件并提交。
+4. 若通过，继续审查任务重新分配、Task 终态、Agent 禁用/Token 撤销与 Policy/Grant 生命周期的一致性；确保所有任务责任人变化路径与 Grant 创建共享同一 Task 锁定约定。
+
