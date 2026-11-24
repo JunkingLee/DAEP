@@ -355,3 +355,39 @@
   - Grant scope 当前仅在创建时校验和存储；统一 AgentTaskGrant 执行 guard 尚未落地，后续 Stage B 必须在每次执行 API/MCP 调用中重新校验 Tenant/Project/Task/Agent/owner/assignee/status/expiry/scope。
   - 数据库仍缺少复合 tenant/project/task/agent/owner 关系约束，当前 API 通过事务内查询做组合校验；后续 migration 可强化数据库级约束。
 - 下一步唯一任务：实现 Agent 侧 Grant inbox 与 accept API（`GET /api/v1/agents/me/grants`、`POST /api/v1/agent-grants/{grant_id}/accept`），只允许 Grant 对应 Agent 接受；接受时重验 Agent ACTIVE、owner Member ACTIVE、Project ACTIVE、Tenant/Task 一致、任务仍由 grant.human_assignee_member_id 唯一负责、Grant 未过期且状态 AUTHORIZED。成功后改为 ACCEPTED、记录 accepted_at/审计；幂等处理已接受 Grant。此步骤仍不切换旧执行 API，待 accept/inbox 完成后再实施统一执行 guard 和 MCP/API 切换。
+
+## 18. AgentTaskGrant Agent inbox / accept API（2026-11-24）
+
+- 承接第 17 节唯一任务，完成 Agent 侧 Grant inbox 和 accept。新授权流程现已具备 Member create/list/revoke + Agent inbox/accept 的闭环；仍未切换旧 Agent 任务执行 API/MCP。
+- 新 API：
+  - `GET /api/v1/agents/me/grants`：仅 Agent Token 可访问，只返回当前 Agent 自己的有效 AUTHORIZED/ACCEPTED Grant；不要求 `agent_project_bindings`。
+  - `POST /api/v1/agent-grants/{grant_id}/accept`：仅目标 Agent Token 可接受对应 Grant；其他 Agent 查询返回 404。
+- Inbox 仅返回最小任务上下文（task title/description/status/progress、requirement title、project name）、grant_id、scope、status 和期限；过滤过期 Grant、禁用 Agent、禁用 owner、非 ACTIVE Project、非可执行 Task、租户不一致、任务当前 assignee 已变化或不唯一的 Grant。
+- Accept 的事务内重新校验：
+  1. Grant 属于当前 Agent 与当前 Tenant。
+  2. Grant 状态为 AUTHORIZED 或 ACCEPTED，且 expires_at 尚未到期。
+  3. Agent 为 ACTIVE，且当前 agents.owner_member_id 仍等于 Grant.owner_member_id。
+  4. Owner Member 账号 ACTIVE 且 Tenant 一致。
+  5. Agent / Project / Grant Tenant 一致，Project ACTIVE。
+  6. Task 未完成/取消/关闭/归档。
+  7. assignments 当前恰好只有一个 Member，且正是 Grant.human_assignee_member_id；owner_member_id 也必须等于该人类责任人。
+  8. 仅在全部条件通过后 AUTHORIZED → ACCEPTED，写 accepted_at / updated_at 和 `agent.task_grant.accepted` 审计事件。已 ACCEPTED 的有效 Grant 幂等返回，不重复写接受事件。
+- 测试新增：
+  - Agent 无 Project Binding 仍可通过新 Grant inbox 收到任务。
+  - 只有目标 Agent 能接受 Grant；Member Token 不能访问 Agent inbox。
+  - 接受后 inbox 显示 ACCEPTED 和准确 scope；重复 accept 幂等。
+  - 任务责任人改派后拒绝接受；过期 Grant 不显示在 inbox 且不能接受。
+  - 验证 accepted 审计事件记录 Agent 身份，不冒充 owner Member。
+- 测试夹具修正：首次 CI 暴露过期测试数据违反 `expires_at > created_at` 数据库 CHECK，而非业务 API 缺陷。测试现将 created_at/expires_at 一起设置为过去且保持先后关系；完整重跑通过。
+- 关键提交：
+  - `9b60a806ab8bd51182dd1891ed2f53bf90d386fd` — Agent Grant inbox / accept API。
+  - `70c8ac0628eea1b7542d589f25d5966a9c5be955` — inbox/accept 行为测试。
+  - `b03f261c42fbe8cad018c8b0f9f939f742a6167b` — 修正过期测试数据。
+- 最新验证：run `45308770379`，对应代码 HEAD `b03f261c42fbe8cad018c8b0f9f939f742a6167b`，全部 jobs success：Python 3.11/3.12/3.13、PostgreSQL migrations/RLS smoke、production-compose、container-build、browser-e2e。最终完整 CI 通过；较早失败 run `45308600734` 已由后续修复 run 覆盖，不作为最终结果。
+- 当前分支：`release/1.0.0-rc9`。
+- 当前 AgentTaskGrant 功能状态：
+  - 已有 schema/RLS、Member create/list/revoke、Agent inbox/accept、Agent/owner disable 撤销联动。
+  - 尚未有统一 Grant execution guard；旧 `require_task_access`、Agent task progress/artifact/blocked 等写接口、MCP 仍使用旧 assignment + project binding 规则。
+  - 新 Grant ACCEPTED 目前只是授权生命周期状态，不意味着已经允许旧执行 API；执行入口切换前必须完成统一 guard。
+  - Scope 在 Member 创建时校验并存储；Agent inbox 暴露 scope；执行动作级校验尚未实现。
+- 下一步唯一任务：Stage B 第一项——实现统一 `require_agent_task_grant(c, actor, task_id, action)` 执行授权 guard，并先对现有 Agent task read/progress/blocked/artifact 入口进行逐条路由盘点。guard 必须验证 Agent Token 身份、Grant ACCEPTED/未过期、Agent ACTIVE/owner 仍匹配、Tenant/Project/Task 关系、Project ACTIVE、当前唯一 Human Assignee 与 Grant 快照一致、scope 包含精确 action；Agent 分支不得调用 `require_project_access` 或依赖 `agent_project_bindings`。先迁移最小只读 task detail + progress/blocked 写入口并补全权限矩阵测试，再迁移 artifact/MCP；禁止触及审批、验收、治理、任务重新分配接口。
