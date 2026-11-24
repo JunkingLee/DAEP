@@ -1035,10 +1035,40 @@ def test_rc17_stalled_work_package_requires_manager_reassignment_and_notifies_ne
     assert scanned.json()['items'][0]['child_task_id']==child
     repeated=client.post(f'/api/v1/projects/{pid}/work-packages/scan-stalled',headers=ADMIN,json={'stale_after_seconds':300})
     assert repeated.status_code==200 and repeated.json()['marked_count']==0
+    # Add identity-scoped grants owned by the old assignee. Reassignment must
+    # revoke the old owner's grant, and only the new assignee may take over
+    # the execution policy and authorize their own Agent afterward.
+    old_headers={'Authorization':'Bearer '+old_member['token']}
+    new_headers={'Authorization':'Bearer '+new_member['token']}
+    old_identity=client.post('/api/v1/agents',headers=old_headers,json={'name':'Old Assignee Private Agent'})
+    assert old_identity.status_code==200,old_identity.text
+    old_grant=client.post(f'/api/v1/tasks/{child}/agent-grants',headers=old_headers,
+        json={'agent_id':old_identity.json()['agent']['id']})
+    assert old_grant.status_code==200,old_grant.text
+
     reassigned=client.post(f'/api/v1/work-packages/{package_id}/reassign',headers=ADMIN,json={
         'assignee_member_id':new_member['id'],'agent_name':'replacement-agent','reason':'Original Agent has been inactive'})
     assert reassigned.status_code==200 and reassigned.json()['needs_attention'] is False
     assert reassigned.json()['revoked_agent_assignment_count']==1
+    with main_module.conn() as c:
+        old_identity_grant=c.execute('SELECT status,revoke_reason,revoked_by_member_id FROM agent_task_grants WHERE id=?',
+            (old_grant.json()['id'],)).fetchone()
+    assert old_identity_grant['status']=='REVOKED'
+    assert old_identity_grant['revoke_reason']=='Task assignee changed'
+    assert old_identity_grant['revoked_by_member_id'] is None
+
+    new_identity=client.post('/api/v1/agents',headers=new_headers,json={'name':'New Assignee Private Agent'})
+    assert new_identity.status_code==200,new_identity.text
+    takeover=client.put(f'/api/v1/tasks/{child}/agent-execution-policy',headers=new_headers,
+        json={'allow_multiple_agents':False,'max_agents':None})
+    assert takeover.status_code==200,takeover.text
+    assert takeover.json()['responsible_member_id']==new_member['id']
+    new_grant=client.post(f'/api/v1/tasks/{child}/agent-grants',headers=new_headers,
+        json={'agent_id':new_identity.json()['agent']['id']})
+    assert new_grant.status_code==200,new_grant.text
+    stale_owner=client.post(f'/api/v1/tasks/{child}/agent-grants',headers=old_headers,
+        json={'agent_id':old_identity.json()['agent']['id']})
+    assert stale_owner.status_code==403,stale_owner.text
     assert client.post(f'/api/v1/tasks/{child}/progress',headers=identity_agent_h,json={
         'progress':50,'note':'Old Agent after human takeover'}).status_code==403
     db=sqlite3.connect(os.environ['DAEP_DB_PATH'])
