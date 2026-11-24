@@ -242,3 +242,36 @@
 - 领域模型文档提交：`cfcc8e7fe6dea724df9dcdc6710bf8831ece233b` — `docs: define user-owned Agent domain model`。
 - 下一步唯一任务：依据领域模型文档，完成“现有表/接口 → 目标实体/授权规则”的逐项迁移设计，明确 AgentTaskGrant 字段、Agent owner 主动授权流程、任务责任人约束、ProjectAgentPresence 与 agents 的关联方式，以及旧 `agent_project_bindings` / `agent_task_assignments` / `project_agents` 数据的兼容迁移策略。该迁移设计评审完成前，不改动生产 schema 或删除现有功能。
 
+## 15. AgentTaskGrant 数据库/API 迁移设计（2026-11-24）
+
+- 承接第 14 节唯一任务：完成现有 Agent 表/API 到用户主动授权逐任务模型的迁移设计。本轮只提交设计文档，不修改业务代码、数据库 schema 或运行时行为。
+- 新增设计文档：`docs/AGENT_TASK_GRANT_MIGRATION_DESIGN.md`。
+- 审计确认的关键代码事实：
+  1. 当前 Manager/Owner 创建 Agent assignment 的接口是 `POST /api/v1/tasks/{task_id}/agent-assignments`；要求项目写权限/Manager 角色，选择 agent_id，并强制要求该 Agent 已有 `agent_project_bindings`。这与目标“Human Assignee 主动授权自己的 Agent”不符。
+  2. 当前 Agent inbox `GET /api/v1/agents/me/tasks` 同时 JOIN `agent_task_assignments` 和 active `agent_project_bindings`；Agent accept/heartbeat 也检查 binding。
+  3. 当前 Agent 的 `require_task_access` 先走 `require_project_access`（Agent 必须有项目 binding），再校验 ACCEPTED assignment。这需要改成独立 AgentTaskGrant guard。
+  4. 当前 `assignments` 表主键是 `(task_id, member_id)`，明确允许同一任务关联多个 Member。因此第一版只有任务恰好一个有效人类 assignee 时才允许创建 Grant；多人协作任务需先定义 primary/responsible member，不能任意挑选 assignee。
+  5. `project_agents` 是项目成员的能力/心跳目录，唯一键为 project_id/member_id/agent_name，尚未关联 agents.id；回填只能在 project/member/规范化名称精确唯一匹配时进行，歧义记录不得猜测关联。
+- 目标 AgentTaskGrant 设计：
+  - 新建独立 `agent_task_grants`，不直接重命名旧表。
+  - 关键字段：tenant_id、project_id、task_id、agent_id、owner_member_id、human_assignee_member_id、authorized_by_member_id、scope_json、status、expires_at、accepted_at、revoked_at、completed_at、last_activity_at、audit metadata。
+  - 状态：AUTHORIZED → ACCEPTED → COMPLETED，或进入 REVOKED/EXPIRED 终态；只有 ACCEPTED 且未过期的 Grant 才能执行工具。
+  - 第一版同一 Task 同时最多一个有效 Grant；固定动作白名单包括 task.read、task.progress.report、task.blocked.report、task.artifact.submit；禁止审批、项目治理、任务重新分配和其他任务读取。
+  - 创建必须由当前唯一 Human Assignee 以 Member 身份发起，且 Agent.owner_member_id=当前 Member；不需要项目 Manager 绑定 Agent，也不依赖 project binding。
+  - 所有 Agent 任务 API/MCP 工具统一经 Grant 校验器检查 Agent、Tenant、Project、Task、Human Assignee、scope 和 expiry。
+- 旧数据兼容策略：
+  - `agents`、`agent_tokens` 保留。
+  - `agent_project_bindings` 进入兼容期，保留历史，不再作为 Grant 前置或执行权限依据；未来如保留项目发现能力，改由 Agent owner 发布 ProjectAgentPresence。
+  - `agent_task_assignments` 不自动转为新 Grant，因为旧记录不能证明 Agent owner 对具体任务主动授权；新表上线切换时将旧活跃 assignment 有审计地撤销，旧行保留只读历史。
+  - `project_agents` 增加 nullable agent_id，唯一精确匹配时回填；歧义和不匹配行保持 legacy/unmatched。
+  - `task_delegations` 保持 Member→Member 人对人委派，不与 AgentTaskGrant 混用。
+- 分阶段顺序：A 新增 schema/API 与测试；B 切换 Agent 执行 API/MCP 到 Grant；C 前端任务详情“使用我的 Agent”和个人委派视图；D 旧 binding/assignment 停止写入并在兼容期后再评估删除。
+- 测试要求已列入设计文档：所有权/assignee 拒绝矩阵、跨任务/跨项目隔离、scope/expiry/revoke、Agent/owner/Task/Project 生命周期、并发唯一性、PostgreSQL RLS、真实浏览器 MCP E2E。
+- 代码提交：
+  - `3072a578de27b7f204ca8997855f3238a85abe2a` — `docs: design Agent task grant migration`。
+  - `1794b347b62e58b572d8e8530dd48366b86f7ba7` — `docs: refine Agent grant migration findings`。
+- 领域模型文档：`docs/DOMAIN_MODEL_AGENT_OWNERSHIP.md`；迁移设计：`docs/AGENT_TASK_GRANT_MIGRATION_DESIGN.md`。
+- CI：领域模型基线 HEAD `4646b585ae40470ac06475f543b2d1eb40c2e0da` 的 run `45148243633` 已全部成功（Python 3.11/3.12/3.13、PostgreSQL migrations、production-compose、container-build、browser-e2e）。本节后续两个文档提交的 CI 仍需以最新 HEAD 对应 run 状态核实，不可引用旧 run 作为最新提交的验证。
+- 当前完成状态：领域模型和迁移设计均已文档化；尚未创建 `agent_task_grants` 表、尚未修改 API/MCP/UI，现有 binding/assignment 运行行为仍未改变。
+- 下一步唯一任务：进入阶段 A，先审计数据库迁移体系与 assignments/task/project/agent 的复合一致性约束，设计并实现仅新增 `agent_task_grants` 表的迁移（含 PostgreSQL RLS、唯一有效 Grant 约束、索引和 SQLite schema parity），并补充 migration/RLS smoke/API schema 测试；本阶段不切换旧执行 API。
+
