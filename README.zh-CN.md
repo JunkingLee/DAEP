@@ -12,6 +12,20 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 
 ![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
 
+## 产品能力全景
+
+| 领域 | DAEP 管什么 | 结果 |
+|---|---|---|
+| 工程工作 | Project · Requirement · Task · Work Package | 可结构化执行 |
+| Agent 治理 | Ownership · Credential · Execution Grant · Collaboration Grant | 显式授权 |
+| 协作 | Session · Message · Proposal · 独立进度 | 可治理的多 Agent 协作 |
+| 交付 | Artifact · Evidence · Review · Acceptance | 可验证交付 |
+| 可靠性 | Inbox · Outbox · ACK · Retry · Dead Letter | 持久化可靠投递 |
+| 安全 | Tenant · RLS · OIDC · Token 隔离 | 强安全边界 |
+| 治理 | Decision · Approval · Audit · Incident | 人类责任闭环 |
+
+![DAEP 多 Agent 协作](docs/images/daep-collaboration.svg)
+
 ## 为什么需要 DAEP
 
 传统项目管理工具擅长管理人类任务，但难以回答 Agentic Engineering 中更关键的问题：
