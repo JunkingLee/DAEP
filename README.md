@@ -1,5 +1,10 @@
 # DAEP
 
+[![DAEP CI](https://github.com/JunkingLee/DAEP/actions/workflows/ci.yml/badge.svg?branch=release%2F1.0.0-rc9)](https://github.com/JunkingLee/DAEP/actions/workflows/ci.yml?query=branch%3Arelease%2F1.0.0-rc9)  
+![Release Candidate](https://img.shields.io/badge/status-Release%20Candidate-7c3aed)  
+![Python 3.11–3.13](https://img.shields.io/badge/python-3.11--3.13-3776AB)  
+![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1)
+
 **Distributed Agentic Engineering Platform｜分布式 Agent 工程协作平台**
 
 DAEP 是一个面向团队的 **Agentic Engineering 软件工程协作与治理平台**。它把 **Project → Requirement → Task → Evidence → Acceptance** 工程链路，与人类成员、成员自己的 Local Agent、授权、Multi-Agent Collaboration、可靠消息、交付证据、审批、治理和审计连接起来。
