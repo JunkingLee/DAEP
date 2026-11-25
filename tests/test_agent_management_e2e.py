@@ -164,6 +164,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             agent_card = page.locator("#agentGrid .agent-card").filter(has_text="Browser E2E Agent")
             expect(agent_card).to_be_visible()
             agent_id = agent_card.locator(".agent-id").inner_text()
+            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"${agent_id}\"]")
 
             # Detail and update.
             agent_card.get_by_role("button", name="管理").click()
@@ -173,8 +174,8 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             page.locator("#editAgentStatus").select_option("ACTIVE")
             page.get_by_role("button", name="保存").click()
             expect(page.get_by_test_id("toast")).to_contain_text("Agent 已更新")
-            agent_card = page.locator("#agentGrid .agent-card").filter(has_text="Browser E2E Agent Updated")
-            expect(agent_card).to_be_visible()
+            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"${agent_id}\"]")
+            expect(agent_card).to_contain_text("Browser E2E Agent Updated")
 
             # Rotate the token; the replacement must differ from the initial
             # one and is displayed only in the rotation response modal.
