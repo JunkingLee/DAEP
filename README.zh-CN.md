@@ -221,6 +221,7 @@ DAEP 当前处于 **Release Candidate / 持续开发阶段**。核心项目管�
 - [Outbox Worker](docs/OUTBOX_WORKER.md)
 - [生产运维与恢复](docs/RC21_PRODUCTION_OPERATIONS.md)
 - [安全与已知缺口](docs/SECURITY_AND_GAPS.md)
+- [RC9 权限矩阵](docs/RC9_AUTHORIZATION_MATRIX.md)
 - [MCP Adapter](daep_mcp/README.md)
 
 ## License
