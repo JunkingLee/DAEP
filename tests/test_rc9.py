@@ -37,3 +37,11 @@ def test_rc9_readiness_and_github_webhook_signature():
     assert client.post('/api/v1/integrations/git/webhook', headers=bad, content=raw).status_code == 401
 
     os.environ.pop('DAEP_GITHUB_WEBHOOK_SECRET', None)
+
+
+def test_platform_admin_identity_is_scoped_to_platform_tenant():
+    from app.main import is_admin
+
+    assert is_admin({'role': 'admin', 'tenant_id': 'tenant-default'}) is True
+    assert is_admin({'role': 'admin', 'tenant_id': 'tenant-customer-a'}) is False
+    assert is_admin({'role': 'manager', 'tenant_id': 'tenant-default'}) is False
