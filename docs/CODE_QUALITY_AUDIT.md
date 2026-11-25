@@ -11,7 +11,7 @@ Current source snapshot:
 - `app/main.py`: 4,347 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
-- Latest recorded RC9 CI run `45567826933`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
+- Latest recorded RC9 CI run `45571799272`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
 A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
@@ -75,6 +75,8 @@ The first focused authorization pass found inconsistent platform-admin checks in
 Corrected on `release/1.0.0-rc9`:
 - All four checks now require the platform role **and** `tenant_id='tenant-default'`, consistent with `is_admin()`.
 - Added a regression test for platform-admin identity scoping.
+- Proposal withdrawal now validates the originating accepted Collaboration Grant, OPEN Session and active Task, so revoked/expired Agents cannot mutate pending proposals.
+- Browser E2E now covers the revoked-grant withdrawal denial.
 - This is a targeted fix, not a declaration that the full authorization matrix is complete. The remaining pass must still cover route-level negative tests for cross-tenant access, project roles, Agent grants, expired/revoked grants, and Worker identity.
 
 ## Next Quality Work
