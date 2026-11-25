@@ -13,6 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run report-only structural quality scan
+        run: python scripts/code_quality_scan.py
+
   test:
     runs-on: ubuntu-latest
     strategy:
