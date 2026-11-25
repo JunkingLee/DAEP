@@ -2071,7 +2071,7 @@ def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stag
     cfg=project_gate_config(c,pid,gate_key)
     if not cfg or not cfg.get('enabled',True) or cfg.get('applies_to','DONE')!=target_stage: return
     if cfg.get('required_roles'):
-        platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
+        platform=c.execute('SELECT role,tenant_id FROM members WHERE id=?',(actor_member_id,)).fetchone()
         if not platform or not (platform['role']=='admin' and platform['tenant_id']=='tenant-default'):
             member_role=project_role(c,pid,{'id':actor_member_id})
             function_row=c.execute('SELECT work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,actor_member_id)).fetchone()
@@ -2092,7 +2092,7 @@ def enforce_workflow_exit(c,pid,current_stage,actor_member_id):
     if not stage: raise HTTPException(409,detail={'message':'Current task status is not part of the configured workflow','current_stage':current_stage})
     approval_role=stage.get('approval_role','none')
     if approval_role!='none':
-        platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
+        platform=c.execute('SELECT role,tenant_id FROM members WHERE id=?',(actor_member_id,)).fetchone()
         if not platform or not (platform['role']=='admin' and platform['tenant_id']=='tenant-default'):
             role=project_role(c,pid,{'id':actor_member_id})
             if role!=approval_role: raise HTTPException(403,f'Leaving workflow stage {current_stage} requires {approval_role} role')
