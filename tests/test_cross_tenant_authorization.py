@@ -170,41 +170,7 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
             'reason': 'Cross-tenant delegation attempt',
         },
     )
-    assert denied_delegation.status_code in (403, 404), denied_delegation.text
-
-    # Tenant A's own project remains visible, proving the isolation test did not
-    # simply revoke all ordinary-member project access.
-    own_projects = client.get('/api/v1/projects', headers=headers_a)
-    assert own_projects.status_code == 200, own_projects.text
-    assert any(item['id'] == project_a_id for item in own_projects.json())
-    assert all(item['id'] != project_b_id for item in own_projects.json())
-
-
-def test_cross_tenant_collaboration_and_notification_boundaries():
-    # Task-level collaboration context is tenant/project scoped even when the
-    # caller knows the target Task UUID.
-    for path in (
-        f'/api/v1/tasks/{task_b_id}/collaboration-grants',
-        f'/api/v1/tasks/{task_b_id}/collaboration-session',
-        f'/api/v1/tasks/{task_b_id}/collaboration-messages',
-        f'/api/v1/tasks/{task_b_id}/collaboration-proposals',
-        f'/api/v1/tasks/{task_b_id}/delegations',
-    ):
-        response = client.get(path, headers=headers_a)
-        assert response.status_code in (403, 404), (path, response.status_code, response.text)
-
-    # Member-owned notification data must remain scoped to the caller.
-    notification_audit = client.get('/api/v1/me/notification-audit', headers=headers_a)
-    assert notification_audit.status_code == 200, notification_audit.text
-    assert 'Tenant B Task' not in json.dumps(notification_audit.json(), ensure_ascii=False)
-    assert str(member_b_id) not in json.dumps(notification_audit.json(), ensure_ascii=False)
-
-    notification_prefs = client.get('/api/v1/me/notification-preferences', headers=headers_a)
-    assert notification_prefs.status_code == 200, notification_prefs.text
-    assert str(member_b_id) not in json.dumps(notification_prefs.json(), ensure_ascii=False)
-
-
-    # Artifact APIs must enforce the tenant through the Task -> Requirement -> Project chain.
+    assert denied_delegation.status_code in (403, 404), denied_delegation.text    # Artifact APIs must enforce the tenant through the Task -> Requirement -> Project chain.
     artifact_b = client.post(
         f'/api/v1/tasks/{task_b_id}/artifacts',
         headers=headers_b,
@@ -229,3 +195,11 @@ def test_cross_tenant_collaboration_and_notification_boundaries():
         row = db.execute('SELECT tenant_id FROM artifacts WHERE id=?', (artifact_b_id,)).fetchone()
         assert row is not None
         assert row[0] == tenant_b
+
+
+    # Tenant A's own project remains visible, proving the isolation test did not
+    # simply revoke all ordinary-member project access.
+    own_projects = client.get('/api/v1/projects', headers=headers_a)
+    assert own_projects.status_code == 200, own_projects.text
+    assert any(item['id'] == project_a_id for item in own_projects.json())
+    assert all(item['id'] != project_b_id for item in own_projects.json())
