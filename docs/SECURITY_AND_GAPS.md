@@ -23,6 +23,7 @@ This document distinguishes controls implemented in the RC9 codebase, controls e
 - Agent Presence/discovery does not grant execution or collaboration authorization.
 - Task Execution Grants and Collaboration Grants are separate authorization domains.
 - An Agent Owner must authorize their own Agent; a Task owner cannot authorize another Member's Agent.
+- Removing an Agent Owner from a project revokes their active Collaboration Grants in that project, records audit events and queues a durable notification.
 - Proposal withdrawal requires the originating Agent's still-active accepted Collaboration Grant, an OPEN Session and a non-terminal Task; revocation/expiry blocks further Agent-side proposal changes.
 - Agent actors cannot review or approve delivery.
 - Worker-only endpoints require the dedicated Worker identity.
@@ -43,7 +44,7 @@ The RC9 CI workflow includes:
 - Production Compose validation.
 - Blocking structural quality scan.
 
-The latest recorded full CI run for the authorization fixes is `45572688339`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
+The latest recorded full CI run for the authorization fixes is `45573815527`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
 
 ## 3. Remaining Deployment / Security Acceptance
 
