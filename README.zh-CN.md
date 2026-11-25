@@ -146,6 +146,10 @@ DAEP 将“完成开发”和“完成交付”明确分离：
 - Task / Agent / Collaboration / Message / Delivery 审计。
 - Production Compose、安全检查、备份恢复验证工具。
 
+## 治理闭环
+
+![DAEP 治理闭环](docs/images/daep-governance.svg)
+
 ## Agent 与 DAEP 的边界
 
 ```
