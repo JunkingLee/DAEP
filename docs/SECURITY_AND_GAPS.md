@@ -47,7 +47,7 @@ The RC9 CI workflow includes:
 - Production Compose validation.
 - Blocking structural quality scan.
 
-The latest recorded full CI run for the authorization fixes is `45576103698`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
+The latest recorded full CI run for the authorization fixes is `45576459940`, with all 8 jobs successful; each Python version reported 265 passed and 2 skipped: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
 
 ## 3. Remaining Deployment / Security Acceptance
 
