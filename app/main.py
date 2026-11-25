@@ -4166,103 +4166,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-@app.get('/',include_in_schema=False)
-def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
-def _oidc_discovery():
-    issuer=os.getenv('DAEP_OIDC_ISSUER','').rstrip('/')
-    if not issuer: raise HTTPException(503,'OIDC is not configured')
-    try:
-        with urllib.request.urlopen(issuer+'/.well-known/openid-configuration',timeout=10) as r: return json.loads(r.read())
-    except Exception as exc: raise HTTPException(503,f'OIDC discovery failed: {exc}')
-
-def _oidc_state_record():
-    """Create one-time server-side OIDC state, nonce and PKCE verifier."""
-    state=secrets.token_urlsafe(32)
-    nonce=secrets.token_urlsafe(32)
-    verifier=secrets.token_urlsafe(64)
-    expires=datetime.fromtimestamp(time.time()+600,timezone.utc).isoformat()
-    with conn() as c:
-        c.execute('DELETE FROM oidc_states WHERE expires_at<=?',(now(),))
-        c.execute('INSERT INTO oidc_states(state_hash,nonce,code_verifier,expires_at,created_at) VALUES(?,?,?,?,?)',
-                  (hashlib.sha256(state.encode()).hexdigest(),nonce,verifier,expires,now()))
-    return state,nonce,verifier
-
-def _verify_oidc_browser_state(state,cookie_state):
-    if not cookie_state or not secrets.compare_digest(hashlib.sha256(cookie_state.encode()).digest(),hashlib.sha256(state.encode()).digest()):
-        raise HTTPException(400,'OIDC browser state cookie mismatch')
-
-def _consume_oidc_state(state):
-    if not state or len(state)>512: raise HTTPException(400,'Invalid OIDC state')
-    digest=hashlib.sha256(state.encode()).hexdigest()
-    with conn() as c:
-        row=c.execute('SELECT nonce,code_verifier,expires_at FROM oidc_states WHERE state_hash=?',(digest,)).fetchone()
-        if not row: raise HTTPException(400,'Invalid or already used OIDC state')
-        c.execute('DELETE FROM oidc_states WHERE state_hash=?',(digest,))
-    if row['expires_at'] <= now(): raise HTTPException(400,'Expired OIDC state')
-    return row['nonce'],row['code_verifier']
-
-@app.get('/api/v1/auth/oidc/login')
-def oidc_login():
-    if not (os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI')): raise HTTPException(503,'OIDC is not configured')
-    d=_oidc_discovery(); state,nonce,verifier=_oidc_state_record()
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-    params={'client_id':os.getenv('DAEP_OIDC_CLIENT_ID'),'response_type':'code','redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI'),'scope':os.getenv('DAEP_OIDC_SCOPES','openid profile email'),'state':state,'nonce':nonce,'code_challenge':challenge,'code_challenge_method':'S256'}
-    if os.getenv('DAEP_OIDC_AUDIENCE'): params['audience']=os.getenv('DAEP_OIDC_AUDIENCE')
-    response=RedirectResponse(d['authorization_endpoint']+'?'+urllib.parse.urlencode(params),status_code=302)
-    response.set_cookie('daep_oidc_state',state,max_age=600,httponly=True,secure=os.getenv('DAEP_OIDC_REDIRECT_URI','').startswith('https://'),samesite='lax',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/callback')
-def oidc_callback(code:str,state:str,daep_oidc_state:Optional[str]=Cookie(None)):
-    client_id=os.getenv('DAEP_OIDC_CLIENT_ID',''); client_secret=os.getenv('DAEP_OIDC_CLIENT_SECRET','')
-    redirect_uri=os.getenv('DAEP_OIDC_REDIRECT_URI','')
-    if not client_id or not client_secret or not redirect_uri: raise HTTPException(503,'OIDC client is not configured')
-    _verify_oidc_browser_state(state,daep_oidc_state)
-    nonce,code_verifier=_consume_oidc_state(state); d=_oidc_discovery()
-    form=urllib.parse.urlencode({'grant_type':'authorization_code','code':code,'redirect_uri':redirect_uri,'client_id':client_id,'client_secret':client_secret,'code_verifier':code_verifier}).encode()
-    req=urllib.request.Request(d['token_endpoint'],data=form,method='POST',headers={'Content-Type':'application/x-www-form-urlencoded'})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as r: tokens=json.loads(r.read())
-    except Exception: raise HTTPException(502,'OIDC token exchange failed')
-    id_token=tokens.get('id_token')
-    if not id_token: raise HTTPException(502,'OIDC provider did not return an id_token')
-    try:
-        import jwt
-        jwks_client=jwt.PyJWKClient(d['jwks_uri'],timeout=10)
-        signing_key=jwks_client.get_signing_key_from_jwt(id_token).key
-        claims=jwt.decode(id_token,signing_key,algorithms=['RS256','RS384','RS512','PS256','ES256'],audience=client_id,issuer=os.getenv('DAEP_OIDC_ISSUER').rstrip('/'),options={'require':['exp','iat','sub','iss','aud']})
-        if not secrets.compare_digest(str(claims.get('nonce','')),nonce): raise ValueError('OIDC nonce mismatch')
-        audiences=claims.get('aud',[])
-        if isinstance(audiences,list) and len(audiences)>1 and claims.get('azp')!=client_id: raise ValueError('OIDC authorized party mismatch')
-    except Exception: raise HTTPException(401,'OIDC ID token validation failed')
-    subject=str(claims.get('sub','')); email=str(claims.get('email',''))
-    if not subject: raise HTTPException(401,'OIDC subject is missing')
-    created=now(); raw=uuid.uuid4().hex+uuid.uuid4().hex; digest=hashlib.sha256(raw.encode()).hexdigest()
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            row=c.execute('SELECT id FROM members WHERE oidc_subject=?',(subject,)).fetchone()
-            if row:
-                c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL,oidc_email=? WHERE id=?",(digest,created,email,row['id']))
-                member_id=row['id']
-            else:
-                if os.getenv('DAEP_OIDC_AUTO_PROVISION','false').lower()!='true': raise HTTPException(403,'OIDC identity is not provisioned')
-                member_id='mem_'+uuid.uuid4().hex[:12]; tenant_id=os.getenv('DAEP_OIDC_DEFAULT_TENANT','tenant-default'); name=str(claims.get('name') or email or subject)
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(403,'OIDC default tenant is unavailable')
-                oidc_role=os.getenv('DAEP_OIDC_DEFAULT_ROLE','developer')
-                if oidc_role not in ('developer','manager','reviewer'): oidc_role='developer'
-                c.execute("INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,oidc_subject,oidc_email) VALUES(?,?,?,?,?,?,?,?,?,?)",(member_id,name,oidc_role,digest,created,tenant_id,'ACTIVE',created,subject,email))
-    finally:
-        _service_ctx.reset(service_reset)
-    response=JSONResponse({'member_id':member_id,'token':raw,'token_expires_at':None,'message':'OIDC authentication succeeded; store this API token securely. It is returned only once.'})
-    response.delete_cookie('daep_oidc_state',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/config')
-def oidc_config():
-    enabled=bool(os.getenv('DAEP_OIDC_ISSUER') and os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI'))
-    return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
-
 @app.post('/api/v1/integrations/git/webhook')
 async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
     raw=await request.body()
@@ -4305,48 +4208,9 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
     finally:
         _service_ctx.reset(service_reset)
 
-@app.get('/health')
-def health():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/readyz')
-def readiness():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            c.execute('SELECT 1').fetchone()
-            if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
-        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
-    except Exception:
-        raise HTTPException(503,'DAEP database readiness check failed')
-    finally:
-        _service_ctx.reset(service_reset)
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
     a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/tenants')
-def create_tenant(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    if not name or len(name)>160: raise HTTPException(422,'Tenant name is required')
-    tid='ten_'+uuid.uuid4().hex[:12]
-    with conn() as c: c.execute('INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,?,?)',(tid,name,'ACTIVE',now()))
-    return {'id':tid,'name':name,'status':'ACTIVE'}
-
-@app.get('/api/v1/tenants')
-def list_tenants(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4364,17 +4228,6 @@ def members(authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/revoke-token')
-def revoke_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?" ,(now(),member_id))
-        event(c,'member.token.revoked',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token_status':'REVOKED'}
-
 @app.post('/api/v1/members/{member_id}/rotate-token')
 def rotate_member_token(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4463,103 +4316,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
 
-@app.get('/',include_in_schema=False)
-def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
-def _oidc_discovery():
-    issuer=os.getenv('DAEP_OIDC_ISSUER','').rstrip('/')
-    if not issuer: raise HTTPException(503,'OIDC is not configured')
-    try:
-        with urllib.request.urlopen(issuer+'/.well-known/openid-configuration',timeout=10) as r: return json.loads(r.read())
-    except Exception as exc: raise HTTPException(503,f'OIDC discovery failed: {exc}')
-
-def _oidc_state_record():
-    """Create one-time server-side OIDC state, nonce and PKCE verifier."""
-    state=secrets.token_urlsafe(32)
-    nonce=secrets.token_urlsafe(32)
-    verifier=secrets.token_urlsafe(64)
-    expires=datetime.fromtimestamp(time.time()+600,timezone.utc).isoformat()
-    with conn() as c:
-        c.execute('DELETE FROM oidc_states WHERE expires_at<=?',(now(),))
-        c.execute('INSERT INTO oidc_states(state_hash,nonce,code_verifier,expires_at,created_at) VALUES(?,?,?,?,?)',
-                  (hashlib.sha256(state.encode()).hexdigest(),nonce,verifier,expires,now()))
-    return state,nonce,verifier
-
-def _verify_oidc_browser_state(state,cookie_state):
-    if not cookie_state or not secrets.compare_digest(hashlib.sha256(cookie_state.encode()).digest(),hashlib.sha256(state.encode()).digest()):
-        raise HTTPException(400,'OIDC browser state cookie mismatch')
-
-def _consume_oidc_state(state):
-    if not state or len(state)>512: raise HTTPException(400,'Invalid OIDC state')
-    digest=hashlib.sha256(state.encode()).hexdigest()
-    with conn() as c:
-        row=c.execute('SELECT nonce,code_verifier,expires_at FROM oidc_states WHERE state_hash=?',(digest,)).fetchone()
-        if not row: raise HTTPException(400,'Invalid or already used OIDC state')
-        c.execute('DELETE FROM oidc_states WHERE state_hash=?',(digest,))
-    if row['expires_at'] <= now(): raise HTTPException(400,'Expired OIDC state')
-    return row['nonce'],row['code_verifier']
-
-@app.get('/api/v1/auth/oidc/login')
-def oidc_login():
-    if not (os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI')): raise HTTPException(503,'OIDC is not configured')
-    d=_oidc_discovery(); state,nonce,verifier=_oidc_state_record()
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-    params={'client_id':os.getenv('DAEP_OIDC_CLIENT_ID'),'response_type':'code','redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI'),'scope':os.getenv('DAEP_OIDC_SCOPES','openid profile email'),'state':state,'nonce':nonce,'code_challenge':challenge,'code_challenge_method':'S256'}
-    if os.getenv('DAEP_OIDC_AUDIENCE'): params['audience']=os.getenv('DAEP_OIDC_AUDIENCE')
-    response=RedirectResponse(d['authorization_endpoint']+'?'+urllib.parse.urlencode(params),status_code=302)
-    response.set_cookie('daep_oidc_state',state,max_age=600,httponly=True,secure=os.getenv('DAEP_OIDC_REDIRECT_URI','').startswith('https://'),samesite='lax',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/callback')
-def oidc_callback(code:str,state:str,daep_oidc_state:Optional[str]=Cookie(None)):
-    client_id=os.getenv('DAEP_OIDC_CLIENT_ID',''); client_secret=os.getenv('DAEP_OIDC_CLIENT_SECRET','')
-    redirect_uri=os.getenv('DAEP_OIDC_REDIRECT_URI','')
-    if not client_id or not client_secret or not redirect_uri: raise HTTPException(503,'OIDC client is not configured')
-    _verify_oidc_browser_state(state,daep_oidc_state)
-    nonce,code_verifier=_consume_oidc_state(state); d=_oidc_discovery()
-    form=urllib.parse.urlencode({'grant_type':'authorization_code','code':code,'redirect_uri':redirect_uri,'client_id':client_id,'client_secret':client_secret,'code_verifier':code_verifier}).encode()
-    req=urllib.request.Request(d['token_endpoint'],data=form,method='POST',headers={'Content-Type':'application/x-www-form-urlencoded'})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as r: tokens=json.loads(r.read())
-    except Exception: raise HTTPException(502,'OIDC token exchange failed')
-    id_token=tokens.get('id_token')
-    if not id_token: raise HTTPException(502,'OIDC provider did not return an id_token')
-    try:
-        import jwt
-        jwks_client=jwt.PyJWKClient(d['jwks_uri'],timeout=10)
-        signing_key=jwks_client.get_signing_key_from_jwt(id_token).key
-        claims=jwt.decode(id_token,signing_key,algorithms=['RS256','RS384','RS512','PS256','ES256'],audience=client_id,issuer=os.getenv('DAEP_OIDC_ISSUER').rstrip('/'),options={'require':['exp','iat','sub','iss','aud']})
-        if not secrets.compare_digest(str(claims.get('nonce','')),nonce): raise ValueError('OIDC nonce mismatch')
-        audiences=claims.get('aud',[])
-        if isinstance(audiences,list) and len(audiences)>1 and claims.get('azp')!=client_id: raise ValueError('OIDC authorized party mismatch')
-    except Exception: raise HTTPException(401,'OIDC ID token validation failed')
-    subject=str(claims.get('sub','')); email=str(claims.get('email',''))
-    if not subject: raise HTTPException(401,'OIDC subject is missing')
-    created=now(); raw=uuid.uuid4().hex+uuid.uuid4().hex; digest=hashlib.sha256(raw.encode()).hexdigest()
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            row=c.execute('SELECT id FROM members WHERE oidc_subject=?',(subject,)).fetchone()
-            if row:
-                c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL,oidc_email=? WHERE id=?",(digest,created,email,row['id']))
-                member_id=row['id']
-            else:
-                if os.getenv('DAEP_OIDC_AUTO_PROVISION','false').lower()!='true': raise HTTPException(403,'OIDC identity is not provisioned')
-                member_id='mem_'+uuid.uuid4().hex[:12]; tenant_id=os.getenv('DAEP_OIDC_DEFAULT_TENANT','tenant-default'); name=str(claims.get('name') or email or subject)
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(403,'OIDC default tenant is unavailable')
-                oidc_role=os.getenv('DAEP_OIDC_DEFAULT_ROLE','developer')
-                if oidc_role not in ('developer','manager','reviewer'): oidc_role='developer'
-                c.execute("INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,oidc_subject,oidc_email) VALUES(?,?,?,?,?,?,?,?,?,?)",(member_id,name,oidc_role,digest,created,tenant_id,'ACTIVE',created,subject,email))
-    finally:
-        _service_ctx.reset(service_reset)
-    response=JSONResponse({'member_id':member_id,'token':raw,'token_expires_at':None,'message':'OIDC authentication succeeded; store this API token securely. It is returned only once.'})
-    response.delete_cookie('daep_oidc_state',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/config')
-def oidc_config():
-    enabled=bool(os.getenv('DAEP_OIDC_ISSUER') and os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI'))
-    return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
-
 @app.post('/api/v1/integrations/git/webhook')
 async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
     raw=await request.body()
@@ -4602,48 +4358,9 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
     finally:
         _service_ctx.reset(service_reset)
 
-@app.get('/health')
-def health():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/readyz')
-def readiness():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            c.execute('SELECT 1').fetchone()
-            if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
-        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
-    except Exception:
-        raise HTTPException(503,'DAEP database readiness check failed')
-    finally:
-        _service_ctx.reset(service_reset)
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
     a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/tenants')
-def create_tenant(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    if not name or len(name)>160: raise HTTPException(422,'Tenant name is required')
-    tid='ten_'+uuid.uuid4().hex[:12]
-    with conn() as c: c.execute('INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,?,?)',(tid,name,'ACTIVE',now()))
-    return {'id':tid,'name':name,'status':'ACTIVE'}
-
-@app.get('/api/v1/tenants')
-def list_tenants(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4661,17 +4378,6 @@ def members(authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/revoke-token')
-def revoke_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?" ,(now(),member_id))
-        event(c,'member.token.revoked',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token_status':'REVOKED'}
-
 @app.post('/api/v1/members/{member_id}/rotate-token')
 def rotate_member_token(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4770,103 +4476,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
 
-@app.get('/',include_in_schema=False)
-def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
-def _oidc_discovery():
-    issuer=os.getenv('DAEP_OIDC_ISSUER','').rstrip('/')
-    if not issuer: raise HTTPException(503,'OIDC is not configured')
-    try:
-        with urllib.request.urlopen(issuer+'/.well-known/openid-configuration',timeout=10) as r: return json.loads(r.read())
-    except Exception as exc: raise HTTPException(503,f'OIDC discovery failed: {exc}')
-
-def _oidc_state_record():
-    """Create one-time server-side OIDC state, nonce and PKCE verifier."""
-    state=secrets.token_urlsafe(32)
-    nonce=secrets.token_urlsafe(32)
-    verifier=secrets.token_urlsafe(64)
-    expires=datetime.fromtimestamp(time.time()+600,timezone.utc).isoformat()
-    with conn() as c:
-        c.execute('DELETE FROM oidc_states WHERE expires_at<=?',(now(),))
-        c.execute('INSERT INTO oidc_states(state_hash,nonce,code_verifier,expires_at,created_at) VALUES(?,?,?,?,?)',
-                  (hashlib.sha256(state.encode()).hexdigest(),nonce,verifier,expires,now()))
-    return state,nonce,verifier
-
-def _verify_oidc_browser_state(state,cookie_state):
-    if not cookie_state or not secrets.compare_digest(hashlib.sha256(cookie_state.encode()).digest(),hashlib.sha256(state.encode()).digest()):
-        raise HTTPException(400,'OIDC browser state cookie mismatch')
-
-def _consume_oidc_state(state):
-    if not state or len(state)>512: raise HTTPException(400,'Invalid OIDC state')
-    digest=hashlib.sha256(state.encode()).hexdigest()
-    with conn() as c:
-        row=c.execute('SELECT nonce,code_verifier,expires_at FROM oidc_states WHERE state_hash=?',(digest,)).fetchone()
-        if not row: raise HTTPException(400,'Invalid or already used OIDC state')
-        c.execute('DELETE FROM oidc_states WHERE state_hash=?',(digest,))
-    if row['expires_at'] <= now(): raise HTTPException(400,'Expired OIDC state')
-    return row['nonce'],row['code_verifier']
-
-@app.get('/api/v1/auth/oidc/login')
-def oidc_login():
-    if not (os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI')): raise HTTPException(503,'OIDC is not configured')
-    d=_oidc_discovery(); state,nonce,verifier=_oidc_state_record()
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-    params={'client_id':os.getenv('DAEP_OIDC_CLIENT_ID'),'response_type':'code','redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI'),'scope':os.getenv('DAEP_OIDC_SCOPES','openid profile email'),'state':state,'nonce':nonce,'code_challenge':challenge,'code_challenge_method':'S256'}
-    if os.getenv('DAEP_OIDC_AUDIENCE'): params['audience']=os.getenv('DAEP_OIDC_AUDIENCE')
-    response=RedirectResponse(d['authorization_endpoint']+'?'+urllib.parse.urlencode(params),status_code=302)
-    response.set_cookie('daep_oidc_state',state,max_age=600,httponly=True,secure=os.getenv('DAEP_OIDC_REDIRECT_URI','').startswith('https://'),samesite='lax',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/callback')
-def oidc_callback(code:str,state:str,daep_oidc_state:Optional[str]=Cookie(None)):
-    client_id=os.getenv('DAEP_OIDC_CLIENT_ID',''); client_secret=os.getenv('DAEP_OIDC_CLIENT_SECRET','')
-    redirect_uri=os.getenv('DAEP_OIDC_REDIRECT_URI','')
-    if not client_id or not client_secret or not redirect_uri: raise HTTPException(503,'OIDC client is not configured')
-    _verify_oidc_browser_state(state,daep_oidc_state)
-    nonce,code_verifier=_consume_oidc_state(state); d=_oidc_discovery()
-    form=urllib.parse.urlencode({'grant_type':'authorization_code','code':code,'redirect_uri':redirect_uri,'client_id':client_id,'client_secret':client_secret,'code_verifier':code_verifier}).encode()
-    req=urllib.request.Request(d['token_endpoint'],data=form,method='POST',headers={'Content-Type':'application/x-www-form-urlencoded'})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as r: tokens=json.loads(r.read())
-    except Exception: raise HTTPException(502,'OIDC token exchange failed')
-    id_token=tokens.get('id_token')
-    if not id_token: raise HTTPException(502,'OIDC provider did not return an id_token')
-    try:
-        import jwt
-        jwks_client=jwt.PyJWKClient(d['jwks_uri'],timeout=10)
-        signing_key=jwks_client.get_signing_key_from_jwt(id_token).key
-        claims=jwt.decode(id_token,signing_key,algorithms=['RS256','RS384','RS512','PS256','ES256'],audience=client_id,issuer=os.getenv('DAEP_OIDC_ISSUER').rstrip('/'),options={'require':['exp','iat','sub','iss','aud']})
-        if not secrets.compare_digest(str(claims.get('nonce','')),nonce): raise ValueError('OIDC nonce mismatch')
-        audiences=claims.get('aud',[])
-        if isinstance(audiences,list) and len(audiences)>1 and claims.get('azp')!=client_id: raise ValueError('OIDC authorized party mismatch')
-    except Exception: raise HTTPException(401,'OIDC ID token validation failed')
-    subject=str(claims.get('sub','')); email=str(claims.get('email',''))
-    if not subject: raise HTTPException(401,'OIDC subject is missing')
-    created=now(); raw=uuid.uuid4().hex+uuid.uuid4().hex; digest=hashlib.sha256(raw.encode()).hexdigest()
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            row=c.execute('SELECT id FROM members WHERE oidc_subject=?',(subject,)).fetchone()
-            if row:
-                c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL,oidc_email=? WHERE id=?",(digest,created,email,row['id']))
-                member_id=row['id']
-            else:
-                if os.getenv('DAEP_OIDC_AUTO_PROVISION','false').lower()!='true': raise HTTPException(403,'OIDC identity is not provisioned')
-                member_id='mem_'+uuid.uuid4().hex[:12]; tenant_id=os.getenv('DAEP_OIDC_DEFAULT_TENANT','tenant-default'); name=str(claims.get('name') or email or subject)
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(403,'OIDC default tenant is unavailable')
-                oidc_role=os.getenv('DAEP_OIDC_DEFAULT_ROLE','developer')
-                if oidc_role not in ('developer','manager','reviewer'): oidc_role='developer'
-                c.execute("INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,oidc_subject,oidc_email) VALUES(?,?,?,?,?,?,?,?,?,?)",(member_id,name,oidc_role,digest,created,tenant_id,'ACTIVE',created,subject,email))
-    finally:
-        _service_ctx.reset(service_reset)
-    response=JSONResponse({'member_id':member_id,'token':raw,'token_expires_at':None,'message':'OIDC authentication succeeded; store this API token securely. It is returned only once.'})
-    response.delete_cookie('daep_oidc_state',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/config')
-def oidc_config():
-    enabled=bool(os.getenv('DAEP_OIDC_ISSUER') and os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI'))
-    return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
-
 @app.post('/api/v1/integrations/git/webhook')
 async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
     raw=await request.body()
@@ -4909,29 +4518,6 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
     finally:
         _service_ctx.reset(service_reset)
 
-@app.get('/health')
-def health():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/readyz')
-def readiness():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            c.execute('SELECT 1').fetchone()
-            if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
-        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
-    except Exception:
-        raise HTTPException(503,'DAEP database readiness check failed')
-    finally:
-        _service_ctx.reset(service_reset)
 @app.post('/api/v1/auth/login')
 def password_login(body:dict):
     username=str(body.get('username','')).strip().lower()
@@ -4963,22 +4549,6 @@ def me(authorization:str=Header(None)):
     with conn() as c:
         row=c.execute('SELECT username FROM members WHERE id=?',(a['id'],)).fetchone()
     return {k:a[k] for k in ('id','name','role')} | {'username': row['username'] if row else None}
-@app.post('/api/v1/tenants')
-def create_tenant(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    if not name or len(name)>160: raise HTTPException(422,'Tenant name is required')
-    tid='ten_'+uuid.uuid4().hex[:12]
-    with conn() as c: c.execute('INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,?,?)',(tid,name,'ACTIVE',now()))
-    return {'id':tid,'name':name,'status':'ACTIVE'}
-
-@app.get('/api/v1/tenants')
-def list_tenants(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5075,17 +4645,6 @@ def reset_member_password(member_id:str,body:dict,authorization:str=Header(None)
         event(c,'member.password.reset',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'password_status':'ACTIVE','token_status':'REVOKED'}
 
-@app.post('/api/v1/members/{member_id}/revoke-token')
-def revoke_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?" ,(now(),member_id))
-        event(c,'member.token.revoked',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token_status':'REVOKED'}
-
 @app.post('/api/v1/members/{member_id}/rotate-token')
 def rotate_member_token(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5179,103 +4738,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
 
-@app.get('/',include_in_schema=False)
-def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
-def _oidc_discovery():
-    issuer=os.getenv('DAEP_OIDC_ISSUER','').rstrip('/')
-    if not issuer: raise HTTPException(503,'OIDC is not configured')
-    try:
-        with urllib.request.urlopen(issuer+'/.well-known/openid-configuration',timeout=10) as r: return json.loads(r.read())
-    except Exception as exc: raise HTTPException(503,f'OIDC discovery failed: {exc}')
-
-def _oidc_state_record():
-    """Create one-time server-side OIDC state, nonce and PKCE verifier."""
-    state=secrets.token_urlsafe(32)
-    nonce=secrets.token_urlsafe(32)
-    verifier=secrets.token_urlsafe(64)
-    expires=datetime.fromtimestamp(time.time()+600,timezone.utc).isoformat()
-    with conn() as c:
-        c.execute('DELETE FROM oidc_states WHERE expires_at<=?',(now(),))
-        c.execute('INSERT INTO oidc_states(state_hash,nonce,code_verifier,expires_at,created_at) VALUES(?,?,?,?,?)',
-                  (hashlib.sha256(state.encode()).hexdigest(),nonce,verifier,expires,now()))
-    return state,nonce,verifier
-
-def _verify_oidc_browser_state(state,cookie_state):
-    if not cookie_state or not secrets.compare_digest(hashlib.sha256(cookie_state.encode()).digest(),hashlib.sha256(state.encode()).digest()):
-        raise HTTPException(400,'OIDC browser state cookie mismatch')
-
-def _consume_oidc_state(state):
-    if not state or len(state)>512: raise HTTPException(400,'Invalid OIDC state')
-    digest=hashlib.sha256(state.encode()).hexdigest()
-    with conn() as c:
-        row=c.execute('SELECT nonce,code_verifier,expires_at FROM oidc_states WHERE state_hash=?',(digest,)).fetchone()
-        if not row: raise HTTPException(400,'Invalid or already used OIDC state')
-        c.execute('DELETE FROM oidc_states WHERE state_hash=?',(digest,))
-    if row['expires_at'] <= now(): raise HTTPException(400,'Expired OIDC state')
-    return row['nonce'],row['code_verifier']
-
-@app.get('/api/v1/auth/oidc/login')
-def oidc_login():
-    if not (os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI')): raise HTTPException(503,'OIDC is not configured')
-    d=_oidc_discovery(); state,nonce,verifier=_oidc_state_record()
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-    params={'client_id':os.getenv('DAEP_OIDC_CLIENT_ID'),'response_type':'code','redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI'),'scope':os.getenv('DAEP_OIDC_SCOPES','openid profile email'),'state':state,'nonce':nonce,'code_challenge':challenge,'code_challenge_method':'S256'}
-    if os.getenv('DAEP_OIDC_AUDIENCE'): params['audience']=os.getenv('DAEP_OIDC_AUDIENCE')
-    response=RedirectResponse(d['authorization_endpoint']+'?'+urllib.parse.urlencode(params),status_code=302)
-    response.set_cookie('daep_oidc_state',state,max_age=600,httponly=True,secure=os.getenv('DAEP_OIDC_REDIRECT_URI','').startswith('https://'),samesite='lax',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/callback')
-def oidc_callback(code:str,state:str,daep_oidc_state:Optional[str]=Cookie(None)):
-    client_id=os.getenv('DAEP_OIDC_CLIENT_ID',''); client_secret=os.getenv('DAEP_OIDC_CLIENT_SECRET','')
-    redirect_uri=os.getenv('DAEP_OIDC_REDIRECT_URI','')
-    if not client_id or not client_secret or not redirect_uri: raise HTTPException(503,'OIDC client is not configured')
-    _verify_oidc_browser_state(state,daep_oidc_state)
-    nonce,code_verifier=_consume_oidc_state(state); d=_oidc_discovery()
-    form=urllib.parse.urlencode({'grant_type':'authorization_code','code':code,'redirect_uri':redirect_uri,'client_id':client_id,'client_secret':client_secret,'code_verifier':code_verifier}).encode()
-    req=urllib.request.Request(d['token_endpoint'],data=form,method='POST',headers={'Content-Type':'application/x-www-form-urlencoded'})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as r: tokens=json.loads(r.read())
-    except Exception: raise HTTPException(502,'OIDC token exchange failed')
-    id_token=tokens.get('id_token')
-    if not id_token: raise HTTPException(502,'OIDC provider did not return an id_token')
-    try:
-        import jwt
-        jwks_client=jwt.PyJWKClient(d['jwks_uri'],timeout=10)
-        signing_key=jwks_client.get_signing_key_from_jwt(id_token).key
-        claims=jwt.decode(id_token,signing_key,algorithms=['RS256','RS384','RS512','PS256','ES256'],audience=client_id,issuer=os.getenv('DAEP_OIDC_ISSUER').rstrip('/'),options={'require':['exp','iat','sub','iss','aud']})
-        if not secrets.compare_digest(str(claims.get('nonce','')),nonce): raise ValueError('OIDC nonce mismatch')
-        audiences=claims.get('aud',[])
-        if isinstance(audiences,list) and len(audiences)>1 and claims.get('azp')!=client_id: raise ValueError('OIDC authorized party mismatch')
-    except Exception: raise HTTPException(401,'OIDC ID token validation failed')
-    subject=str(claims.get('sub','')); email=str(claims.get('email',''))
-    if not subject: raise HTTPException(401,'OIDC subject is missing')
-    created=now(); raw=uuid.uuid4().hex+uuid.uuid4().hex; digest=hashlib.sha256(raw.encode()).hexdigest()
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            row=c.execute('SELECT id FROM members WHERE oidc_subject=?',(subject,)).fetchone()
-            if row:
-                c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL,oidc_email=? WHERE id=?",(digest,created,email,row['id']))
-                member_id=row['id']
-            else:
-                if os.getenv('DAEP_OIDC_AUTO_PROVISION','false').lower()!='true': raise HTTPException(403,'OIDC identity is not provisioned')
-                member_id='mem_'+uuid.uuid4().hex[:12]; tenant_id=os.getenv('DAEP_OIDC_DEFAULT_TENANT','tenant-default'); name=str(claims.get('name') or email or subject)
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(403,'OIDC default tenant is unavailable')
-                oidc_role=os.getenv('DAEP_OIDC_DEFAULT_ROLE','developer')
-                if oidc_role not in ('developer','manager','reviewer'): oidc_role='developer'
-                c.execute("INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,oidc_subject,oidc_email) VALUES(?,?,?,?,?,?,?,?,?,?)",(member_id,name,oidc_role,digest,created,tenant_id,'ACTIVE',created,subject,email))
-    finally:
-        _service_ctx.reset(service_reset)
-    response=JSONResponse({'member_id':member_id,'token':raw,'token_expires_at':None,'message':'OIDC authentication succeeded; store this API token securely. It is returned only once.'})
-    response.delete_cookie('daep_oidc_state',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/config')
-def oidc_config():
-    enabled=bool(os.getenv('DAEP_OIDC_ISSUER') and os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI'))
-    return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
-
 @app.post('/api/v1/integrations/git/webhook')
 async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
     raw=await request.body()
@@ -5318,48 +4780,9 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
     finally:
         _service_ctx.reset(service_reset)
 
-@app.get('/health')
-def health():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/readyz')
-def readiness():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            c.execute('SELECT 1').fetchone()
-            if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
-        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
-    except Exception:
-        raise HTTPException(503,'DAEP database readiness check failed')
-    finally:
-        _service_ctx.reset(service_reset)
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
     a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/tenants')
-def create_tenant(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    if not name or len(name)>160: raise HTTPException(422,'Tenant name is required')
-    tid='ten_'+uuid.uuid4().hex[:12]
-    with conn() as c: c.execute('INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,?,?)',(tid,name,'ACTIVE',now()))
-    return {'id':tid,'name':name,'status':'ACTIVE'}
-
-@app.get('/api/v1/tenants')
-def list_tenants(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5377,17 +4800,6 @@ def members(authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/revoke-token')
-def revoke_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?" ,(now(),member_id))
-        event(c,'member.token.revoked',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token_status':'REVOKED'}
-
 @app.post('/api/v1/members/{member_id}/rotate-token')
 def rotate_member_token(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5677,103 +5089,6 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
 
-@app.get('/',include_in_schema=False)
-def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
-def _oidc_discovery():
-    issuer=os.getenv('DAEP_OIDC_ISSUER','').rstrip('/')
-    if not issuer: raise HTTPException(503,'OIDC is not configured')
-    try:
-        with urllib.request.urlopen(issuer+'/.well-known/openid-configuration',timeout=10) as r: return json.loads(r.read())
-    except Exception as exc: raise HTTPException(503,f'OIDC discovery failed: {exc}')
-
-def _oidc_state_record():
-    """Create one-time server-side OIDC state, nonce and PKCE verifier."""
-    state=secrets.token_urlsafe(32)
-    nonce=secrets.token_urlsafe(32)
-    verifier=secrets.token_urlsafe(64)
-    expires=datetime.fromtimestamp(time.time()+600,timezone.utc).isoformat()
-    with conn() as c:
-        c.execute('DELETE FROM oidc_states WHERE expires_at<=?',(now(),))
-        c.execute('INSERT INTO oidc_states(state_hash,nonce,code_verifier,expires_at,created_at) VALUES(?,?,?,?,?)',
-                  (hashlib.sha256(state.encode()).hexdigest(),nonce,verifier,expires,now()))
-    return state,nonce,verifier
-
-def _verify_oidc_browser_state(state,cookie_state):
-    if not cookie_state or not secrets.compare_digest(hashlib.sha256(cookie_state.encode()).digest(),hashlib.sha256(state.encode()).digest()):
-        raise HTTPException(400,'OIDC browser state cookie mismatch')
-
-def _consume_oidc_state(state):
-    if not state or len(state)>512: raise HTTPException(400,'Invalid OIDC state')
-    digest=hashlib.sha256(state.encode()).hexdigest()
-    with conn() as c:
-        row=c.execute('SELECT nonce,code_verifier,expires_at FROM oidc_states WHERE state_hash=?',(digest,)).fetchone()
-        if not row: raise HTTPException(400,'Invalid or already used OIDC state')
-        c.execute('DELETE FROM oidc_states WHERE state_hash=?',(digest,))
-    if row['expires_at'] <= now(): raise HTTPException(400,'Expired OIDC state')
-    return row['nonce'],row['code_verifier']
-
-@app.get('/api/v1/auth/oidc/login')
-def oidc_login():
-    if not (os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI')): raise HTTPException(503,'OIDC is not configured')
-    d=_oidc_discovery(); state,nonce,verifier=_oidc_state_record()
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-    params={'client_id':os.getenv('DAEP_OIDC_CLIENT_ID'),'response_type':'code','redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI'),'scope':os.getenv('DAEP_OIDC_SCOPES','openid profile email'),'state':state,'nonce':nonce,'code_challenge':challenge,'code_challenge_method':'S256'}
-    if os.getenv('DAEP_OIDC_AUDIENCE'): params['audience']=os.getenv('DAEP_OIDC_AUDIENCE')
-    response=RedirectResponse(d['authorization_endpoint']+'?'+urllib.parse.urlencode(params),status_code=302)
-    response.set_cookie('daep_oidc_state',state,max_age=600,httponly=True,secure=os.getenv('DAEP_OIDC_REDIRECT_URI','').startswith('https://'),samesite='lax',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/callback')
-def oidc_callback(code:str,state:str,daep_oidc_state:Optional[str]=Cookie(None)):
-    client_id=os.getenv('DAEP_OIDC_CLIENT_ID',''); client_secret=os.getenv('DAEP_OIDC_CLIENT_SECRET','')
-    redirect_uri=os.getenv('DAEP_OIDC_REDIRECT_URI','')
-    if not client_id or not client_secret or not redirect_uri: raise HTTPException(503,'OIDC client is not configured')
-    _verify_oidc_browser_state(state,daep_oidc_state)
-    nonce,code_verifier=_consume_oidc_state(state); d=_oidc_discovery()
-    form=urllib.parse.urlencode({'grant_type':'authorization_code','code':code,'redirect_uri':redirect_uri,'client_id':client_id,'client_secret':client_secret,'code_verifier':code_verifier}).encode()
-    req=urllib.request.Request(d['token_endpoint'],data=form,method='POST',headers={'Content-Type':'application/x-www-form-urlencoded'})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as r: tokens=json.loads(r.read())
-    except Exception: raise HTTPException(502,'OIDC token exchange failed')
-    id_token=tokens.get('id_token')
-    if not id_token: raise HTTPException(502,'OIDC provider did not return an id_token')
-    try:
-        import jwt
-        jwks_client=jwt.PyJWKClient(d['jwks_uri'],timeout=10)
-        signing_key=jwks_client.get_signing_key_from_jwt(id_token).key
-        claims=jwt.decode(id_token,signing_key,algorithms=['RS256','RS384','RS512','PS256','ES256'],audience=client_id,issuer=os.getenv('DAEP_OIDC_ISSUER').rstrip('/'),options={'require':['exp','iat','sub','iss','aud']})
-        if not secrets.compare_digest(str(claims.get('nonce','')),nonce): raise ValueError('OIDC nonce mismatch')
-        audiences=claims.get('aud',[])
-        if isinstance(audiences,list) and len(audiences)>1 and claims.get('azp')!=client_id: raise ValueError('OIDC authorized party mismatch')
-    except Exception: raise HTTPException(401,'OIDC ID token validation failed')
-    subject=str(claims.get('sub','')); email=str(claims.get('email',''))
-    if not subject: raise HTTPException(401,'OIDC subject is missing')
-    created=now(); raw=uuid.uuid4().hex+uuid.uuid4().hex; digest=hashlib.sha256(raw.encode()).hexdigest()
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            row=c.execute('SELECT id FROM members WHERE oidc_subject=?',(subject,)).fetchone()
-            if row:
-                c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL,oidc_email=? WHERE id=?",(digest,created,email,row['id']))
-                member_id=row['id']
-            else:
-                if os.getenv('DAEP_OIDC_AUTO_PROVISION','false').lower()!='true': raise HTTPException(403,'OIDC identity is not provisioned')
-                member_id='mem_'+uuid.uuid4().hex[:12]; tenant_id=os.getenv('DAEP_OIDC_DEFAULT_TENANT','tenant-default'); name=str(claims.get('name') or email or subject)
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(403,'OIDC default tenant is unavailable')
-                oidc_role=os.getenv('DAEP_OIDC_DEFAULT_ROLE','developer')
-                if oidc_role not in ('developer','manager','reviewer'): oidc_role='developer'
-                c.execute("INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,oidc_subject,oidc_email) VALUES(?,?,?,?,?,?,?,?,?,?)",(member_id,name,oidc_role,digest,created,tenant_id,'ACTIVE',created,subject,email))
-    finally:
-        _service_ctx.reset(service_reset)
-    response=JSONResponse({'member_id':member_id,'token':raw,'token_expires_at':None,'message':'OIDC authentication succeeded; store this API token securely. It is returned only once.'})
-    response.delete_cookie('daep_oidc_state',path='/api/v1/auth/oidc/callback')
-    return response
-
-@app.get('/api/v1/auth/oidc/config')
-def oidc_config():
-    enabled=bool(os.getenv('DAEP_OIDC_ISSUER') and os.getenv('DAEP_OIDC_CLIENT_ID') and os.getenv('DAEP_OIDC_REDIRECT_URI'))
-    return {'enabled':enabled,'issuer':os.getenv('DAEP_OIDC_ISSUER',''),'client_id':os.getenv('DAEP_OIDC_CLIENT_ID',''),'redirect_uri':os.getenv('DAEP_OIDC_REDIRECT_URI',''),'scopes':os.getenv('DAEP_OIDC_SCOPES','openid profile email')}
-
 @app.post('/api/v1/integrations/git/webhook')
 async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
     raw=await request.body()
@@ -5816,48 +5131,9 @@ async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Head
     finally:
         _service_ctx.reset(service_reset)
 
-@app.get('/health')
-def health():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            pending=c.execute("SELECT COUNT(*) n FROM outbox WHERE status IN ('PENDING','IN_FLIGHT')").fetchone()['n']
-        return {'status':'ok','service':'daep-api','version':'1.0.0-rc9','outbox_pending':pending}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/readyz')
-def readiness():
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            c.execute('SELECT 1').fetchone()
-            if DATABASE_URL.startswith(('postgresql://','postgres://')):
-                c.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='members'").fetchone()
-        return {'status':'ready','service':'daep-api','version':'1.0.0-rc9'}
-    except Exception:
-        raise HTTPException(503,'DAEP database readiness check failed')
-    finally:
-        _service_ctx.reset(service_reset)
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
     a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/tenants')
-def create_tenant(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    if not name or len(name)>160: raise HTTPException(422,'Tenant name is required')
-    tid='ten_'+uuid.uuid4().hex[:12]
-    with conn() as c: c.execute('INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,?,?)',(tid,name,'ACTIVE',now()))
-    return {'id':tid,'name':name,'status':'ACTIVE'}
-
-@app.get('/api/v1/tenants')
-def list_tenants(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5875,17 +5151,6 @@ def members(authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/revoke-token')
-def revoke_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?" ,(now(),member_id))
-        event(c,'member.token.revoked',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token_status':'REVOKED'}
-
 @app.post('/api/v1/members/{member_id}/rotate-token')
 def rotate_member_token(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
