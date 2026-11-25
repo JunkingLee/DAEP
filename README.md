@@ -21,6 +21,20 @@ DAEP is not an Agent Runtime. It is the control plane that connects **human acco
 
 ![DAEP delivery lifecycle](docs/images/daep-lifecycle.svg)
 
+## 产品能力全景 / Product Capability Map
+
+| Domain | What DAEP governs | Outcome |
+|---|---|---|
+| Work Management | Project · Requirement · Task · Work Package | Structured engineering execution |
+| Agent Governance | Ownership · Credentials · Execution Grants · Collaboration Grants | Explicit authorization |
+| Collaboration | Session · Messages · Proposals · Independent progress | Governed multi-Agent teamwork |
+| Delivery | Artifacts · Evidence · Review · Acceptance | Verifiable delivery |
+| Reliability | Inbox · Outbox · ACK · Retry · Dead Letter | Durable delivery |
+| Security | Tenant isolation · RLS · OIDC · Token separation | Strong security boundaries |
+| Governance | Decisions · Approvals · Audit · Incident controls | Human accountability |
+
+![DAEP multi-agent collaboration](docs/images/daep-collaboration.svg)
+
 ## 产品价值 / Product Value
 
 DAEP 解决 Agentic Engineering 中传统项目管理工具难以解决的问题：
