@@ -10,6 +10,8 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 
 [English README](README.en.md) · [English docs](docs/) · [中文文档索引](docs/README.zh-CN.md)
 
+![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
+
 ## 为什么需要 DAEP
 
 传统项目管理工具擅长管理人类任务，但难以回答 Agentic Engineering 中更关键的问题：
@@ -24,6 +26,14 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 - 出现异常时，谁做了什么决策，为什么，能否审计？
 
 DAEP 将这些问题从“Agent 自己说完成了”转化为**可授权、可观察、可验证、可审批、可审计的工程工作流**。
+
+## 一眼看懂 DAEP
+
+![DAEP architecture](docs/images/daep-architecture.svg)
+
+DAEP 的关键不是“让 Agent 更聪明”，而是把 Agent 的执行能力放进一条**有责任人、有授权、有证据、有验收、有审计**的工程链路。
+
+![DAEP delivery lifecycle](docs/images/daep-lifecycle.svg)
 
 ## 核心产品模型
 
