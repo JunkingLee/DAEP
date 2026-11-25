@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="330" viewBox="0 0 1400 330" role="img" aria-labelledby="t d">
+<title id="t">DAEP 工程交付生命周期</title><desc id="d">Project 经过 Requirement、Task、授权 Agent 工作、证据、评审与人类验收，并在全流程中保留审计。</desc>
+<defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs>
+<rect width="1400" height="330" rx="28" fill="#0b1020"/>
+<text x="60" y="58" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="800" fill="#fff">从工程意图到正式验收</text>
+<text x="60" y="87" font-family="Inter,Arial,sans-serif" font-size="15" fill="#94a3b8">Agent 可以执行工作；DAEP 让结果可追责、可评审、可治理。</text>
+<g font-family="Inter,Arial,sans-serif">
+<g font-size="15" font-weight="800" text-anchor="middle">
+<g><circle cx="105" cy="190" r="46" fill="#172554" stroke="#60a5fa" stroke-width="2"/><text x="105" y="186" fill="#fff">项目</text><text x="105" y="207" fill="#93c5fd" font-size="11">意图</text></g>
+<g><circle cx="315" cy="190" r="46" fill="#172554" stroke="#60a5fa" stroke-width="2"/><text x="315" y="186" fill="#fff">需求</text><text x="315" y="207" fill="#93c5fd" font-size="11">验收标准</text></g>
+<g><circle cx="525" cy="190" r="46" fill="#172554" stroke="#818cf8" stroke-width="2"/><text x="525" y="186" fill="#fff">任务</text><text x="525" y="207" fill="#a5b4fc" font-size="11">分配</text></g>
+<g><circle cx="735" cy="190" r="46" fill="#2e1065" stroke="#a78bfa" stroke-width="2"/><text x="735" y="186" fill="#fff">Agent</text><text x="735" y="207" fill="#c4b5fd" font-size="11">授权执行</text></g>
+<g><circle cx="945" cy="190" r="46" fill="#164e63" stroke="#22d3ee" stroke-width="2"/><text x="945" y="186" fill="#fff">证据</text><text x="945" y="207" fill="#67e8f9" font-size="11">制品 / Commit</text></g>
+<g><circle cx="1155" cy="190" r="46" fill="#14532d" stroke="#4ade80" stroke-width="2"/><text x="1155" y="186" fill="#fff">验收</text><text x="1155" y="207" fill="#86efac" font-size="11">人类决策</text></g>
+</g>
+<path d="M151 190H269 M361 190H479 M571 190H689 M781 190H899 M991 190H1109" stroke="url(#g)" stroke-width="4" stroke-linecap="round"/>
+<text x="700" y="275" text-anchor="middle" fill="#64748b" font-size="13">审计、授权与治理贯穿全流程，而不是最后一步。</text>
+</g>
+</svg>
