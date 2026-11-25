@@ -1,4 +1,36 @@
 -- Exercise RLS as a non-owner, non-superuser role. Run after Alembic migrations.
+DO $rls_shape_check$
+DECLARE
+  table_name text;
+  expected_tables text[] := ARRAY[
+    'members','projects','events','artifacts','outbox','messages',
+    'project_agents','task_delegations','task_work_packages',
+    'project_approvals','requirements','tasks','project_members',
+    'assignments','dependencies','agents','agent_tokens',
+    'agent_project_bindings','agent_task_assignments','artifact_versions',
+    'agent_task_grants','agent_task_execution_policies',
+    'agent_task_contributions','agent_collaboration_sessions',
+    'agent_collaboration_grants','agent_collaboration_messages',
+    'agent_collaboration_proposals'
+  ];
+BEGIN
+  FOREACH table_name IN ARRAY expected_tables LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = table_name
+        AND c.relkind = 'r'
+        AND c.relrowsecurity
+        AND c.relforcerowsecurity
+    ) THEN
+      RAISE EXCEPTION 'RLS policy shape failed: public.% must have ENABLE and FORCE ROW LEVEL SECURITY', table_name;
+    END IF;
+  END LOOP;
+END
+$rls_shape_check$;
+
 DO $grant_priv_check$
 BEGIN
   IF has_table_privilege('daep_authenticator', 'agent_task_grants', 'SELECT') THEN
