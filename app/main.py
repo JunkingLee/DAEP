@@ -4153,19 +4153,23 @@ def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     name=str(body.get('name','')).strip()
-    username=str(body.get('username','')).strip().lower()
-    password=str(body.get('password',''))
-    role=body.get('role','member')
-    if not name or not username: raise HTTPException(422,'Name and username are required')
+    role=str(body.get('role','member')).strip()
+    if not name: raise HTTPException(422,'Member name is required')
     if role!='member': raise HTTPException(422,'New platform users must use the member account role; project roles are assigned per project')
-    if len(password)<12 or len(password)>256: raise HTTPException(422,'Password must be 12-256 characters')
+    explicit_username=bool(body.get('username'))
+    username=str(body.get('username') or re.sub(r'[^a-z0-9]+','.',name.lower()).strip('.') or ('user.'+uuid.uuid4().hex[:8])).lower()
+    password=body.get('password')
+    if password is None or password=='': password=secrets.token_urlsafe(24)
+    if not isinstance(password,str) or len(password)<12 or len(password)>256: raise HTTPException(422,'Password must be 12-256 characters')
     mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
     tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
     with conn() as c:
         if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): raise HTTPException(409,'Username already exists')
+        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone():
+            if explicit_username: raise HTTPException(409,'Username already exists')
+            username=f"{username}.{uuid.uuid4().hex[:6]}"
         c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
-    return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id}
+    return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id,'token':token}
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
