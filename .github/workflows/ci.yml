@@ -149,6 +149,9 @@ jobs:
       - name: Verify non-root runtime
         run: |
           test "$(docker image inspect daep:rc24-ci --format '{{.Config.User}}')" = "daep"
+      - name: Verify production migration assets are present in image
+        run: |
+          docker run --rm --entrypoint sh daep:rc24-ci -ec 'test -f /app/alembic.ini && test -d /app/alembic/versions && test "$(find /app/alembic/versions -maxdepth 1 -name "*.py" | wc -l)" -gt 0'
 
   browser-e2e:
     runs-on: ubuntu-24.04
