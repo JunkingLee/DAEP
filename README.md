@@ -42,6 +42,14 @@ DAEP is not an Agent Runtime. It is the control plane that connects **human acco
 
 ![DAEP multi-agent collaboration](docs/images/daep-collaboration.svg)
 
+## 核心产品模型 / Core Product Model
+
+DAEP 将工程工作组织成 **Context → Intent → Execution → Collaboration → Evidence → Human Acceptance → Audit** 的可治理链路。
+
+![DAEP core product model](docs/images/daep-product-model.svg)
+
+> **人类负责、Agent 执行、平台治理、证据验收。 / Humans own accountability; Agents execute; DAEP governs; evidence proves delivery.**
+
 ## 产品价值 / Product Value
 
 DAEP 解决 Agentic Engineering 中传统项目管理工具难以解决的问题：
@@ -58,19 +66,13 @@ DAEP 解决 Agentic Engineering 中传统项目管理工具难以解决的问题
 
 ![DAEP governance loop](docs/images/daep-governance.svg)
 
-## 产品边界 / Product Boundary
+## Agent 与 DAEP 的边界 / Agent ↔ DAEP Boundary
 
-```
-Member Environment                         DAEP Control Plane
-┌──────────────────────────┐              ┌──────────────────────────┐
-│ Agent Runtime / Model    │              │ Identity & Authorization │
-│ Tools / Local Files      │              │ Projects / Requirements  │
-│ MCP Host                 │── Adapter ──▶│ Tasks / Collaboration     │
-│                          │    HTTPS     │ Evidence / Approval       │
-└──────────────────────────┘              │ Messaging / Outbox        │
-                                          │ Governance / Audit        │
-                                          └──────────────────────────┘
-```
+边界原则：**本地执行、平台治理 / Local execution, platform governance**。
+
+![Agent and DAEP responsibility boundary](docs/images/daep-agent-daep-boundary.svg)
+
+DAEP **不负责 / does not**：
 
 DAEP **不负责 / does not**：
 
