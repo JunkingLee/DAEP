@@ -1726,3 +1726,24 @@
 - 部署验收清单已落库；真实部署环境尚未由本轮自动化操作验证。
 - 当前可确认的是代码与 CI 自动化候选交付基线通过；不能据此宣称真实 OIDC、生产 PostgreSQL/RLS、Worker Token、外部 Agent Runtime/MCP 和完整用户流程已验收。
 - 下一步应在目标环境逐项执行清单，记录部署 SHA、执行人、结果和脱敏证据；阻塞项需登记责任人及解除条件。
+
+
+## 67. Production Compose / OIDC / Worker 部署预检修正（2026-11-25）
+
+### 审查发现
+- `.env.example` 未提供 Production Compose 强制要求的 `DAEP_RUNTIME_DB_PASSWORD` 与 `DAEP_PRIVILEGED_DB_PASSWORD`，且文件尾部 Git provider 示例存在转义换行文本，不适合作为可直接复制的环境模板。
+- Production Compose 仅向 API 传递 OIDC 核心四项配置，遗漏自动开户开关、默认 Tenant/Role、Scopes 和可选 Audience；这些配置即使写入宿主机环境，也不会进入容器。
+- `daep-worker` 位于 opt-in 的 `broker` profile，普通 Compose 启动不会运行 Worker；未显式启动会导致 Outbox 投递、授权到期提醒和到期状态物化无法周期执行。
+- 旧版 `POSTGRES_OIDC_TENANCY.md` 对 Alembic 与 RLS 的描述已过时，与当前代码和 CI 不符。
+
+### 本轮修正
+- 重写 `.env.example`，补齐三套独立 PostgreSQL 凭证、Admin/Worker Token、CORS、OIDC 全部当前支持配置和 Broker Gateway 配置；明确秘密不可提交。
+- Production Compose 将 OIDC Auto Provision、Default Tenant/Role、Scopes、Audience 显式传入 API。
+- 扩展 `scripts/verify_production_compose.py`，确保上述 OIDC 环境键不会从 Compose 配置中遗漏。
+- 在 Worker README 和 PostgreSQL/OIDC 部署文档中明确 `--profile broker` 启动要求、at-least-once 去重责任，以及 Worker 未运行的业务影响。
+- 重写过时的 PostgreSQL/OIDC/租户说明，按当前 Alembic、RLS、DB roles、OIDC callback 和备份恢复能力描述。
+- 未新增数据库 Schema/Migration；未涉及历史数据迁移或利旧。
+
+### 验证与后续
+- 本次修改将触发 CI 的 Production Compose 静态安全断言及全量测试。
+- CI 通过后仍需在真实环境验证 IdP、Broker Gateway、Worker Token、生产数据库角色/RLS 和外部 MCP Runtime；本轮没有真实生产凭证或目标环境，因此不标记真实部署门禁 PASS。
