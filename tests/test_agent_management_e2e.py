@@ -164,7 +164,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             agent_card = page.locator("#agentGrid .agent-card").filter(has_text="Browser E2E Agent")
             expect(agent_card).to_be_visible()
             agent_id = agent_card.locator(".agent-id").inner_text()
-            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"${agent_id}\"]")
+            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"" + agent_id + "\"]")
 
             # Detail and update.
             agent_card.get_by_role("button", name="管理").click()
