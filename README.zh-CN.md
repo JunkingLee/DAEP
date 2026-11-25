@@ -15,7 +15,7 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 
 [English README](README.en.md) · [English documentation](docs/) · [Project handoff](docs/PROJECT_HANDOFF.md)
 
-![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
+![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero-zh-CN.svg)
 
 ## 产品能力全景
 
@@ -29,7 +29,7 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 | 安全 | Tenant · RLS · OIDC · Token 隔离 | 强安全边界 |
 | 治理 | Decision · Approval · Audit · Incident | 人类责任闭环 |
 
-![DAEP 多 Agent 协作](docs/images/daep-collaboration.svg)
+![DAEP 多 Agent 协作](docs/images/daep-collaboration-zh-CN.svg)
 
 ## 为什么需要 DAEP
 
@@ -48,17 +48,17 @@ DAEP 将这些问题从“Agent 自己说完成了”转化为**可授权、可�
 
 ## 一眼看懂 DAEP
 
-![DAEP architecture](docs/images/daep-architecture.svg)
+![DAEP architecture](docs/images/daep-architecture-zh-CN.svg)
 
 DAEP 的关键不是“让 Agent 更聪明”，而是把 Agent 的执行能力放进一条**有责任人、有授权、有证据、有验收、有审计**的工程链路。
 
-![DAEP delivery lifecycle](docs/images/daep-lifecycle.svg)
+![DAEP delivery lifecycle](docs/images/daep-lifecycle-zh-CN.svg)
 
 ## 核心产品模型
 
 DAEP 将软件工程工作组织成一条可治理的产品链路：**业务上下文 → 工程意图 → 任务执行 → Agent 协作 → 交付证据 → 人类验收 → 审计治理**。
 
-![DAEP 核心产品模型](docs/images/daep-product-model.svg)
+![DAEP 核心产品模型](docs/images/daep-product-model-zh-CN.svg)
 
 > **关键原则：** Task 的责任归属于人类 Member；Agent 的能力来自显式授权；Evidence 是交付事实；Acceptance 由人类完成。
 
@@ -135,13 +135,13 @@ DAEP 将“完成开发”和“完成交付”明确分离：
 
 ## 治理闭环
 
-![DAEP 治理闭环](docs/images/daep-governance.svg)
+![DAEP 治理闭环](docs/images/daep-governance-zh-CN.svg)
 
 ## Agent 与 DAEP 的边界
 
 边界设计的核心是 **“本地执行、平台治理”**：Agent Runtime、Model、Tools、Local Files 和 MCP Host 始终属于 Member 自己的环境；DAEP 负责身份、授权、任务、协作、证据、审批、可靠消息和审计。
 
-![Agent 与 DAEP 的责任边界](docs/images/daep-agent-daep-boundary.svg)
+![Agent 与 DAEP 的责任边界](docs/images/daep-agent-daep-boundary-zh-CN.svg)
 
 **DAEP 是 Control Plane，不是 Runtime。** 本地 MCP Adapter 只是连接桥梁，通过 HTTPS 调用 DAEP API；它不会启动、停止、唤醒或托管 Agent Runtime。
 
