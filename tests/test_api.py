@@ -6055,3 +6055,29 @@ def test_agent_token_cannot_impersonate_owner_on_member_and_governance_apis():
         'reason':'Agent must not reopen a closed project'}).status_code==403
     with main_module.conn() as db:
         assert db.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()['status']=='CLOSED'
+
+
+def test_worker_credential_cannot_alias_member_or_agent_tokens(monkeypatch):
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+    member=client.post('/api/v1/members',headers=ADMIN,json={
+        'name':'Worker Credential Collision Member'})
+    assert member.status_code==200,member.text
+    member_headers={'Authorization':'Bearer '+member.json()['token']}
+
+    monkeypatch.setenv('DAEP_WORKER_TOKEN',member.json()['token'])
+    member_collision=client.post('/internal/v1/outbox/claim',headers=member_headers,
+        json={'worker_id':'member-token-as-worker'})
+    assert member_collision.status_code==503
+    assert 'distinct from Member credentials' in member_collision.text
+    assert client.get('/api/v1/me',headers=member_headers).status_code==200
+
+    agent=client.post('/api/v1/agents',headers=member_headers,json={
+        'name':'Worker Credential Collision Agent'})
+    assert agent.status_code==200,agent.text
+    agent_headers={'Authorization':'Bearer '+agent.json()['token']}
+    monkeypatch.setenv('DAEP_WORKER_TOKEN',agent.json()['token'])
+    agent_collision=client.post('/internal/v1/collaboration-grants/reminders/dispatch',
+        headers=agent_headers)
+    assert agent_collision.status_code==503
+    assert 'distinct from Agent credentials' in agent_collision.text
