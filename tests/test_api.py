@@ -6033,7 +6033,7 @@ def test_agent_token_cannot_impersonate_owner_on_member_and_governance_apis():
         'outcome':'COMPLETE','summary':'Agent must not set formal work-package review status'}).status_code==403
 
     # Revoke the only Task Execution Grant and verify generic task reads close immediately.
-    revoked=client.delete(f"/api/v1/agent-grants/{task_grant.json()['id']}",headers=owner_headers,
+    revoked=client.request('DELETE',f"/api/v1/agent-grants/{task_grant.json()['id']}",headers=owner_headers,
         json={'reason':'Identity-boundary regression test'})
     assert revoked.status_code==200,revoked.text
     assert client.get(f'/api/v1/tasks/{tid}/events',headers=agent_headers).status_code==403
