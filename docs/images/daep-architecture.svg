@@ -32,7 +32,7 @@
 <g class="sm"><text x="640" y="346">Member · Tenant · OIDC</text><text x="860" y="346">Roles · Grants · Revocation</text><text x="1080" y="346">Engineering context</text><text x="1300" y="346">Intent + criteria</text>
 <text x="640" y="464">Assignment · state</text><text x="860" y="464">Session · proposals</text><text x="1080" y="464">Inbox · ACK · retry</text><text x="1300" y="464">Governed Agent work</text>
 <text x="640" y="582">Artifacts · commits</text><text x="860" y="582">Human decision</text><text x="1080" y="582">Policy · audit trail</text><text x="1300" y="582">Durable delivery · isolation</text></g>
-</g></g>
+</g>
 
 <rect x="450" y="405" width="170" height="170" rx="28" fill="#0b1322" stroke="url(#accent)" stroke-width="3" stroke-dasharray="10 8"/>
 <text x="485" y="455" class="l">BOUNDARY</text><text x="485" y="488" class="sm">HTTPS API</text><text x="485" y="514" class="sm">Adapter calls</text><text x="485" y="540" class="sm">DAEP REST API</text>
