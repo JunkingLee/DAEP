@@ -62,9 +62,12 @@ def test_rc27_project_member_directory_contract_is_preserved():
     assert "SELECT tenant_id FROM projects WHERE id=?" in block
 
 
-def test_rc28_project_creation_is_platform_admin_only():
+def test_rc28_project_creation_is_member_owned_and_tenant_scoped():
     block = MAIN.split("@app.post('/api/v1/projects')",1)[1].split("@app.get('/api/v1/projects')",1)[0]
-    assert "if not is_admin(a): raise HTTPException(403,'Platform administrator required')" in block
+    assert "a.get('actor_type')=='AGENT'" in block
+    assert "tenant_id=a.get('tenant_id','tenant-default')" in block
+    assert "project_members" in block
+    assert "project.created" in block
 
 
 def test_rc28_project_scope_write_access_requires_project_manager():
