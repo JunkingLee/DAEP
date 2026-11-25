@@ -269,6 +269,13 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             assert grant_setup['collaborationAcceptStatus'] == 200, grant_setup
             assert grant_setup['taskRevokeStatus'] == 200, grant_setup
             assert grant_setup['collaborationRevokeStatus'] == 200, grant_setup
+            # The grant setup uses direct API calls while the Agent page may still
+            # receive an asynchronous list refresh. Re-enter the page to establish
+            # a fresh, stable card locator before asserting authorization state.
+            page.locator('#nav button[data-page="agents"]').click()
+            expect(page.locator("#agents.page.active")).to_be_visible()
+            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"" + agent_id + "\"]")
+            expect(agent_card).to_be_visible(timeout=10000)
             agent_card.get_by_role("button", name="管理").click()
             expect(page.locator("#modalBody")).to_contain_text("Task Execution Grants")
             expect(page.locator("#modalBody")).to_contain_text("Collaboration Grants")
