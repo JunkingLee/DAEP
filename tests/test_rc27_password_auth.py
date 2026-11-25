@@ -36,7 +36,8 @@ def test_rc27_project_member_directory_and_roles_are_separate_from_platform_acco
     assert "already_member" in block
     assert "password_status='ACTIVE'" in block
     member_route = MAIN.split("@app.post('/api/v1/projects/{pid}/members')",1)[1].split("@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')",1)[0]
-    assert "role not in ('member','reviewer','manager')" in member_route
+    assert "role not in ('member','reviewer','manager','owner')" in member_route
+    assert "role=='owner' and not is_admin(a)" in member_route
     assert "work_function not in ('developer','tester','product','architect','other')" in member_route
 
 
