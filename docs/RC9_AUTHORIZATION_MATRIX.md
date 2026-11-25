@@ -87,6 +87,5 @@ The following still need dedicated negative tests or target-environment evidence
 3. Cross-Tenant attempts for every resource family, including historical/legacy rows and RLS behavior under production roles.
 4. Concurrent revoke/expiry versus Agent read/write races on PostgreSQL, not only SQLite functional tests.
 5. Concurrent revoke/expiry versus Agent read/write races on PostgreSQL, not only SQLite functional tests.
-6. Real two-Member / two-Agent interoperability and deployment-specific OIDC, database backup/restore and penetration testing.
 
 Do not mark these remaining items PASS based only on the focused tests above.
