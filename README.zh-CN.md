@@ -13,7 +13,7 @@ DAEP 是一个面向团队的软件工程协作与治理平台。它以 **Projec
 >
 > DAEP 不创建、不托管、不启动、不停止、不唤醒，也不接管用户自己的 Agent Runtime。每个 Agent 始终归属于一个人类 Member，并运行在该成员自己的环境中。DAEP 负责身份、授权、任务、协作上下文、消息、证据、审批、治理和审计。
 
-[English README](README.en.md) · [English docs](docs/) · [中文文档索引](docs/README.zh-CN.md)
+[English README](README.en.md) · [English documentation](docs/) · [Project handoff](docs/PROJECT_HANDOFF.md)
 
 ![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
 
@@ -252,4 +252,4 @@ DAEP 当前处于 **Release Candidate / 持续开发阶段**。核心项目管�
 
 ## License
 
-See the repository license file.
+**License: not yet specified.** The repository currently does not include a `LICENSE` file; do not assume an open-source license applies.
