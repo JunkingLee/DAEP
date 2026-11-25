@@ -11,7 +11,7 @@ Current source snapshot:
 - `app/main.py`: 4,347 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
-- Latest recorded RC9 CI run `45572688339`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
+- Latest recorded RC9 CI run `45573815527`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
 A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
@@ -77,7 +77,7 @@ Corrected on `release/1.0.0-rc9`:
 - Added a regression test for platform-admin identity scoping.
 - Proposal withdrawal now validates the originating accepted Collaboration Grant, OPEN Session and active Task, so revoked/expired Agents cannot mutate pending proposals.
 - Browser E2E now covers the revoked-grant withdrawal denial.
-- This is a targeted fix, not a declaration that the full authorization matrix is complete. The remaining pass must still cover route-level negative tests for cross-tenant access, project roles, Agent grants, expired/revoked grants, and Worker identity.
+- This is a targeted fix, not a declaration that the full authorization matrix is complete. The remaining pass must still cover broader route-level negative tests for cross-tenant access, every project role, Agent grants, expired/revoked grants, and Worker identity.
 
 ### Second authorization finding — Agent identity management
 
@@ -91,6 +91,16 @@ Corrected on `release/1.0.0-rc9`:
 - CI run `45572688339` passed all 8 jobs, including Python 3.11/3.12/3.13 and Browser E2E.
 
 This closes the identified Agent-to-Member management impersonation path; the broader authorization matrix remains in progress.
+
+### Further project authorization findings — 2026-11-25
+
+Two additional project-governance gaps were found and corrected:
+- `POST /api/v1/projects/{pid}/members` previously allowed a project Owner or Manager to directly add another project Owner. The route now rejects direct Owner-role grants from project members; the platform administrator remains the explicit administrative exception. A regression test covers both project Owner and Manager attempts.
+- Project-member removal revoked task grants, Agent bindings and Agent assignments, but left the departing Member's active Collaboration Grants intact. Removal now locks all affected grant tasks, revokes those Collaboration Grants, records audit events and queues a durable Member notification. The regression test exercises a real accepted Collaboration Grant and verifies it becomes REVOKED.
+
+The current authorization tests also cover Agent-token attempts to list/create/detail/update Agents, rotate/revoke Agent tokens and bind/unbind project Agents. These operations now require a human Member actor rather than trusting the Owner Member ID carried by Agent identity context.
+
+Latest full CI evidence for this batch: run `45573815527`, all 8 jobs successful.
 
 ## Next Quality Work
 
