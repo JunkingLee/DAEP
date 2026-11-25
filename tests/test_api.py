@@ -6081,3 +6081,43 @@ def test_worker_credential_cannot_alias_member_or_agent_tokens(monkeypatch):
         headers=agent_headers)
     assert agent_collision.status_code==503
     assert 'distinct from Agent credentials' in agent_collision.text
+
+
+def test_agent_task_grant_revoke_vs_execution_read_has_no_deadlock_and_revokes_access():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _,member_id,member_token,task_id=setup_project_task()
+    member_headers={'Authorization':'Bearer '+member_token}
+    created=client.post('/api/v1/agents',headers=member_headers,json={'name':'Grant Race Agent'})
+    assert created.status_code==200,created.text
+    agent_headers={'Authorization':'Bearer '+created.json()['token']}
+    agent=created.json()['agent']
+    grant=client.post(f'/api/v1/tasks/{task_id}/agent-grants',headers=member_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read']})
+    assert grant.status_code==200,grant.text
+    grant_id=grant.json()['id']
+    accepted=client.post(f'/api/v1/agent-grants/{grant_id}/accept',headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+
+    gate=Barrier(2)
+    def revoke():
+        gate.wait(timeout=10)
+        return client.request('DELETE',f'/api/v1/agent-grants/{grant_id}',
+            headers=member_headers,json={'reason':'Concurrent execution revoke race'})
+    def read():
+        gate.wait(timeout=10)
+        return client.get(f'/api/v1/tasks/{task_id}/events',headers=agent_headers)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        revoke_future=pool.submit(revoke)
+        read_future=pool.submit(read)
+        revoked,retrieved=revoke_future.result(timeout=30),read_future.result(timeout=30)
+
+    assert revoked.status_code==200,revoked.text
+    assert retrieved.status_code in (200,403),retrieved.text
+    final=client.get(f'/api/v1/tasks/{task_id}/events',headers=agent_headers)
+    assert final.status_code==403,final.text
+    with main_module.conn() as c:
+        row=c.execute('SELECT status FROM agent_task_grants WHERE id=?',(grant_id,)).fetchone()
+    assert row['status']=='REVOKED'
