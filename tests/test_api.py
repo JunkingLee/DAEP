@@ -5898,3 +5898,32 @@ def test_agent_token_cannot_create_or_manage_agent_identities():
     assert token_state == 'ACTIVE'
     assert agent_state == 'ACTIVE'
     assert bindings == 0
+
+
+def test_project_members_cannot_directly_grant_project_owner_role():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {'Authorization': f'Bearer {owner_token}'}
+    manager = client.post('/api/v1/members', headers=ADMIN, json={
+        'name':'Project Manager Boundary','role':'member','password':'manager-boundary-password-2026'})
+    target = client.post('/api/v1/members', headers=ADMIN, json={
+        'name':'Owner Escalation Target','role':'member','password':'target-boundary-password-2026'})
+    assert manager.status_code == 200, manager.text
+    assert target.status_code == 200, target.text
+    manager_id = manager.json()['id']
+    target_id = target.json()['id']
+    added_manager = client.post(f'/api/v1/projects/{pid}/members', headers=owner_headers, json={
+        'member_id':manager_id,'role':'manager'})
+    assert added_manager.status_code == 200, added_manager.text
+    manager_headers = {'Authorization': f"Bearer {manager.json()['token']}"}
+
+    owner_attempt = client.post(f'/api/v1/projects/{pid}/members', headers=owner_headers, json={
+        'member_id':target_id,'role':'owner'})
+    manager_attempt = client.post(f'/api/v1/projects/{pid}/members', headers=manager_headers, json={
+        'member_id':target_id,'role':'owner'})
+    assert owner_attempt.status_code == 403
+    assert manager_attempt.status_code == 403
+    with main_module.conn() as db:
+        assert db.execute(
+            'SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',
+            (pid,target_id),
+        ).fetchone() is None
