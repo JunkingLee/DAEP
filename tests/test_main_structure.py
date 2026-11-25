@@ -37,3 +37,5 @@ def test_main_has_no_duplicate_fastapi_routes():
                 continue
             routes.append((decorator.func.attr, decorator.args[0].value))
     assert len(routes) == len(set(routes)), "duplicate FastAPI method/path registrations remain"
+
+# Keep structural-duplication guard explicit for future refactors.
