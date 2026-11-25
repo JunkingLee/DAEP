@@ -238,6 +238,21 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
         assert row[0] == tenant_b
 
 
+    # Event and delivery-health views must resolve through the owning Task/Project,
+    # so opaque event/message identifiers cannot become a cross-tenant oracle.
+    denied_task_events = client.get(f'/api/v1/tasks/{task_b_id}/events', headers=headers_a)
+    assert denied_task_events.status_code in (403, 404), denied_task_events.text
+
+    denied_delivery_health = client.get(
+        f'/api/v1/projects/{project_b_id}/message-delivery-health', headers=headers_a
+    )
+    assert denied_delivery_health.status_code in (403, 404), denied_delivery_health.text
+
+    notifications_a = client.get('/api/v1/me/notifications?status=ALL', headers=headers_a)
+    assert notifications_a.status_code == 200, notifications_a.text
+    assert 'Tenant B Task' not in json.dumps(notifications_a.json(), ensure_ascii=False)
+    assert str(member_b_id) not in json.dumps(notifications_a.json(), ensure_ascii=False)
+
     # Tenant A's own project remains visible, proving the isolation test did not
     # simply revoke all ordinary-member project access.
     own_projects = client.get('/api/v1/projects', headers=headers_a)
