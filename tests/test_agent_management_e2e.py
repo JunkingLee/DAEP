@@ -174,7 +174,7 @@ def test_agent_management_full_browser_lifecycle(daep_server):
             page.locator("#editAgentStatus").select_option("ACTIVE")
             page.get_by_role("button", name="保存").click()
             expect(page.get_by_test_id("toast")).to_contain_text("Agent 已更新")
-            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"${agent_id}\"]")
+            agent_card = page.locator("#agentGrid .agent-card[data-agent-id=\"" + agent_id + "\"]")
             expect(agent_card).to_contain_text("Browser E2E Agent Updated")
 
             # Rotate the token; the replacement must differ from the initial
