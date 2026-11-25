@@ -8,7 +8,7 @@ Branch: `release/1.0.0-rc9`
 RC9 has passed the blocking structural quality gate on the current branch. The historical duplicate-definition and duplicate-route findings below are retained as remediation history, not as current findings.
 
 Current source snapshot:
-- `app/main.py`: 4396 lines.
+- `app/main.py`: 4,407 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
 - Latest recorded RC9 CI run `45576459940`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
@@ -116,7 +116,7 @@ Corrected on `release/1.0.0-rc9`:
 - Added a grant lifecycle assertion: generic Agent task-event reads work with an accepted `task.read` grant and fail immediately after revocation.
 - Static route review confirmed every `/internal/v1/*` endpoint invokes `require_worker()`; all four internal routes are Worker-only.
 
-CI run `45576459940` passed all 8 jobs. Each Python version reported 263 passed and 2 skipped; Chromium Browser E2E, PostgreSQL migrations/RLS, Container Build, Production Compose and Quality Gate all succeeded.
+CI run `45576459940` passed all 8 jobs. Each Python version reported 265 passed and 2 skipped; Chromium Browser E2E, PostgreSQL migrations/RLS, Container Build, Production Compose and Quality Gate all succeeded.
 
 ### README architecture SVG rendering defect
 
@@ -148,7 +148,7 @@ Prioritize in this order:
 
 Current code-level structural gate: **PASS**.
 
-Current CI baseline: **PASS (8/8 jobs in run 45575412495)**.
+Current CI baseline: **PASS (8/8 jobs in run 45576459940)**.
 
 This does not close the separate real-environment release gates. Real browser product acceptance, Production PostgreSQL backup/restore, and two-member/two-Agent interoperability remain NOT EXECUTED until evidence is collected in the target environment. See:
 - `docs/RC9_RELEASE_READINESS.md`
