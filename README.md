@@ -47,6 +47,10 @@ DAEP 解决 Agentic Engineering 中传统项目管理工具难以解决的问题
 - **可靠消息 / Reliable Delivery**：Inbox、Outbox、ACK、Retry、Dead Letter、Recovery 均可追踪。
 - **全链路审计 / Auditability**：授权、协作、交付、审批、治理和消息状态均可审计。
 
+## 治理闭环 / Governance Loop
+
+![DAEP governance loop](docs/images/daep-governance.svg)
+
 ## 产品边界 / Product Boundary
 
 ```
