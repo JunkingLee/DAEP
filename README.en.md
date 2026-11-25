@@ -56,29 +56,11 @@ DAEP is not trying to make an Agent “smarter”. It puts Agent execution insid
 
 ## Product Model
 
-```
-Organization / Tenant
-        │
-     Project
-        │
-   Requirement
-        │
-      Task
-        │
- ┌──────┴─────────┐
- │                │
-Human Member   Local Agent
- │                │
- └── authorization ──┘
-        │
- Collaboration / Work Packages
-        │
- Artifacts / Evidence
-        │
- Review / Acceptance
-        │
- Audit / Governance
-```
+DAEP organizes engineering work into a governed product chain: **business context → engineering intent → execution → Agent collaboration → delivery evidence → human acceptance → audit**.
+
+![DAEP core product model](docs/images/daep-product-model.svg)
+
+> **Core principle:** the Task is accountable to a human Member; Agent capability comes from explicit authorization; Evidence records delivery facts; Acceptance remains a human decision.
 
 ### 1. Project and Task Management
 
@@ -157,20 +139,11 @@ DAEP provides durable messages and a transactional outbox:
 
 ## Agent / DAEP Boundary
 
-```
-┌──────────────────── Member's Environment ────────────────────┐
-│                                                              │
-│   Agent Runtime / Model / Tools / Local Files / MCP Host      │
-│                         │                                    │
-│                    DAEP MCP Adapter                           │
-└─────────────────────────┼────────────────────────────────────┘
-                          │ HTTPS
-                          ▼
-┌──────────────────────────── DAEP ────────────────────────────┐
-│ Identity │ Authorization │ Projects │ Tasks │ Collaboration  │
-│ Messages │ Evidence │ Approval │ Governance │ Audit │ Outbox │
-└──────────────────────────────────────────────────────────────┘
-```
+The boundary is intentionally simple: **local execution, platform governance**. The Agent Runtime, model, tools, local files and MCP Host remain inside the Member's environment. DAEP governs identity, authorization, work, collaboration, evidence, approval, reliable delivery and audit.
+
+![Agent and DAEP responsibility boundary](docs/images/daep-agent-daep-boundary.svg)
+
+**DAEP is the Control Plane, not the Runtime.** The local MCP Adapter is only the bridge, calling DAEP APIs over HTTPS; it does not start, stop, wake or host the Agent Runtime.
 
 DAEP does **not**:
 
