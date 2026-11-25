@@ -1746,7 +1746,7 @@
 
 ### 验证与后续
 - 本次修改将触发 CI 的 Production Compose 静态安全断言及全量测试。
-- CI 通过后仍需在真实环境验证 IdP、Broker Gateway、Worker Token、生产数据库角色/RLS 和外部 MCP Runtime；本轮没有真实生产凭证或目标环境，因此不标记真实部署门禁 PASS。
+- CI 通过后仍需在真实环境验证 IdP、Broker Gateway、Worker Token、生产数据库角色/RLS，以及 Owner 本机 MCP stdio Adapter 到 DAEP REST API 的 HTTPS 连通性；DAEP 当前不托管远程 MCP Server。本轮没有真实生产凭证或目标环境，因此不标记真实部署门禁 PASS。
 
 
 ## 68. Production 镜像缺少 Alembic 迁移资产的修复（2026-11-25）
