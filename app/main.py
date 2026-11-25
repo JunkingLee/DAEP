@@ -4159,7 +4159,7 @@ def create_member(body:dict,authorization:str=Header(None)):
     name=str(body.get('name','')).strip()
     role=str(body.get('role','member')).strip()
     if not name: raise HTTPException(422,'Member name is required')
-    if role!='member': raise HTTPException(422,'New platform users must use the member account role; project roles are assigned per project')
+    if role!='member' and role!='manager': raise HTTPException(422,'New platform users must use a supported human account role; project roles are assigned per project')
     explicit_username=bool(body.get('username'))
     username=str(body.get('username') or re.sub(r'[^a-z0-9]+','.',name.lower()).strip('.') or ('user.'+uuid.uuid4().hex[:8])).lower()
     password=body.get('password')
