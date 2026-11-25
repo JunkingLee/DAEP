@@ -77,7 +77,7 @@ The focused Agent identity regression test verifies:
 - Task event reads are denied without `task.read`, allowed with an accepted grant, and denied again after grant revocation.
 - Denied operations do not mutate Owner profile state, project state or approval state.
 
-Latest full CI run for this matrix update: `45576103698` — 8/8 jobs passed; Python 3.11/3.12/3.13 each reported 264 passed and 2 skipped; Browser E2E, PostgreSQL Migration/RLS, Container Build, Production Compose and Quality Gate passed.
+Latest full CI run for this matrix update: `45576459940` — 8/8 jobs passed; Python 3.11/3.12/3.13 each reported 265 passed and 2 skipped; Browser E2E, PostgreSQL Migration/RLS, Container Build, Production Compose and Quality Gate passed.
 
 ## Remaining verification
 
