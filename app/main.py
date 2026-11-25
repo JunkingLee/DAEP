@@ -4437,22 +4437,6 @@ Z','+00:00'))
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
 
-@app.post('/api/v1/admin/outbox/{outbox_id}/replay')
-def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    reason=str(body.get('reason','')).strip()
-    if not reason or len(reason)>1000: raise HTTPException(422,'A replay reason (1-1000 characters) is required')
-    with conn() as c:
-        row=c.execute("SELECT tenant_id,status FROM outbox WHERE id=?",(outbox_id,)).fetchone()
-        if not row: raise HTTPException(404,'Outbox item not found')
-        if row['status']!='DEAD': raise HTTPException(409,'Only DEAD outbox items can be replayed')
-        stamp=now()
-        cur=c.execute("UPDATE outbox SET status='PENDING',attempts=0,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL,sent_at=NULL WHERE id=? AND status='DEAD'",(stamp,outbox_id))
-        if not cur.rowcount: raise HTTPException(409,'Outbox item changed; refresh and retry')
-        event(c,'outbox.dead.replayed',a['id'],None,{'outbox_id':outbox_id,'reason':reason},tenant_override=row['tenant_id'])
-    return {'id':outbox_id,'status':'PENDING','replayed':True}
-
 @app.websocket('/ws/v1')
 async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     # Best-effort online notification channel. The durable inbox remains the source of truth.
@@ -4749,22 +4733,6 @@ Z','+00:00'))
         'incident_count':len(incidents),'incidents':incidents[:limit],
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
-@app.post('/api/v1/admin/outbox/{outbox_id}/replay')
-def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    reason=str(body.get('reason','')).strip()
-    if not reason or len(reason)>1000: raise HTTPException(422,'A replay reason (1-1000 characters) is required')
-    with conn() as c:
-        row=c.execute("SELECT tenant_id,status FROM outbox WHERE id=?",(outbox_id,)).fetchone()
-        if not row: raise HTTPException(404,'Outbox item not found')
-        if row['status']!='DEAD': raise HTTPException(409,'Only DEAD outbox items can be replayed')
-        stamp=now()
-        cur=c.execute("UPDATE outbox SET status='PENDING',attempts=0,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL,sent_at=NULL WHERE id=? AND status='DEAD'",(stamp,outbox_id))
-        if not cur.rowcount: raise HTTPException(409,'Outbox item changed; refresh and retry')
-        event(c,'outbox.dead.replayed',a['id'],None,{'outbox_id':outbox_id,'reason':reason},tenant_override=row['tenant_id'])
-    return {'id':outbox_id,'status':'PENDING','replayed':True}
 
 @app.websocket('/ws/v1')
 async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
@@ -5185,162 +5153,6 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
 
-@app.post('/api/v1/tasks/{tid}/workflow-transition')
-def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(None),idempotency_key:str=Header(None)):
-    a=actor(authorization); target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
-    if not target: raise HTTPException(422,'target_stage is required')
-    if target=='BLOCKED': raise HTTPException(409,'BLOCKED is controlled by the task blocked endpoint')
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        cfg=project_workflow_config(c,pid)
-        stage=next((x for x in cfg.get('stages',[]) if x.get('key')==target),None)
-        if not stage: raise HTTPException(409,'Target workflow stage is not configured')
-        current=c.execute('SELECT status FROM tasks WHERE id=?',(tid,)).fetchone()['status']
-        if is_admin(a): pass
-        elif current in ('REVIEW','DONE') or target in ('DONE',):
-            require_project_access(c,pid,a,write=True)
-        else:
-            require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f'workflow:{a["id"]}:{tid}:{idempotency_key}' if idempotency_key else None
-        if scoped_key:
-            prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
-            if prior:
-                if prior['payload']!=json.dumps({'target_stage':target,'comment':comment}): raise HTTPException(409,'Idempotency-Key was already used with a different workflow transition')
-                return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
-        enforce_workflow_stage(c,pid,target,a['id'],tid)
-        eid=transition_task_workflow(c,tid,target,a['id'],comment)
-        if scoped_key:
-            # The transition event itself is the idempotent record; attach a unique companion event only when needed.
-            c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
-        return {'task_id':tid,'status':target,'event_id':eid}
-
-@app.post('/api/v1/tasks/{tid}/review')
-def review_task(tid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); decision=b.get('decision')
-    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
-    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
-    with conn() as c:
-        begin_serialized_write(c)
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        if is_admin(a): pass
-        else:
-            row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        task_sql='SELECT status FROM tasks WHERE id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
-        task=c.execute(task_sql,(tid,)).fetchone()
-        if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
-        if decision=='APPROVE':
-            enforce_workflow_exit(c,pid,task['status'],a['id'])
-            enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
-            packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
-            pending=[x['child_task_id'] for x in packages if x['status']!='DONE']
-            missing=[x['child_task_id'] for x in packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
-            if pending or missing:
-                raise HTTPException(409,detail={'message':'Parent task cannot be approved until every active work package is approved and has at least one artifact','pending_work_packages':pending,'missing_artifacts':missing})
-        status='DONE' if decision=='APPROVE' else 'IN_PROGRESS'
-        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,now(),tid,'REVIEW'))
-        if updated.rowcount != 1: raise HTTPException(409,'Task is no longer awaiting review')
-        eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
-        return {'task_id':tid,'status':status,'event_id':eid}
-
-@app.post('/api/v1/work-packages/{package_id}/review')
-def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
-    decision=str(b.get('decision','')).strip().upper()
-    comment=str(b.get('comment',''))[:4000]
-    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
-    with conn() as c:
-        begin_serialized_write(c)
-        package_sql='SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
-        package=c.execute(package_sql,(package_id,)).fetchone()
-        if not package: raise HTTPException(404,'Work package not found')
-        pid=package['project_id']
-        if is_admin(a): pass
-        else:
-            row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
-        stamp=now()
-        if decision=='APPROVE':
-            enforce_workflow_exit(c,pid,package['task_status'],a['id'])
-            enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
-            if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
-                raise HTTPException(409,'Work package must have at least one artifact before approval')
-            status='DONE'; progress=100
-        else:
-            status='IN_PROGRESS'; progress=90
-        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
-        if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
-        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
-        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
-
-Z','+00:00'))
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-        except (TypeError,ValueError):
-            return None
-    for message in messages:
-        records=by_message.get(message['id'],[])
-        dispatch='HEALTHY'; ack='NOT_DUE'; detail=None
-        if not records:
-            dispatch='MISSING'; detail='No message.created outbox record'
-        elif len(records)>1:
-            dispatch='DUPLICATE'; detail='Multiple message.created outbox records'
-        elif records[0]['status']=='DEAD':
-            dispatch='DEAD'; detail=records[0]['last_error'] or 'Outbox entered DEAD state'
-        elif records[0]['status'] in ('PENDING','IN_FLIGHT'):
-            created=parse_stamp(records[0]['created_at'])
-            if created and (stamp-created).total_seconds()>dispatch_sla_seconds:
-                dispatch='DISPATCH_OVERDUE'; detail='Broker dispatch exceeded SLA'
-        elif records[0]['status']!='SENT':
-            dispatch='HEALTHY'; detail='Unrecognized outbox state: '+str(records[0]['status'])
-        if dispatch in dispatch_counts: dispatch_counts[dispatch]+=1
-        if message['status'] in ('ACKNOWLEDGED','REJECTED'):
-            ack=message['status']
-        elif records and len(records)==1 and records[0]['status']=='SENT':
-            sent=parse_stamp(records[0]['sent_at'])
-            if sent and (stamp-sent).total_seconds()>ack_sla_seconds:
-                ack='ACK_OVERDUE'
-        if ack in ack_counts: ack_counts[ack]+=1
-        if dispatch!='HEALTHY':
-            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
-                'category':'DISPATCH_'+dispatch,'dispatch_status':dispatch,'ack_status':ack,
-                'age_seconds':max(0,int((stamp-(parse_stamp(message['created_at']) or stamp)).total_seconds())),
-                'detail':detail})
-        if ack=='ACK_OVERDUE':
-            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
-                'category':'ACK_OVERDUE','dispatch_status':dispatch,'ack_status':ack,
-                'age_seconds':max(0,int((stamp-(parse_stamp(records[0]['sent_at']) or stamp)).total_seconds())),
-                'detail':'Broker dispatch completed but recipient ACK exceeded SLA'})
-    return {'project_id':project_id,'generated_at':stamp.isoformat(),
-        'policy':{'dispatch_sla_seconds':dispatch_sla_seconds,'ack_sla_seconds':ack_sla_seconds},
-        'checked_messages':len(messages),'truncated':len(messages)==limit,
-        'dispatch_counts':dispatch_counts,'ack_counts':ack_counts,
-        'incident_count':len(incidents),'incidents':incidents[:limit],
-        'malformed_outbox_records_seen':malformed,
-        'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
-@app.post('/api/v1/admin/outbox/{outbox_id}/replay')
-def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    reason=str(body.get('reason','')).strip()
-    if not reason or len(reason)>1000: raise HTTPException(422,'A replay reason (1-1000 characters) is required')
-    with conn() as c:
-        row=c.execute("SELECT tenant_id,status FROM outbox WHERE id=?",(outbox_id,)).fetchone()
-        if not row: raise HTTPException(404,'Outbox item not found')
-        if row['status']!='DEAD': raise HTTPException(409,'Only DEAD outbox items can be replayed')
-        stamp=now()
-        cur=c.execute("UPDATE outbox SET status='PENDING',attempts=0,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL,sent_at=NULL WHERE id=? AND status='DEAD'",(stamp,outbox_id))
-        if not cur.rowcount: raise HTTPException(409,'Outbox item changed; refresh and retry')
-        event(c,'outbox.dead.replayed',a['id'],None,{'outbox_id':outbox_id,'reason':reason},tenant_override=row['tenant_id'])
-    return {'id':outbox_id,'status':'PENDING','replayed':True}
-
 @app.websocket('/ws/v1')
 async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     # Best-effort online notification channel. The durable inbox remains the source of truth.
@@ -5593,147 +5405,6 @@ SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
     'DELIVERY_EVIDENCE':{'enabled':True,'required_roles':['owner','manager','reviewer'],'required_evidence':True,'required_all_tasks_done':True,'applies_to':'DONE'}
 }
-@app.post('/api/v1/tasks/{tid}/work-result')
-def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        begin_serialized_write(c)
-        require_task_access(c,tid,a,assigned_only=True)
-        package_sql='SELECT id,parent_task_id,status,correlation_id FROM task_work_packages WHERE child_task_id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
-        package=c.execute(package_sql,(tid,)).fetchone()
-        if not package: raise HTTPException(404,'Task is not a registered work package')
-        identity=a.get('agent_id') if a.get('actor_type')=='AGENT' else a['id']
-        key=f"work-result:{identity}:{tid}:{b.idempotency_key}" if b.idempotency_key else None
-        payload={'outcome':b.outcome,'summary':b.summary,'work_package_id':package['id'],'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id']}
-        if key:
-            prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-            if prior:
-                prior_payload=json.loads(prior['payload'] or '{}')
-                prior_payload.pop('actor_type',None); prior_payload.pop('agent_id',None)
-                if prior_payload!=payload: raise HTTPException(409,'Idempotency key was used with a different result')
-                return {'task_id':tid,'status':'REVIEW' if b.outcome=='COMPLETE' else 'BLOCKED','event_id':prior['id'],'idempotent_replay':True}
-        if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        if b.outcome=='COMPLETE':
-            count=c.execute('SELECT COUNT(*) AS n FROM artifacts WHERE task_id=?',(tid,)).fetchone()['n']
-            if count<1: raise HTTPException(409,'Submit at least one artifact before reporting completion')
-            status='REVIEW'; progress=100
-        else:
-            status='BLOCKED'; progress=0
-        c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,now(),tid))
-        sync_work_package_parent(c,tid,a['id'],'work_result_'+b.outcome.lower())
-        eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
-    return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
-
-
-@app.post('/api/v1/tasks/{tid}/workflow-transition')
-def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(None),idempotency_key:str=Header(None)):
-    a=actor(authorization); target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
-    if not target: raise HTTPException(422,'target_stage is required')
-    if target=='BLOCKED': raise HTTPException(409,'BLOCKED is controlled by the task blocked endpoint')
-    with conn() as c:
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        cfg=project_workflow_config(c,pid)
-        stage=next((x for x in cfg.get('stages',[]) if x.get('key')==target),None)
-        if not stage: raise HTTPException(409,'Target workflow stage is not configured')
-        current=c.execute('SELECT status FROM tasks WHERE id=?',(tid,)).fetchone()['status']
-        if is_admin(a): pass
-        elif current in ('REVIEW','DONE') or target in ('DONE',):
-            require_project_access(c,pid,a,write=True)
-        else:
-            require_task_access(c,tid,a,assigned_only=True)
-        scoped_key=f'workflow:{a["id"]}:{tid}:{idempotency_key}' if idempotency_key else None
-        if scoped_key:
-            prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(scoped_key,)).fetchone()
-            if prior:
-                if prior['payload']!=json.dumps({'target_stage':target,'comment':comment}): raise HTTPException(409,'Idempotency-Key was already used with a different workflow transition')
-                return {'task_id':tid,'target_stage':target,'event_id':prior['id'],'idempotent_replay':True}
-        enforce_workflow_stage(c,pid,target,a['id'],tid)
-        eid=transition_task_workflow(c,tid,target,a['id'],comment)
-        sync_work_package_parent(c,tid,a['id'],'workflow_transition_'+target.lower())
-        if scoped_key:
-            # The transition event itself is the idempotent record; attach a unique companion event only when needed.
-            c.execute('UPDATE events SET idempotency_key=?,payload=? WHERE id=? AND idempotency_key IS NULL',(scoped_key,json.dumps({'target_stage':target,'comment':comment}),eid))
-        return {'task_id':tid,'status':target,'event_id':eid}
-
-@app.post('/api/v1/tasks/{tid}/artifacts')
-def artifact(tid:str,b:ArtifactIn,authorization:str=Header(None)):
-    a=actor(authorization); aid='art_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        if a.get('actor_type')=='AGENT':
-            require_agent_task_grant(c,a,tid,'task.artifact.submit')
-        else:
-            require_task_access(c,tid,a,assigned_only=True)
-        c.execute('INSERT INTO artifacts(id,task_id,artifact_type,uri,commit_sha,metadata,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(aid,tid,b.artifact_type,b.uri,b.commit_sha,json.dumps(b.metadata),now(),c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(tid,)).fetchone()['tenant_id'])); wp=c.execute('SELECT correlation_id,id FROM task_work_packages WHERE child_task_id=?',(tid,)).fetchone(); event(c,'artifact.submitted',a['id'],tid,{'artifact_id':aid,'uri':b.uri,'work_package_id':wp['id'] if wp else None,'correlation_id':wp['correlation_id'] if wp else None})
-    return {'id':aid,'task_id':tid}
-@app.post('/api/v1/tasks/{tid}/review')
-def review_task(tid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); decision=b.get('decision')
-    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve tasks')
-    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
-    with conn() as c:
-        begin_serialized_write(c)
-        pid=task_project(c,tid)
-        if not pid: raise HTTPException(404,'Task not found')
-        if is_admin(a): pass
-        else:
-            row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        task_sql='SELECT status FROM tasks WHERE id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): task_sql += ' FOR UPDATE'
-        task=c.execute(task_sql,(tid,)).fetchone()
-        if task['status']!='REVIEW': raise HTTPException(409,'Task is not awaiting review')
-        if decision=='APPROVE':
-            enforce_workflow_exit(c,pid,task['status'],a['id'])
-            enforce_workflow_stage(c,pid,'DONE',a['id'],tid)
-            packages=c.execute("SELECT w.child_task_id,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(tid,)).fetchall()
-            pending=[x['child_task_id'] for x in packages if x['status']!='DONE']
-            missing=[x['child_task_id'] for x in packages if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(x['child_task_id'],)).fetchone() is None]
-            if pending or missing:
-                raise HTTPException(409,detail={'message':'Parent task cannot be approved until every active work package is approved and has at least one artifact','pending_work_packages':pending,'missing_artifacts':missing})
-        status='DONE' if decision=='APPROVE' else 'IN_PROGRESS'
-        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,100 if decision=='APPROVE' else 90,now(),tid,'REVIEW'))
-        if updated.rowcount != 1: raise HTTPException(409,'Task is no longer awaiting review')
-        sync_work_package_parent(c,tid,a['id'],'task_review_'+decision.lower())
-        eid=event(c,'task.reviewed',a['id'],tid,{'decision':decision,'comment':b.get('comment','')})
-        return {'task_id':tid,'status':status,'event_id':eid}
-
-@app.post('/api/v1/work-packages/{package_id}/review')
-def review_work_package(package_id:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if a.get('actor_type')=='AGENT': raise HTTPException(403,'Agent cannot review or approve work packages')
-    decision=str(b.get('decision','')).strip().upper()
-    comment=str(b.get('comment',''))[:4000]
-    if decision not in ('APPROVE','REJECT'): raise HTTPException(422,'decision must be APPROVE or REJECT')
-    with conn() as c:
-        begin_serialized_write(c)
-        package_sql='SELECT w.*,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
-        package=c.execute(package_sql,(package_id,)).fetchone()
-        if not package: raise HTTPException(404,'Work package not found')
-        pid=package['project_id']
-        if is_admin(a): pass
-        else:
-            row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not row or row['role'] not in ('owner','manager','reviewer'): raise HTTPException(403,'Reviewer role required')
-        if package['status']!='ACTIVE': raise HTTPException(409,'Work package is no longer active')
-        if package['task_status']!='REVIEW': raise HTTPException(409,'Work package is not awaiting review')
-        stamp=now()
-        if decision=='APPROVE':
-            enforce_workflow_exit(c,pid,package['task_status'],a['id'])
-            enforce_workflow_stage(c,pid,'DONE',a['id'],package['child_task_id'])
-            if c.execute('SELECT 1 FROM artifacts WHERE task_id=? LIMIT 1',(package['child_task_id'],)).fetchone() is None:
-                raise HTTPException(409,'Work package must have at least one artifact before approval')
-            status='DONE'; progress=100
-        else:
-            status='IN_PROGRESS'; progress=90
-        updated=c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=? AND status=?',(status,progress,stamp,package['child_task_id'],'REVIEW'))
-        if updated.rowcount != 1: raise HTTPException(409,'Work package task is no longer awaiting review')
-        sync_work_package_parent(c,package['child_task_id'],a['id'],'work_package_review_'+decision.lower())
-        eid=event(c,'task.work_package.reviewed',a['id'],package['child_task_id'],{'work_package_id':package_id,'parent_task_id':package['parent_task_id'],'decision':decision,'comment':comment})
-        return {'work_package_id':package_id,'task_id':package['child_task_id'],'status':status,'progress':progress,'event_id':eid,'decision':decision}
-
 @app.get('/api/v1/tasks/{parent_id}/work-summary')
 def work_package_summary(parent_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5819,74 +5490,6 @@ def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(N
                 'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],
                 'sla_due_at':w['sla_due_at'],'risk_state':w['risk_state'],'needs_attention':bool(w['needs_attention'])}
                 for w in packages]}
-@app.post('/api/v1/work-packages/{package_id}/reassign')
-def reassign_work_package(package_id:str,b:WorkPackageReassignIn,authorization:str=Header(None)):
-    a=actor(authorization); agent_name=b.agent_name.strip()
-    if not agent_name: raise HTTPException(422,'agent_name must not be blank')
-    with conn() as c:
-        begin_serialized_write(c)
-        package_sql='SELECT * FROM task_work_packages WHERE id=?'
-        if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
-        package=c.execute(package_sql,(package_id,)).fetchone()
-        if not package: raise HTTPException(404,'Work package not found')
-        require_project_access(c,package['project_id'],a,write=True)
-        if package['status']!='ACTIVE': raise HTTPException(409,'Only active work packages can be reassigned')
-        if not package['needs_attention']: raise HTTPException(409,'Work package must be marked stalled before reassignment')
-        if package['assignee_member_id']==b.assignee_member_id and package['agent_name']==agent_name:
-            raise HTTPException(400,'Choose a different assignee or Agent')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(package['project_id'],)).fetchone()
-        member=c.execute('SELECT tenant_id FROM members WHERE id=?',(b.assignee_member_id,)).fetchone()
-        if not member or member['tenant_id']!=project['tenant_id']: raise HTTPException(404,'New assignee not found in this tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(package['project_id'],b.assignee_member_id)).fetchone():
-            raise HTTPException(400,'New assignee is not a project member')
-        agent=c.execute('SELECT status,last_seen FROM project_agents WHERE project_id=? AND member_id=? AND agent_name=?',(package['project_id'],b.assignee_member_id,agent_name)).fetchone()
-        cutoff=datetime.fromtimestamp(time.time()-120,timezone.utc).isoformat()
-        if not agent: raise HTTPException(404,'New assignee Agent is not registered in this project')
-        if agent['status']=='OFFLINE' or agent['last_seen']<cutoff: raise HTTPException(409,'New assignee Agent presence is offline or stale')
-        stamp=now()
-        c.execute('DELETE FROM assignments WHERE task_id=? AND member_id=?',(package['child_task_id'],package['assignee_member_id']))
-        c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(package['child_task_id'],b.assignee_member_id))
-        c.execute('UPDATE task_work_packages SET assignee_member_id=?,agent_name=?,needs_attention=0,stalled_at=NULL,stall_reason=NULL,updated_at=? WHERE id=?',(b.assignee_member_id,agent_name,stamp,package_id))
-        c.execute('UPDATE tasks SET updated_at=? WHERE id=?',(stamp,package['child_task_id']))
-        mid='msg_'+uuid.uuid4().hex[:12]
-        title='Work package reassigned: '+package['child_task_id']
-        content=json.dumps({'work_package_id':package_id,'correlation_id':package['correlation_id'],'parent_task_id':package['parent_task_id'],'task_id':package['child_task_id'],'previous_assignee_member_id':package['assignee_member_id'],'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'reason':b.reason},ensure_ascii=False)
-        c.execute('INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(mid,b.assignee_member_id,project['tenant_id'],package['child_task_id'],'WORK_PACKAGE_REASSIGNED',title,content,'HIGH','PENDING',stamp,None))
-        payload={'message_id':mid,'recipient_member_id':b.assignee_member_id,'project_id':package['project_id'],'task_id':package['child_task_id'],'message_type':'WORK_PACKAGE_REASSIGNED','title':title,'content':content,'priority':'HIGH'}
-        c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,stamp,stamp,project['tenant_id']))
-        eid=event(c,'task.work_package.reassigned',a['id'],package['parent_task_id'],{'work_package_id':package_id,'correlation_id':package['correlation_id'],'child_task_id':package['child_task_id'],'previous_assignee_member_id':package['assignee_member_id'],'assignee_member_id':b.assignee_member_id,'previous_agent_name':package['agent_name'],'agent_name':agent_name,'reason':b.reason})
-    return {'work_package_id':package_id,'task_id':package['child_task_id'],'assignee_member_id':b.assignee_member_id,'agent_name':agent_name,'needs_attention':False,'message_id':mid,'event_id':eid}
-
-@app.post('/api/v1/delegations/{did}/respond')
-def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); decision=b.get('decision')
-    if decision not in ('ACCEPT','REJECT'): raise HTTPException(422,'decision must be ACCEPT or REJECT')
-    with conn() as c:
-        begin_serialized_write(c)
-        if DATABASE_URL.startswith(('postgresql://','postgres://')):
-            row=c.execute('SELECT * FROM task_delegations WHERE id=? FOR UPDATE',(did,)).fetchone()
-        else:
-            row=c.execute('SELECT * FROM task_delegations WHERE id=?',(did,)).fetchone()
-        if not row or row['recipient_member_id'] != a['id']: raise HTTPException(404,'Delegation not found')
-        if row['status'] != 'PENDING': raise HTTPException(409,'Delegation is no longer pending')
-        if row['expires_at'] <= now():
-            stamp=now()
-            cur=c.execute("UPDATE task_delegations SET status='EXPIRED',updated_at=? WHERE id=? AND status='PENDING'",(stamp,did))
-            if cur.rowcount:
-                event(c,'task.delegation.expired',a['id'],row['task_id'],{'delegation_id':did})
-            return JSONResponse(status_code=410,content={'detail':'Delegation offer has expired','status':'EXPIRED'})
-        if decision=='ACCEPT':
-            c.execute('INSERT OR IGNORE INTO assignments(task_id,member_id) VALUES(?,?)',(row['task_id'],a['id']))
-            c.execute('INSERT OR IGNORE INTO project_members(project_id,member_id,role,joined_at) VALUES(?,?,?,?)',(row['project_id'],a['id'],'member',now()))
-            status='ACCEPTED'
-        else: status='REJECTED'
-        stamp=now()
-        cur=c.execute('UPDATE task_delegations SET status=?,responded_at=?,updated_at=? WHERE id=? AND status=\'PENDING\'',(status,stamp,stamp,did))
-        if cur.rowcount != 1:
-            raise HTTPException(409,'Delegation response raced with another decision')
-        event(c,'task.delegation.'+status.lower(),a['id'],row['task_id'],{'delegation_id':did,'agent_name':row['agent_name']})
-        return {'id':did,'task_id':row['task_id'],'status':status,'responded_at':stamp}
-
 @app.post('/api/v1/messages')
 def send_message(b:MessageIn,authorization:str=Header(None)):
     a=actor(authorization); mid='msg_'+uuid.uuid4().hex[:12]
@@ -5911,28 +5514,6 @@ def send_message(b:MessageIn,authorization:str=Header(None)):
         c.execute('INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?)',('obx_'+uuid.uuid4().hex,'message.created',json.dumps(payload),'PENDING',0,created,created,message_tenant))
         event(c,'message.created',a['id'],b.task_id,{'message_id':mid,'recipient':b.recipient_member_id},tenant_override=message_tenant)
     return {'id':mid,'status':'PENDING'}
-@app.get('/api/v1/me/notifications')
-def notifications(authorization:str=Header(None),after:int=0,limit:int=50):
-    a=actor(authorization); limit=max(1,min(limit,100))
-    with conn() as c:
-        rows=[dict(x) for x in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT ?",(a['id'],after,limit))]
-        for row in rows: c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),row['id']))
-        return {'items':rows,'next_cursor':rows[-1]['seq'] if rows else after,'has_more':len(rows)==limit}
-@app.post('/api/v1/messages/{mid}/ack')
-def ack(mid:str,b:AckIn,authorization: str=Header(None)):
-    a=actor(authorization)
-    if b.status not in ('ACKNOWLEDGED','REJECTED'): raise HTTPException(422,'Invalid acknowledgement status')
-    with conn() as c:
-        existing=c.execute('SELECT status,task_id,tenant_id FROM messages WHERE id=? AND recipient_member_id=?',(mid,a['id'])).fetchone()
-        if not existing: raise HTTPException(404,'Message not found for current member')
-        if existing['status'] in ('ACKNOWLEDGED','REJECTED'):
-            if existing['status'] != b.status: raise HTTPException(409,'Message has already reached a different terminal status')
-            return {'id':mid,'status':existing['status'],'idempotent':True}
-        stamp=now()
-        cur=c.execute("UPDATE messages SET status=?,acked_at=? WHERE id=? AND recipient_member_id=? AND status='PENDING'",(b.status,stamp,mid,a['id']))
-        if cur.rowcount==0: raise HTTPException(409,'Message status changed; retry the request')
-        event(c,'message.acknowledged',a['id'],existing['task_id'],{'message_id':mid,'status':b.status},tenant_override=existing['tenant_id'])
-    return {'id':mid,'status':b.status,'idempotent':False}
 @app.get('/api/v1/tasks/{tid}/artifacts')
 def task_artifacts(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -5986,22 +5567,6 @@ Z','+00:00'))
         'incident_count':len(incidents),'incidents':incidents[:limit],
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
-@app.post('/api/v1/admin/outbox/{outbox_id}/replay')
-def replay_dead_outbox(outbox_id:str,body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    reason=str(body.get('reason','')).strip()
-    if not reason or len(reason)>1000: raise HTTPException(422,'A replay reason (1-1000 characters) is required')
-    with conn() as c:
-        row=c.execute("SELECT tenant_id,status FROM outbox WHERE id=?",(outbox_id,)).fetchone()
-        if not row: raise HTTPException(404,'Outbox item not found')
-        if row['status']!='DEAD': raise HTTPException(409,'Only DEAD outbox items can be replayed')
-        stamp=now()
-        cur=c.execute("UPDATE outbox SET status='PENDING',attempts=0,available_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL,last_error=NULL,sent_at=NULL WHERE id=? AND status='DEAD'",(stamp,outbox_id))
-        if not cur.rowcount: raise HTTPException(409,'Outbox item changed; refresh and retry')
-        event(c,'outbox.dead.replayed',a['id'],None,{'outbox_id':outbox_id,'reason':reason},tenant_override=row['tenant_id'])
-    return {'id':outbox_id,'status':'PENDING','replayed':True}
 
 @app.websocket('/ws/v1')
 async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
