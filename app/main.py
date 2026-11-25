@@ -1390,29 +1390,6 @@ def list_tenants(authorization:str=Header(None)):
     if not is_admin(a): raise HTTPException(403,'Platform administrator required')
     with conn() as c: return [dict(x) for x in c.execute('SELECT * FROM tenants ORDER BY created_at')]
 
-@app.post('/api/v1/members')
-def create_member(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    name=str(body.get('name','')).strip()
-    role=str(body.get('role','member')).strip()
-    if not name: raise HTTPException(422,'Member name is required')
-    if role=='admin': raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    if role!='member' and role not in ('manager','developer','reviewer'): raise HTTPException(422,'Invalid member role')
-    explicit_username=bool(body.get('username'))
-    username=str(body.get('username') or re.sub(r'[^a-z0-9]+','.',name.lower()).strip('.') or ('user.'+uuid.uuid4().hex[:8])).lower()
-    password=body.get('password')
-    if password is None or password=='': password=secrets.token_urlsafe(24)
-    if not isinstance(password,str) or len(password)<12 or len(password)>256: raise HTTPException(422,'Password must be 12-256 characters')
-    mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
-    tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
-    with conn() as c:
-        if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone():
-            if explicit_username: raise HTTPException(409,'Username already exists')
-            username=f"{username}.{uuid.uuid4().hex[:6]}"
-        c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
-    return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id,'token':token}
 @app.get('/api/v1/members')
 def members(authorization:str=Header(None)):
     a=actor(authorization)
@@ -4166,80 +4143,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-@app.post('/api/v1/integrations/git/webhook')
-async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
-    raw=await request.body()
-    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
-    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
-    if provider=='github':
-        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
-        supplied=x_hub_signature_256.split('=',1)[1]
-        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
-        delivery=x_github_delivery
-    elif provider=='gitlab':
-        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
-        delivery=x_gitlab_event_uuid
-    else:
-        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-        delivery=request.headers.get('X-DAEP-Delivery','')
-    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
-    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
-    task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            if task_id:
-                row=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task_id,)).fetchone()
-                if not row: raise HTTPException(404,'Task not found')
-                tenant_id=row['tenant_id']
-            else:
-                tenant_id=str(x_daep_tenant_id or body.get('tenant_id') or '').strip()
-                if not tenant_id: raise HTTPException(422,'X-DAEP-Tenant-ID is required when task_id is absent')
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
-        _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
-        with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/api/v1/me')
-def me(authorization:str=Header(None)):
-    a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/members')
-def create_member(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    if not isinstance(body.get('name'),str) or not body['name'].strip(): raise HTTPException(422,'Member name is required')
-    if body.get('role','developer') not in ('manager','developer','reviewer'): raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
-    tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
-    with conn() as c:
-        if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        c.execute('INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(mid,body['name'],body.get('role','developer'),hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at')))
-    return {'id':mid,'name':body['name'],'role':body.get('role','developer'),'tenant_id':tenant_id,'token':token}
-@app.get('/api/v1/members')
-def members(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/rotate-token')
-def rotate_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    token=uuid.uuid4().hex+uuid.uuid4().hex; created=now(); digest=hashlib.sha256(token.encode()).hexdigest()
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-        event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
-
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
@@ -4290,106 +4193,6 @@ Z','+00:00'))
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
 
-@app.websocket('/ws/v1')
-async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
-    # Best-effort online notification channel. The durable inbox remains the source of truth.
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: member=(c.execute("SELECT id,tenant_id,role FROM daep_authenticate_member(?,?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not member: await ws.close(code=1008); return
-    cursor=max(0,after)
-    _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
-    await ws.accept()
-    try:
-        await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
-        while True:
-            with conn() as c:
-                rows=[dict(r) for r in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT 100",(member['id'],cursor))]
-                if rows:
-                    for r in rows:
-                        await ws.send_json({'type':'notification','message':r})
-                        cursor=max(cursor,r['seq'])
-                        c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),r['id']))
-            try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
-            except asyncio.TimeoutError: pass
-    except WebSocketDisconnect: pass
-
-@app.post('/api/v1/integrations/git/webhook')
-async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
-    raw=await request.body()
-    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
-    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
-    if provider=='github':
-        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
-        supplied=x_hub_signature_256.split('=',1)[1]
-        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
-        delivery=x_github_delivery
-    elif provider=='gitlab':
-        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
-        delivery=x_gitlab_event_uuid
-    else:
-        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-        delivery=request.headers.get('X-DAEP-Delivery','')
-    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
-    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
-    task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            if task_id:
-                row=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task_id,)).fetchone()
-                if not row: raise HTTPException(404,'Task not found')
-                tenant_id=row['tenant_id']
-            else:
-                tenant_id=str(x_daep_tenant_id or body.get('tenant_id') or '').strip()
-                if not tenant_id: raise HTTPException(422,'X-DAEP-Tenant-ID is required when task_id is absent')
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
-        _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
-        with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/api/v1/me')
-def me(authorization:str=Header(None)):
-    a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/members')
-def create_member(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    if not isinstance(body.get('name'),str) or not body['name'].strip(): raise HTTPException(422,'Member name is required')
-    if body.get('role','developer') not in ('manager','developer','reviewer'): raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
-    tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
-    with conn() as c:
-        if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        c.execute('INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(mid,body['name'],body.get('role','developer'),hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at')))
-    return {'id':mid,'name':body['name'],'role':body.get('role','developer'),'tenant_id':tenant_id,'token':token}
-@app.get('/api/v1/members')
-def members(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/rotate-token')
-def rotate_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    token=uuid.uuid4().hex+uuid.uuid4().hex; created=now(); digest=hashlib.sha256(token.encode()).hexdigest()
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-        event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
-
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
@@ -4439,84 +4242,6 @@ Z','+00:00'))
         'incident_count':len(incidents),'incidents':incidents[:limit],
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
-@app.websocket('/ws/v1')
-async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
-    # Best-effort online notification channel. The durable inbox remains the source of truth.
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: member=(c.execute("SELECT id,tenant_id,role FROM daep_authenticate_member(?,?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not member: await ws.close(code=1008); return
-    cursor=max(0,after)
-    _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
-    await ws.accept()
-    try:
-        await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
-        while True:
-            with conn() as c:
-                rows=[dict(r) for r in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT 100",(member['id'],cursor))]
-                if rows:
-                    for r in rows:
-                        await ws.send_json({'type':'notification','message':r})
-                        cursor=max(cursor,r['seq'])
-                        c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),r['id']))
-            try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
-            except asyncio.TimeoutError: pass
-    except WebSocketDisconnect: pass
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Bearer token required')
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: r=(c.execute("SELECT * FROM daep_authenticate_member(?,?)",(token,now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT * FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(token,now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not r: raise HTTPException(401,'Invalid token')
-    data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
-    return data
-
-@app.post('/api/v1/integrations/git/webhook')
-async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
-    raw=await request.body()
-    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
-    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
-    if provider=='github':
-        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
-        supplied=x_hub_signature_256.split('=',1)[1]
-        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
-        delivery=x_github_delivery
-    elif provider=='gitlab':
-        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
-        delivery=x_gitlab_event_uuid
-    else:
-        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-        delivery=request.headers.get('X-DAEP-Delivery','')
-    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
-    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
-    task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            if task_id:
-                row=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task_id,)).fetchone()
-                if not row: raise HTTPException(404,'Task not found')
-                tenant_id=row['tenant_id']
-            else:
-                tenant_id=str(x_daep_tenant_id or body.get('tenant_id') or '').strip()
-                if not tenant_id: raise HTTPException(422,'X-DAEP-Tenant-ID is required when task_id is absent')
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
-        _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
-        with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
-    finally:
-        _service_ctx.reset(service_reset)
 
 @app.post('/api/v1/auth/login')
 def password_login(body:dict):
@@ -4543,12 +4268,6 @@ def change_password(body:dict,authorization:str=Header(None)):
     issue_member_token(a['id'])
     return {'changed':True}
 
-@app.get('/api/v1/me')
-def me(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        row=c.execute('SELECT username FROM members WHERE id=?',(a['id'],)).fetchone()
-    return {k:a[k] for k in ('id','name','role')} | {'username': row['username'] if row else None}
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4567,11 +4286,6 @@ def create_member(body:dict,authorization:str=Header(None)):
         if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): raise HTTPException(409,'Username already exists')
         c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
     return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id}
-@app.get('/api/v1/members')
-def members(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute("SELECT id,name,username,role,tenant_id,token_status,password_status,created_at FROM members ORDER BY created_at")]
 @app.get('/api/v1/members/{member_id}')
 def member_detail(member_id:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4585,38 +4299,6 @@ def member_detail(member_id:str,authorization:str=Header(None)):
             WHERE pm.member_id=? ORDER BY p.created_at DESC
         """,(member_id,)).fetchall()
         return {**dict(row),'projects':[dict(x) for x in projects]}
-
-@app.post('/api/v1/members/{member_id}/disable')
-def disable_member(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    if member_id==a['id']: raise HTTPException(409,'The active platform administrator cannot disable their own account')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        stamp=now()
-        c.execute("UPDATE members SET password_status='DISABLED',token_status='REVOKED',token_revoked_at=? WHERE id=?",(stamp,member_id))
-        owned_agents=c.execute("SELECT id FROM agents WHERE owner_member_id=? AND tenant_id=? AND status='ACTIVE'",
-            (member_id,target['tenant_id'])).fetchall()
-        for agent_row in owned_agents:
-            agent_id=agent_row['id']
-            c.execute("UPDATE agents SET status='DISABLED',updated_at=? WHERE id=?",(stamp,agent_id))
-            c.execute("UPDATE agent_tokens SET status='REVOKED',revoked_at=? WHERE agent_id=? AND status='ACTIVE'",
-                (stamp,agent_id))
-            assignments=c.execute("""SELECT id,task_id FROM agent_task_assignments
-                WHERE agent_id=? AND status IN ('ASSIGNED','ACCEPTED')""",(agent_id,)).fetchall()
-            for assignment in assignments:
-                c.execute("""UPDATE agent_task_assignments SET status='REVOKED',revoked_at=?,updated_at=?
-                    WHERE id=? AND status IN ('ASSIGNED','ACCEPTED')""",(stamp,stamp,assignment['id']))
-                event(c,'task.agent_assignment_revoked',a['id'],assignment['task_id'],{
-                    'assignment_id':assignment['id'],'agent_id':agent_id,
-                    'reason':'Agent owner account disabled'},tenant_override=target['tenant_id'])
-            event(c,'agent.owner_account_disabled',a['id'],None,{'agent_id':agent_id,
-                'revoked_assignment_count':len(assignments)},tenant_override=target['tenant_id'])
-        event(c,'member.account.disabled',a['id'],None,{'member_id':member_id,
-            'disabled_agent_count':len(owned_agents)},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'DISABLED','token_status':'REVOKED',
-        'disabled_agent_count':len(owned_agents)}
 
 @app.post('/api/v1/members/{member_id}/enable')
 def enable_member(member_id:str,authorization:str=Header(None)):
@@ -4644,36 +4326,6 @@ def reset_member_password(member_id:str,body:dict,authorization:str=Header(None)
         c.execute("UPDATE members SET password_hash=?,password_status='ACTIVE',token_status='REVOKED',token_revoked_at=? WHERE id=?",(hash_password(password),stamp,member_id))
         event(c,'member.password.reset',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'password_status':'ACTIVE','token_status':'REVOKED'}
-
-@app.post('/api/v1/members/{member_id}/rotate-token')
-def rotate_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    token=uuid.uuid4().hex+uuid.uuid4().hex; created=now(); digest=hashlib.sha256(token.encode()).hexdigest()
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-        event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
-
-@app.get('/api/v1/projects/{pid}/member-candidates')
-def project_member_candidates(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not project: raise HTTPException(404,'Project not found')
-        rows=c.execute("""
-            SELECT m.id,m.name,m.username,m.role AS account_role,
-                   CASE WHEN pm.member_id IS NULL THEN 0 ELSE 1 END AS already_member,
-                   pm.role AS project_role,pm.work_function
-            FROM members m
-            LEFT JOIN project_members pm ON pm.project_id=? AND pm.member_id=m.id
-            WHERE m.tenant_id=? AND m.password_status='ACTIVE'
-            ORDER BY m.name
-        """,(pid,project['tenant_id'])).fetchall()
-        return [dict(x) for x in rows]
 
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
@@ -4712,196 +4364,11 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
 
-@app.websocket('/ws/v1')
-async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
-    # Best-effort online notification channel. The durable inbox remains the source of truth.
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: member=(c.execute("SELECT id,tenant_id,role FROM daep_authenticate_member(?,?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not member: await ws.close(code=1008); return
-    cursor=max(0,after)
-    _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
-    await ws.accept()
-    try:
-        await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
-        while True:
-            with conn() as c:
-                rows=[dict(r) for r in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT 100",(member['id'],cursor))]
-                if rows:
-                    for r in rows:
-                        await ws.send_json({'type':'notification','message':r})
-                        cursor=max(cursor,r['seq'])
-                        c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),r['id']))
-            try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
-            except asyncio.TimeoutError: pass
-    except WebSocketDisconnect: pass
-
-@app.post('/api/v1/integrations/git/webhook')
-async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
-    raw=await request.body()
-    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
-    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
-    if provider=='github':
-        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
-        supplied=x_hub_signature_256.split('=',1)[1]
-        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
-        delivery=x_github_delivery
-    elif provider=='gitlab':
-        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
-        delivery=x_gitlab_event_uuid
-    else:
-        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-        delivery=request.headers.get('X-DAEP-Delivery','')
-    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
-    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
-    task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            if task_id:
-                row=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task_id,)).fetchone()
-                if not row: raise HTTPException(404,'Task not found')
-                tenant_id=row['tenant_id']
-            else:
-                tenant_id=str(x_daep_tenant_id or body.get('tenant_id') or '').strip()
-                if not tenant_id: raise HTTPException(422,'X-DAEP-Tenant-ID is required when task_id is absent')
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
-        _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
-        with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/api/v1/me')
-def me(authorization:str=Header(None)):
-    a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/members')
-def create_member(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    if not isinstance(body.get('name'),str) or not body['name'].strip(): raise HTTPException(422,'Member name is required')
-    if body.get('role','developer') not in ('manager','developer','reviewer'): raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
-    tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
-    with conn() as c:
-        if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        c.execute('INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(mid,body['name'],body.get('role','developer'),hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at')))
-    return {'id':mid,'name':body['name'],'role':body.get('role','developer'),'tenant_id':tenant_id,'token':token}
-@app.get('/api/v1/members')
-def members(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/rotate-token')
-def rotate_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    token=uuid.uuid4().hex+uuid.uuid4().hex; created=now(); digest=hashlib.sha256(token.encode()).hexdigest()
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-        event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
-
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
     'DELIVERY_EVIDENCE':{'enabled':True,'required_roles':['owner','manager','reviewer'],'required_evidence':True,'required_all_tasks_done':True,'applies_to':'DONE'}
 }
-@app.get('/api/v1/tasks/{parent_id}/work-summary')
-def work_package_summary(parent_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_task_access(c,parent_id,a)
-        rows=c.execute("SELECT t.status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE'",(parent_id,)).fetchall()
-        total=len(rows)
-        counts={k:sum(1 for x in rows if x['status']==k) for k in ('READY','IN_PROGRESS','BLOCKED','REVIEW','DONE')}
-        progress=round(sum(int(x['progress'] or 0) for x in rows)/total) if total else 0
-        artifacts=c.execute('SELECT COUNT(*) AS n FROM artifacts a JOIN task_work_packages w ON w.child_task_id=a.task_id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\'',(parent_id,)).fetchone()['n']
-        blocked=c.execute("SELECT t.id,t.title,t.status FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? AND w.status='ACTIVE' AND t.status='BLOCKED'",(parent_id,)).fetchall()
-        artifact_rows=c.execute('SELECT w.child_task_id,a.id,a.artifact_type,a.uri,a.commit_sha,a.created_at FROM task_work_packages w JOIN artifacts a ON a.task_id=w.child_task_id WHERE w.parent_task_id=? AND w.status=\'ACTIVE\' ORDER BY a.created_at',(parent_id,)).fetchall()
-        return {'parent_task_id':parent_id,'work_package_count':total,'progress':progress,'status_counts':counts,'blocked_tasks':[dict(x) for x in blocked],'artifact_count':artifacts,'artifacts':[dict(x) for x in artifact_rows],'all_done':bool(total and counts['DONE']==total)}
-
-@app.get('/api/v1/tasks/{parent_id}/work-timeline')
-def work_package_timeline(parent_id:str,limit:int=200,authorization:str=Header(None)):
-    a=actor(authorization); limit=max(1,min(limit,500))
-    with conn() as c:
-        require_task_access(c,parent_id,a)
-        packages=c.execute('SELECT w.*,t.title,t.status AS task_status,t.progress FROM task_work_packages w JOIN tasks t ON t.id=w.child_task_id WHERE w.parent_task_id=? ORDER BY w.created_at',(parent_id,)).fetchall()
-        items=[]
-        task_ids=[parent_id]+[w['child_task_id'] for w in packages]
-        for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
-            LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.task_id=? ORDER BY e.created_at""",(parent_id,)).fetchall():
-            p=json.loads(e['payload'] or '{}')
-            items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
-                'task_id':parent_id,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
-                'actor_name':e['actor_name'],'payload':p})
-        for w in packages:
-            cid=w['correlation_id'] or w['id']; child=w['child_task_id']
-            for e in c.execute("""SELECT e.*,m.name AS actor_name FROM events e
-                LEFT JOIN members m ON m.id=e.actor_member_id WHERE e.task_id=? ORDER BY e.created_at""",(child,)).fetchall():
-                p=json.loads(e['payload'] or '{}')
-                items.append({'occurred_at':e['created_at'],'kind':'event','event_type':e['event_type'],
-                    'task_id':child,'event_id':e['id'],'actor_member_id':e['actor_member_id'],
-                    'actor_name':e['actor_name'],'correlation_id':cid,'payload':p})
-            for msg in c.execute('SELECT id,message_type,title,status,created_at,acked_at,content FROM messages WHERE task_id=? ORDER BY created_at',(child,)).fetchall():
-                try: body=json.loads(msg['content'] or '{}')
-                except Exception: body={'content':msg['content']}
-                items.append({'occurred_at':msg['created_at'],'kind':'message','message_id':msg['id'],
-                    'message_type':msg['message_type'],'title':msg['title'],'status':msg['status'],
-                    'acked_at':msg['acked_at'],'task_id':child,'correlation_id':body.get('correlation_id',cid),'payload':body})
-            for art in c.execute('SELECT id,artifact_type,uri,commit_sha,created_at FROM artifacts WHERE task_id=? ORDER BY created_at',(child,)).fetchall():
-                items.append({'occurred_at':art['created_at'],'kind':'artifact','task_id':child,'correlation_id':cid,'artifact':dict(art)})
-        marks=','.join('?' for _ in task_ids)
-        delegations=c.execute(f"""SELECT d.*,rq.name AS requester_name,rc.name AS recipient_name
-            FROM task_delegations d JOIN members rq ON rq.id=d.requester_member_id
-            JOIN members rc ON rc.id=d.recipient_member_id
-            WHERE d.task_id IN ({marks}) ORDER BY d.created_at""",tuple(task_ids)).fetchall()
-        for d in delegations:
-            row=dict(d)
-            items.append({'occurred_at':row['created_at'],'kind':'delegation','stage':'OFFERED',
-                'task_id':row['task_id'],'delegation_id':row['id'],'status':row['status'],
-                'requester_member_id':row['requester_member_id'],'requester_name':row['requester_name'],
-                'recipient_member_id':row['recipient_member_id'],'recipient_name':row['recipient_name'],
-                'agent_name':row['agent_name'],'reason':row['reason'],'expires_at':row['expires_at']})
-            if row['status']!='PENDING':
-                decision_at=row['responded_at'] or row['updated_at']
-                items.append({'occurred_at':decision_at,'kind':'delegation','stage':row['status'],
-                    'task_id':row['task_id'],'delegation_id':row['id'],'status':row['status'],
-                    'requester_member_id':row['requester_member_id'],'requester_name':row['requester_name'],
-                    'recipient_member_id':row['recipient_member_id'],'recipient_name':row['recipient_name'],
-                    'agent_name':row['agent_name'],'reason':row['reason'],'expires_at':row['expires_at']})
-        dependency_edges=[]
-        for tid in task_ids:
-            task=c.execute('SELECT title FROM tasks WHERE id=?',(tid,)).fetchone()
-            for dep in c.execute("""SELECT d.depends_on_task_id,t.title AS depends_on_title,t.status AS depends_on_status
-                FROM dependencies d JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=?""",(tid,)).fetchall():
-                dependency_edges.append({'task_id':tid,'task_title':task['title'] if task else tid,
-                    'depends_on_task_id':dep['depends_on_task_id'],'depends_on_title':dep['depends_on_title'],
-                    'depends_on_status':dep['depends_on_status'],'blocked':dep['depends_on_status']!='DONE'})
-        items.sort(key=lambda x:(x['occurred_at'],x.get('event_id') or x.get('message_id') or x.get('delegation_id') or x.get('artifact',{}).get('id','')))
-        items=items[-limit:]
-        return {'parent_task_id':parent_id,'count':len(items),'items':items,
-            'dependency_edges':dependency_edges,
-            'delegations':[{'id':d['id'],'task_id':d['task_id'],'requester_member_id':d['requester_member_id'],
-                'requester_name':d['requester_name'],'recipient_member_id':d['recipient_member_id'],
-                'recipient_name':d['recipient_name'],'agent_name':d['agent_name'],'reason':d['reason'],
-                'status':d['status'],'created_at':d['created_at'],'responded_at':d['responded_at'],
-                'expires_at':d['expires_at']} for d in delegations],
-            'work_packages':[{'id':w['id'],'correlation_id':w['correlation_id'] or w['id'],
-                'child_task_id':w['child_task_id'],'title':w['title'],'status':w['task_status'],
-                'progress':w['progress'],'assignee_member_id':w['assignee_member_id'],'agent_name':w['agent_name'],
-                'sla_due_at':w['sla_due_at'],'risk_state':w['risk_state'],'needs_attention':bool(w['needs_attention'])}
-                for w in packages]}
 @app.post('/api/v1/messages')
 def send_message(b:MessageIn,authorization:str=Header(None)):
     a=actor(authorization); mid='msg_'+uuid.uuid4().hex[:12]
@@ -4979,32 +4446,6 @@ Z','+00:00'))
         'incident_count':len(incidents),'incidents':incidents[:limit],
         'malformed_outbox_records_seen':malformed,
         'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
-@app.websocket('/ws/v1')
-async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
-    # Best-effort online notification channel. The durable inbox remains the source of truth.
-    lookup_reset=_auth_lookup_ctx.set(True)
-    try:
-        with conn() as c: member=(c.execute("SELECT id,tenant_id,role FROM daep_authenticate_member(?,?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone() if DATABASE_URL.startswith(('postgresql://','postgres://')) else c.execute("SELECT id,tenant_id,role FROM members WHERE token=? AND token_status='ACTIVE' AND (token_expires_at IS NULL OR token_expires_at>?)",(hashlib.sha256(token.encode()).hexdigest(),now())).fetchone())
-    finally:
-        _auth_lookup_ctx.reset(lookup_reset)
-    if not member: await ws.close(code=1008); return
-    cursor=max(0,after)
-    _tenant_ctx.set(member['tenant_id']); _admin_ctx.set(member['role']=='admin' and member['tenant_id']=='tenant-default')
-    await ws.accept()
-    try:
-        await ws.send_json({'type':'connected','at':now(),'cursor':cursor,'delivery':'best-effort; reconnect with after=<last processed seq> or recover via inbox'})
-        while True:
-            with conn() as c:
-                rows=[dict(r) for r in c.execute("SELECT * FROM messages WHERE recipient_member_id=? AND status='PENDING' AND seq>? ORDER BY seq LIMIT 100",(member['id'],cursor))]
-                if rows:
-                    for r in rows:
-                        await ws.send_json({'type':'notification','message':r})
-                        cursor=max(cursor,r['seq'])
-                        c.execute('UPDATE messages SET attempts=attempts+1,last_attempt_at=? WHERE id=?',(now(),r['id']))
-            try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
-            except asyncio.TimeoutError: pass
-    except WebSocketDisconnect: pass
 
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
@@ -5088,80 +4529,6 @@ def event(c,typ,member,task,payload,key=None,tenant_override=None):
     else:
         c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
     return eid
-
-@app.post('/api/v1/integrations/git/webhook')
-async def git_webhook(request:Request, body:dict, x_daep_webhook_secret:str=Header('',alias='X-DAEP-Webhook-Secret'), x_daep_tenant_id:str=Header('',alias='X-DAEP-Tenant-ID'), x_daep_provider:str=Header('',alias='X-DAEP-Provider'), x_github_event:str=Header('',alias='X-GitHub-Event'), x_github_delivery:str=Header('',alias='X-GitHub-Delivery'), x_hub_signature_256:str=Header('',alias='X-Hub-Signature-256'), x_gitlab_event:str=Header('',alias='X-Gitlab-Event'), x_gitlab_event_uuid:str=Header('',alias='X-Gitlab-Event-UUID'), x_gitlab_token:str=Header('',alias='X-Gitlab-Token')):
-    raw=await request.body()
-    provider=(x_daep_provider or ('github' if x_github_event or x_hub_signature_256 else 'gitlab' if x_gitlab_event or x_gitlab_token else 'generic')).lower()
-    if provider not in ('github','gitlab','generic'): raise HTTPException(422,'Unsupported Git provider')
-    if provider=='github':
-        expected=os.getenv('DAEP_GITHUB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_hub_signature_256 or not x_hub_signature_256.startswith('sha256='): raise HTTPException(401,'GitHub webhook signature is required')
-        supplied=x_hub_signature_256.split('=',1)[1]
-        actual=hmac.new(expected.encode(),raw,hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(actual,supplied): raise HTTPException(401,'Invalid GitHub webhook signature')
-        delivery=x_github_delivery
-    elif provider=='gitlab':
-        expected=os.getenv('DAEP_GITLAB_WEBHOOK_SECRET') or os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_gitlab_token or not secrets.compare_digest(hashlib.sha256(x_gitlab_token.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid GitLab webhook token')
-        delivery=x_gitlab_event_uuid
-    else:
-        expected=os.getenv('DAEP_GIT_WEBHOOK_SECRET','')
-        if not expected or not x_daep_webhook_secret or not secrets.compare_digest(hashlib.sha256(x_daep_webhook_secret.encode()).digest(),hashlib.sha256(expected.encode()).digest()): raise HTTPException(401,'Invalid webhook secret')
-        delivery=request.headers.get('X-DAEP-Delivery','')
-    if delivery and len(delivery)>200: raise HTTPException(422,'Webhook delivery id is too long')
-    event_type=str(body.get('event_type') or body.get('action') or x_github_event or x_gitlab_event or 'push')[:80]
-    task_id=body.get('task_id'); commit=body.get('after') or body.get('commit_sha')
-    service_reset=_service_ctx.set(True)
-    try:
-        with conn() as c:
-            if task_id:
-                row=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task_id,)).fetchone()
-                if not row: raise HTTPException(404,'Task not found')
-                tenant_id=row['tenant_id']
-            else:
-                tenant_id=str(x_daep_tenant_id or body.get('tenant_id') or '').strip()
-                if not tenant_id: raise HTTPException(422,'X-DAEP-Tenant-ID is required when task_id is absent')
-                if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        _tenant_ctx.set(tenant_id); _admin_ctx.set(False)
-        _service_ctx.reset(service_reset); service_reset=_service_ctx.set(False)
-        with conn() as c:
-            eid=event(c,'git.webhook.received',None,task_id,{'provider':provider,'delivery_id':delivery,'event_type':event_type,'commit_sha':commit,'payload':body},key=(f'git:{provider}:{delivery}' if delivery else None),tenant_override=tenant_id)
-        return {'accepted':True,'event_id':eid,'event_type':event_type,'commit_sha':commit,'tenant_id':tenant_id,'provider':provider,'delivery_id':delivery}
-    finally:
-        _service_ctx.reset(service_reset)
-
-@app.get('/api/v1/me')
-def me(authorization:str=Header(None)):
-    a=actor(authorization); return {k:a[k] for k in ('id','name','role')}
-@app.post('/api/v1/members')
-def create_member(body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    if not isinstance(body.get('name'),str) or not body['name'].strip(): raise HTTPException(422,'Member name is required')
-    if body.get('role','developer') not in ('manager','developer','reviewer'): raise HTTPException(422,'Only the bootstrap identity can hold the platform administrator role')
-    mid='mem_'+uuid.uuid4().hex[:12]; token=uuid.uuid4().hex+uuid.uuid4().hex; created=now()
-    tenant_id=str(body.get('tenant_id') or a.get('tenant_id') or 'tenant-default')
-    with conn() as c:
-        if not c.execute("SELECT 1 FROM tenants WHERE id=? AND status='ACTIVE'",(tenant_id,)).fetchone(): raise HTTPException(404,'Tenant not found or inactive')
-        c.execute('INSERT INTO members(id,name,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(mid,body['name'],body.get('role','developer'),hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at')))
-    return {'id':mid,'name':body['name'],'role':body.get('role','developer'),'tenant_id':tenant_id,'token':token}
-@app.get('/api/v1/members')
-def members(authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c: return [dict(x) for x in c.execute('SELECT id,name,role,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,created_at FROM members ORDER BY created_at')]
-@app.post('/api/v1/members/{member_id}/rotate-token')
-def rotate_member_token(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    token=uuid.uuid4().hex+uuid.uuid4().hex; created=now(); digest=hashlib.sha256(token.encode()).hexdigest()
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        cur=c.execute("UPDATE members SET token=?,token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(digest,created,member_id))
-        event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
 register_agent_routes(app, conn, actor, is_admin, require_project_access, event, now)
 
