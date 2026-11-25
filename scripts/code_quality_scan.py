@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Report-only structural quality checks for DAEP Python sources.
+"""Blocking structural quality checks for DAEP Python sources.
 
-The scanner intentionally does not fail on the existing RC9 baseline. It emits
-stable machine-readable findings so CI can later become a blocking gate after
-the historical main.py duplication has been removed safely.
+The scanner reports stable machine-readable findings and exits non-zero when
+it detects duplicate top-level function names or duplicate FastAPI route keys.
+This protects the now-converged RC9 baseline from regression.
 """
 from __future__ import annotations
 import ast, json
@@ -45,6 +45,7 @@ def main():
     }
     print(json.dumps(findings,ensure_ascii=False,indent=2))
     print(f"QUALITY_REPORT files={len(files)} duplicate_functions={len(duplicate_functions)} duplicate_routes={len(duplicate_routes)}")
+    return 1 if duplicate_functions or duplicate_routes else 0
 
 if __name__=="__main__":
-    main()
+    raise SystemExit(main())
