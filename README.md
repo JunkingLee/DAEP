@@ -139,6 +139,7 @@ RC 不等于 Production GA。真实生产环境仍需完成 PostgreSQL、OIDC、
 - [Outbox Worker](docs/OUTBOX_WORKER.md)
 - [Production Operations](docs/RC21_PRODUCTION_OPERATIONS.md)
 - [Security & Gaps](docs/SECURITY_AND_GAPS.md)
+- [RC9 Authorization Matrix](docs/RC9_AUTHORIZATION_MATRIX.md)
 - [MCP Adapter](daep_mcp/README.md)
 
 ## License
