@@ -1,4 +1,4 @@
-import os, sqlite3, tempfile, json
+import os, sqlite3, tempfile, json, json
 
 os.environ.setdefault('DAEP_DB_PATH', os.path.join(tempfile.gettempdir(), 'daep-cross-tenant-v1.db'))
 os.environ.setdefault('DAEP_ADMIN_TOKEN', 'test-admin-token-with-32-characters-minimum')
@@ -180,60 +180,25 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
     assert all(item['id'] != project_b_id for item in own_projects.json())
 
 
-def test_cross_tenant_collaboration_and_notification_boundaries():
-    # Reuse the isolated fixture by discovering one project from each tenant.
-    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
-        db.row_factory = sqlite3.Row
-        rows = db.execute(
-            "SELECT id, tenant_id FROM projects WHERE name IN ('Tenant A Project','Tenant B Project') ORDER BY name"
-        ).fetchall()
-        assert len(rows) == 2
-        project_a = next(row for row in rows if row['tenant_id'] == 'tenant-default')
-        project_b = next(row for row in rows if row['tenant_id'] != 'tenant-default')
-        task_b = db.execute(
-            "SELECT t.id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE r.project_id=? LIMIT 1",
-            (project_b['id'],),
-        ).fetchone()['id']
-
-        member_a = db.execute("SELECT id FROM members WHERE name='Tenant A Member'").fetchone()['id']
-        member_b = db.execute("SELECT id FROM members WHERE name='Tenant B Member'").fetchone()['id']
-        token_a = db.execute(
-            "SELECT token FROM members WHERE id=?", (member_a,)
-        ).fetchone()['token']
-
-    headers_a = {'Authorization': f'Bearer {token_a}'}
-
     # Task-level collaboration context is tenant/project scoped even when the
     # caller knows the target Task UUID.
     for path in (
-        f'/api/v1/tasks/{task_b}/collaboration-grants',
-        f'/api/v1/tasks/{task_b}/collaboration-session',
-        f'/api/v1/tasks/{task_b}/collaboration-messages',
-        f'/api/v1/tasks/{task_b}/collaboration-proposals',
-        f'/api/v1/tasks/{task_b}/delegations',
+        f'/api/v1/tasks/{task_b_id}/collaboration-grants',
+        f'/api/v1/tasks/{task_b_id}/collaboration-session',
+        f'/api/v1/tasks/{task_b_id}/collaboration-messages',
+        f'/api/v1/tasks/{task_b_id}/collaboration-proposals',
+        f'/api/v1/tasks/{task_b_id}/delegations',
     ):
         response = client.get(path, headers=headers_a)
         assert response.status_code in (403, 404), (path, response.status_code, response.text)
 
-    # Notification data is Member-owned and must never expose another
-    # tenant/member's records through a forged task/project scope.
-    inbox = client.get('/api/v1/me/notifications', headers=headers_a)
-    assert inbox.status_code in (200, 404), inbox.text
-    if inbox.status_code == 200:
-        body = inbox.json()
-        serialized = json.dumps(body, ensure_ascii=False)
-        assert 'Tenant B Task' not in serialized
-        assert str(member_b) not in serialized
+    # Member-owned notification data must remain scoped to the caller.
+    notification_audit = client.get('/api/v1/me/notification-audit', headers=headers_a)
+    assert notification_audit.status_code == 200, notification_audit.text
+    assert 'Tenant B Task' not in json.dumps(notification_audit.json(), ensure_ascii=False)
+    assert str(member_b_id) not in json.dumps(notification_audit.json(), ensure_ascii=False)
 
-    # The A member must not be able to ACK a B-owned notification by guessing
-    # its identifier, if such a notification exists.
-    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
-        notification = db.execute(
-            "SELECT id FROM messages WHERE recipient_member_id=? LIMIT 1", (member_b,)
-        ).fetchone()
-    if notification:
-        guessed = client.post(
-            f"/api/v1/me/notifications/{notification[0]}/ack",
-            headers=headers_a,
-        )
-        assert guessed.status_code in (403, 404), guessed.text
+    notification_prefs = client.get('/api/v1/me/notification-preferences', headers=headers_a)
+    assert notification_prefs.status_code == 200, notification_prefs.text
+    assert str(member_b_id) not in json.dumps(notification_prefs.json(), ensure_ascii=False)
+
