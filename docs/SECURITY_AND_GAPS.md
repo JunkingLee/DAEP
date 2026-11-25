@@ -17,11 +17,12 @@ This document distinguishes controls implemented in the RC9 codebase, controls e
 
 ### Authorization and tenancy
 - Tenant-scoped project/task access checks are implemented.
-- Platform roles and project roles are separate.
+- Platform roles and project roles are separate; platform-administrator bypasses are restricted to the platform role in `tenant-default`.
 - Project creation is available to a regular Member within their own Tenant; the creator becomes Project Owner.
 - Agent Presence/discovery does not grant execution or collaboration authorization.
 - Task Execution Grants and Collaboration Grants are separate authorization domains.
 - An Agent Owner must authorize their own Agent; a Task owner cannot authorize another Member's Agent.
+- Proposal withdrawal requires the originating Agent's still-active accepted Collaboration Grant, an OPEN Session and a non-terminal Task; revocation/expiry blocks further Agent-side proposal changes.
 - Agent actors cannot review or approve delivery.
 - Worker-only endpoints require the dedicated Worker identity.
 
@@ -41,7 +42,7 @@ The RC9 CI workflow includes:
 - Production Compose validation.
 - Blocking structural quality scan.
 
-The latest recorded full baseline before this documentation refresh was run `45567826933`, with all 8 jobs successful. The documentation-only update triggers a new CI run; its result must be checked separately.
+The latest recorded full CI run for the authorization fixes is `45571799272`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
 
 ## 3. Remaining Deployment / Security Acceptance
 
