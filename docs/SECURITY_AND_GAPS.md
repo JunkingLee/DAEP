@@ -1,25 +1,82 @@
-# Security and known gaps — RC8
+# Security Posture and Known Gaps — DAEP 1.0.0-rc9
 
-## Implemented in the current release candidate
+Date: 2026-11-25  
+Branch: `release/1.0.0-rc9`
 
-- Member API tokens are stored as SHA-256 digests; revoke/rotate operations create tenant-attributed audit events.
-- Only the bootstrap identity retains platform-administrator authority; RC5 secondary admin accounts are demoted during upgrade.
-- Tenant checks apply to project/task access, project listing, assigned-task listing and task assignee details.
-- Startup migration removes legacy cross-tenant assignment and project membership links and repairs event/outbox tenant ownership where payload references permit it.
-- OIDC authorization-code flow now uses one-time browser-cookie-bound state, nonce and PKCE S256; ID token signature/JWKS, issuer, audience and expiry are checked.
-- PostgreSQL compatibility translation handles PRAGMA no-ops/introspection, parameter markers, `INSERT OR IGNORE` and legacy message sequence migration. RC8 adds transaction-local tenant context and explicit inbox tenant ownership.
-- Outbox internal endpoints use a dedicated `DAEP_WORKER_TOKEN`; the worker no longer needs the platform admin token.
-- Outbox lease ownership and retry/dead-letter semantics remain enforced; delivery is at-least-once.
+This document distinguishes controls implemented in the RC9 codebase, controls exercised by CI, and controls that still require verification in the target deployment environment. A CI pass is not a substitute for production security acceptance.
 
-## Remaining production blockers
+## 1. Implemented Security Controls
 
-- No live PostgreSQL server was available for integration tests. RC8 now includes PostgreSQL RLS policies and Alembic migrations, but real two-tenant RLS behavior still needs independent integration testing.
-- Alembic is now the reviewed additive migration path; the application bootstrap remains responsible for the cross-database core schema. Production needs a preflight/rollback procedure and migration observability.
-- No live OIDC IdP was available. Browser session management, logout, refresh, group/role mapping, account linking and tenant provisioning policy need production design/review.
-- Git integration remains generic shared-secret webhook ingestion; provider-specific HMAC signature validation, replay controls and PR/MR status synchronization are not bundled.
-- Broker worker still requires an HTTP gateway to publish into the chosen enterprise broker. Exactly-once delivery is not claimed; downstream deduplication is required.
-- No live broker, Docker build, load test, disaster-recovery exercise or independent penetration test was performed in this environment.
-- DAEP cannot guarantee wake-up of an arbitrary sleeping local MCP Host/Agent Runtime.
-- MCP SDK/Host interoperability still requires validation against actual supported Hosts.
+### Identity and credentials
+- Human Member authentication is account/password based; API and MCP Bearer Tokens remain machine/API credentials.
+- Member and Agent credentials are separate.
+- Token material is stored as a digest; plaintext is shown only at issuance/rotation.
+- Agent identity is privately owned by one human Member.
+- Worker operations use a dedicated Worker Token, separate from Member and Agent credentials.
+- OIDC authorization-code flow validates browser-bound state, nonce, PKCE S256, ID-token signature/JWKS, issuer, audience and expiry.
 
-Do not expose this RC to the public internet or use it for regulated/sensitive workloads without the above controls and verification.
+### Authorization and tenancy
+- Tenant-scoped project/task access checks are implemented.
+- Platform roles and project roles are separate.
+- Project creation is available to a regular Member within their own Tenant; the creator becomes Project Owner.
+- Agent Presence/discovery does not grant execution or collaboration authorization.
+- Task Execution Grants and Collaboration Grants are separate authorization domains.
+- An Agent Owner must authorize their own Agent; a Task owner cannot authorize another Member's Agent.
+- Agent actors cannot review or approve delivery.
+- Worker-only endpoints require the dedicated Worker identity.
+
+### Data and delivery
+- PostgreSQL 17 migrations and Row-Level Security policies are included.
+- CI provisions PostgreSQL and checks migration application, RLS policy presence/forced-RLS flags, and a restricted-role isolation smoke test.
+- Outbox delivery is at-least-once, with leases, retry and dead-letter handling. Exactly-once delivery is not claimed; downstream consumers must deduplicate by stable message/outbox identity.
+- Grant lifecycle, notification preferences, audit and controlled dead-letter replay have automated coverage.
+
+## 2. Current Automated Verification
+
+The RC9 CI workflow includes:
+- Python 3.11, 3.12 and 3.13 test suites.
+- PostgreSQL migration and RLS checks.
+- Chromium E2E for Agent management and Task Collaboration UI.
+- Container build and non-root runtime checks.
+- Production Compose validation.
+- Blocking structural quality scan.
+
+The latest recorded full baseline before this documentation refresh was run `45567826933`, with all 8 jobs successful. The documentation-only update triggers a new CI run; its result must be checked separately.
+
+## 3. Remaining Deployment / Security Acceptance
+
+The following are not proven by repository CI and remain required before production/GA acceptance:
+
+1. **Real identity provider** — validate the target OIDC provider, redirect URI, TLS, client credentials, group/role mapping, account lifecycle and logout/session behavior.
+2. **Production PostgreSQL operations** — execute a real backup, checksum verification, restore into an isolated empty database, RLS/role verification and application smoke test.
+3. **Deployment secrets and network** — verify secret injection, rotation, TLS, CORS, database network isolation, firewall rules and log redaction.
+4. **Worker and broker** — deploy the Worker profile, validate the external broker gateway, retry/dead-letter/replay and downstream deduplication.
+5. **Real Agent interoperability** — validate two independent Members and two independent local MCP-compatible Agents, including offline/recovery and negative authorization cases.
+6. **Independent security review** — conduct threat-model review and penetration testing against the deployed configuration; review rate limits, abuse controls, dependency advisories and operational alerting.
+7. **Operational resilience** — perform load, capacity, backup retention, disaster recovery and incident-response exercises.
+
+## 4. Integration Boundaries
+
+- DAEP is an Agentic Engineering Control Plane, not an Agent Runtime host.
+- Agent Runtime executes in each Member's own environment and is managed by that Member's MCP Host/local environment.
+- The current MCP integration uses a local stdio Adapter that calls DAEP REST APIs over HTTPS. DAEP does not currently expose a hosted remote Streamable HTTP MCP Server.
+- DAEP does not guarantee wake-up of a sleeping or disconnected local Agent Runtime.
+- Capability matching and Presence are discovery signals, not proof of capability or authorization.
+
+## 5. Release Restrictions
+
+Until the deployment acceptance items above have been completed and evidenced:
+- Treat RC9 as a Release Candidate, not Production GA.
+- Do not expose the service to the public internet without deployment-specific security controls and review.
+- Do not use it for regulated or sensitive workloads without the required independent assessment.
+- Do not mark real browser acceptance, production backup/restore or dual-Agent interoperability as PASS without evidence from the target environment.
+
+## 6. Related Evidence
+
+- `docs/RC9_RELEASE_READINESS.md`
+- `docs/RC9_FINAL_EVIDENCE_PACKAGE.md`
+- `docs/DEPLOYMENT_ACCEPTANCE_CHECKLIST.md`
+- `docs/RC9_PRODUCTION_BACKUP_RESTORE_DRILL.md`
+- `docs/RC9_AGENT_INTEROPERABILITY_DRILL.md`
+- `docs/POSTGRES_OIDC_TENANCY.md`
+- `docs/CODE_QUALITY_AUDIT.md`
