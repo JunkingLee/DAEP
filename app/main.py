@@ -555,34 +555,6 @@ def require_agent_task_grant(c, a, task_id, action):
         raise HTTPException(403,'Agent grant does not include the requested action')
     return grant
 
-def event(c,typ,member,task,payload,key=None,tenant_override=None):
-    eid='evt_'+uuid.uuid4().hex
-    tenant=tenant_override or 'tenant-default'
-    if tenant_override:
-        pass
-    elif task:
-        rr=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    elif member:
-        rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    audit_payload=dict(payload or {})
-    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
-    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
-    # Agent actions are attributed to the Agent identity, never to its owner's member row.
-    actor_member_id=None if _agent_ctx.get() else member
-    payload_json=json.dumps(audit_payload)
-    if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-        if prior:
-            if prior['payload'] != payload_json:
-                raise HTTPException(409,'Idempotency key was used with a different payload')
-            return prior['id']
-    else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-    return eid
-
 def enqueue_member_notification(c, recipient_member_id, tenant_id, task_id, project_id,
                                 message_type, title, content, priority='NORMAL', idempotency_key=None):
     """Persist a durable Member inbox item and its broker outbox envelope."""
@@ -4261,34 +4233,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def event(c,typ,member,task,payload,key=None,tenant_override=None):
-    eid='evt_'+uuid.uuid4().hex
-    tenant=tenant_override or 'tenant-default'
-    if tenant_override:
-        pass
-    elif task:
-        rr=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    elif member:
-        rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    audit_payload=dict(payload or {})
-    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
-    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
-    # Agent actions are attributed to the Agent identity, never to its owner's member row.
-    actor_member_id=None if _agent_ctx.get() else member
-    payload_json=json.dumps(audit_payload)
-    if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-        if prior:
-            if prior['payload'] != payload_json:
-                raise HTTPException(409,'Idempotency key was used with a different payload')
-            return prior['id']
-    else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-    return eid
-
 @app.get('/',include_in_schema=False)
 def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
 def _oidc_discovery():
@@ -6079,34 +6023,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-
-def event(c,typ,member,task,payload,key=None,tenant_override=None):
-    eid='evt_'+uuid.uuid4().hex
-    tenant=tenant_override or 'tenant-default'
-    if tenant_override:
-        pass
-    elif task:
-        rr=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    elif member:
-        rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    audit_payload=dict(payload or {})
-    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
-    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
-    # Agent actions are attributed to the Agent identity, never to its owner's member row.
-    actor_member_id=None if _agent_ctx.get() else member
-    payload_json=json.dumps(audit_payload)
-    if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-        if prior:
-            if prior['payload'] != payload_json:
-                raise HTTPException(409,'Idempotency key was used with a different payload')
-            return prior['id']
-    else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-    return eid
 
 @app.get('/',include_in_schema=False)
 def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
@@ -7905,34 +7821,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
-
-def event(c,typ,member,task,payload,key=None,tenant_override=None):
-    eid='evt_'+uuid.uuid4().hex
-    tenant=tenant_override or 'tenant-default'
-    if tenant_override:
-        pass
-    elif task:
-        rr=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    elif member:
-        rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    audit_payload=dict(payload or {})
-    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
-    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
-    # Agent actions are attributed to the Agent identity, never to its owner's member row.
-    actor_member_id=None if _agent_ctx.get() else member
-    payload_json=json.dumps(audit_payload)
-    if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-        if prior:
-            if prior['payload'] != payload_json:
-                raise HTTPException(409,'Idempotency key was used with a different payload')
-            return prior['id']
-    else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-    return eid
 
 @app.get('/',include_in_schema=False)
 def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
@@ -9837,34 +9725,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-
-def event(c,typ,member,task,payload,key=None,tenant_override=None):
-    eid='evt_'+uuid.uuid4().hex
-    tenant=tenant_override or 'tenant-default'
-    if tenant_override:
-        pass
-    elif task:
-        rr=c.execute('SELECT p.tenant_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id JOIN projects p ON p.id=r.project_id WHERE t.id=?',(task,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    elif member:
-        rr=c.execute('SELECT tenant_id FROM members WHERE id=?',(member,)).fetchone()
-        if rr: tenant=rr['tenant_id']
-    audit_payload=dict(payload or {})
-    audit_payload.setdefault('actor_type','AGENT' if _agent_ctx.get() else 'MEMBER')
-    if _agent_ctx.get(): audit_payload.setdefault('agent_id',_agent_ctx.get())
-    # Agent actions are attributed to the Agent identity, never to its owner's member row.
-    actor_member_id=None if _agent_ctx.get() else member
-    payload_json=json.dumps(audit_payload)
-    if key:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-        prior=c.execute('SELECT id,payload FROM events WHERE idempotency_key=?',(key,)).fetchone()
-        if prior:
-            if prior['payload'] != payload_json:
-                raise HTTPException(409,'Idempotency key was used with a different payload')
-            return prior['id']
-    else:
-        c.execute('INSERT INTO events(id,event_type,actor_member_id,task_id,payload,created_at,idempotency_key,tenant_id) VALUES(?,?,?,?,?,?,?,?)',(eid,typ,actor_member_id,task,payload_json,now(),key,tenant))
-    return eid
 
 @app.get('/',include_in_schema=False)
 def dashboard(): return FileResponse(os.path.join(os.path.dirname(os.path.dirname(__file__)),'web','index.html'))
