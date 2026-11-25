@@ -85,10 +85,12 @@
 
 ## 7. 通知、Outbox 与 Worker
 
+注意：Worker 位于 Compose `broker` profile，普通 `docker compose up -d` 不会启动它。未启动 Worker 时，Outbox 投递、Grant 到期提醒和到期状态物化均不会周期执行。生产环境必须按 NOT-01 显式启动并配置 Broker Gateway。
+
 | ID | 验收项 | 操作与通过标准 | 结果 / 证据 |
 |---|---|---|---|
-| NOT-01 | Worker Token | 使用独立 Worker Token 调用内部调度接口成功；Member / Agent Token 调用被拒绝 | 待执行 |
-| NOT-02 | Outbox 投递 | 触发授权事件，确认 Inbox 与 Outbox 记录生成、Worker 取件并完成投递 | 待执行 |
+| NOT-01 | Worker Token 与启动方式 | 使用独立 Worker Token 调用内部调度接口成功；Member / Agent Token 调用被拒绝；生产环境显式执行 `docker compose -f compose.production.yaml --profile broker up -d daep-worker` 并确认 Worker 运行 | 待执行 |
+| NOT-02 | Outbox 投递 | 配置有效的 `DAEP_BROKER_WEBHOOK_URL` 与独立 `DAEP_BROKER_WEBHOOK_TOKEN`；触发授权事件，确认 Inbox 与 Outbox 记录生成、Worker 取件并完成投递；下游按 Outbox ID / Message ID 去重（at-least-once） | 待执行 |
 | NOT-03 | 重试与 DEAD | 在隔离测试环境制造可控投递失败，确认重试次数、退避、最终 DEAD 状态和错误记录符合预期 | 待执行 |
 | NOT-04 | 恢复审计 | 对 DEAD 事件执行受控恢复/重放；确认操作原因、操作者与结果可审计，且不会无意重复产生业务副作用 | 待执行 |
 | NOT-05 | 到期提醒 | 配置短期测试 Grant 与提醒节点，确认 Worker 按 Owner 偏好提醒且同一周期幂等 | 待执行 |
