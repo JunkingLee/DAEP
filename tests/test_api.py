@@ -5879,6 +5879,11 @@ def test_agent_token_cannot_create_or_manage_agent_identities():
     agent = created.json()['agent']
     agent_token = created.json()['token']
     agent_headers = {'Authorization': f'Bearer {agent_token}'}
+    # Make the human owner a project manager so bind/unbind checks reach the
+    # actor-type guard rather than failing only on the project-role boundary.
+    with main_module.conn() as db:
+        db.execute("UPDATE project_members SET role='manager' WHERE project_id=? AND member_id=?",
+                   (pid,owner_id))
 
     before_count = None
     with main_module.conn() as db:
