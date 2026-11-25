@@ -1320,19 +1320,6 @@ def readiness():
         raise HTTPException(503,'DAEP database readiness check failed')
     finally:
         _service_ctx.reset(service_reset)
-@app.post('/api/v1/auth/login')
-def password_login(body:dict):
-    username=str(body.get('username','')).strip().lower()
-    password=str(body.get('password',''))
-    if not username or len(username)>120 or not password:
-        raise HTTPException(422,'Username and password are required')
-    with conn() as c:
-        row=c.execute("SELECT * FROM members WHERE lower(username)=? AND password_status='ACTIVE'",(username,)).fetchone()
-    if not row or not row['password_hash'] or not verify_password(password,row['password_hash']):
-        raise HTTPException(401,'Invalid username or password')
-    raw=issue_member_token(row['id'])
-    return {'access_token':raw,'token_type':'bearer','member_id':row['id'],'name':row['name']}
-
 @app.post('/api/v1/auth/logout')
 def logout(authorization:str=Header(None)):
     a=actor(authorization)
@@ -4256,18 +4243,6 @@ def password_login(body:dict):
     raw=issue_member_token(row['id'])
     return {'access_token':raw,'token_type':'bearer','member_id':row['id'],'name':row['name']}
 
-@app.post('/api/v1/auth/change-password')
-def change_password(body:dict,authorization:str=Header(None)):
-    a=actor(authorization); current=str(body.get('current_password','')); new=str(body.get('new_password',''))
-    if len(new)<12 or len(new)>256 or not current: raise HTTPException(422,'Password must be 12-256 characters')
-    with conn() as c:
-        row=c.execute("SELECT password_hash FROM members WHERE id=?",(a['id'],)).fetchone()
-    if not row or not row['password_hash'] or not verify_password(current,row['password_hash']):
-        raise HTTPException(401,'Current password is incorrect')
-    with conn() as c: c.execute("UPDATE members SET password_hash=?,password_status='ACTIVE' WHERE id=?",(hash_password(new),a['id']))
-    issue_member_token(a['id'])
-    return {'changed':True}
-
 @app.post('/api/v1/members')
 def create_member(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4286,47 +4261,6 @@ def create_member(body:dict,authorization:str=Header(None)):
         if c.execute("SELECT 1 FROM members WHERE lower(username)=?",(username,)).fetchone(): raise HTTPException(409,'Username already exists')
         c.execute('INSERT INTO members(id,name,username,role,token,created_at,tenant_id,token_status,token_created_at,token_revoked_at,token_expires_at,password_hash,password_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(mid,name,username,role,hashlib.sha256(token.encode()).hexdigest(),created,tenant_id,'ACTIVE',created,None,body.get('token_expires_at'),hash_password(password),'ACTIVE'))
     return {'id':mid,'name':name,'username':username,'role':role,'tenant_id':tenant_id}
-@app.get('/api/v1/members/{member_id}')
-def member_detail(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        row=c.execute("SELECT id,name,username,role,tenant_id,token_status,password_status,created_at FROM members WHERE id=?",(member_id,)).fetchone()
-        if not row: raise HTTPException(404,'Member not found')
-        projects=c.execute("""
-            SELECT p.id,p.name,pm.role AS project_role,pm.work_function,pm.joined_at
-            FROM project_members pm JOIN projects p ON p.id=pm.project_id
-            WHERE pm.member_id=? ORDER BY p.created_at DESC
-        """,(member_id,)).fetchall()
-        return {**dict(row),'projects':[dict(x) for x in projects]}
-
-@app.post('/api/v1/members/{member_id}/enable')
-def enable_member(member_id:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id,password_hash FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        if not target['password_hash']: raise HTTPException(409,'Member has no password; reset password first')
-        stamp=now()
-        c.execute("UPDATE members SET password_status='ACTIVE',token_status='ACTIVE',token_created_at=?,token_revoked_at=NULL WHERE id=?",(stamp,member_id))
-        event(c,'member.account.enabled',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'ACTIVE','token_status':'ACTIVE'}
-
-@app.post('/api/v1/members/{member_id}/reset-password')
-def reset_member_password(member_id:str,body:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    password=str(body.get('password',''))
-    if len(password)<12 or len(password)>256: raise HTTPException(422,'Password must be 12-256 characters')
-    with conn() as c:
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        if not target: raise HTTPException(404,'Member not found')
-        stamp=now()
-        c.execute("UPDATE members SET password_hash=?,password_status='ACTIVE',token_status='REVOKED',token_revoked_at=? WHERE id=?",(hash_password(password),stamp,member_id))
-        event(c,'member.password.reset',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
-    return {'member_id':member_id,'password_status':'ACTIVE','token_status':'REVOKED'}
-
 DEFAULT_PROJECT_WORKFLOW={'enabled':True,'stages':[{'key':'OPEN','name':'需求进入','order':1,'approval_role':'none','sla_seconds':None},{'key':'IN_PROGRESS','name':'执行','order':2,'approval_role':'none','sla_seconds':172800},{'key':'REVIEW','name':'评审验收','order':3,'approval_role':'reviewer','sla_seconds':86400},{'key':'DONE','name':'完成交付','order':4,'approval_role':'none','sla_seconds':None}]}
 SYSTEM_GOVERNANCE_GATES={
     'REVIEW_REQUIRED':{'enabled':True,'required_roles':['reviewer'],'required_evidence':True,'required_all_tasks_done':False,'applies_to':'DONE'},
