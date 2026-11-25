@@ -43,3 +43,14 @@ def test_member_inbox_exposes_unread_read_and_all_views_for_collaboration_notice
     assert "/api/v1/me/notifications?status=" in dashboard.text
     assert "标记已读" in dashboard.text
     assert "授权到期提醒" in dashboard.text
+
+
+def test_readme_svg_assets_are_well_formed_xml():
+    import xml.etree.ElementTree as ET
+
+    root = Path(__file__).resolve().parents[1]
+    svg_files = sorted((root / "docs" / "images").glob("*.svg"))
+    assert svg_files, "README SVG assets directory must not be empty"
+    for svg_file in svg_files:
+        parsed = ET.parse(svg_file)
+        assert parsed.getroot().tag == "{http://www.w3.org/2000/svg}svg", svg_file.name
