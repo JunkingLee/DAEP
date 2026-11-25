@@ -12,6 +12,7 @@ This document distinguishes controls implemented in the RC9 codebase, controls e
 - Member and Agent credentials are separate.
 - Token material is stored as a digest; plaintext is shown only at issuance/rotation.
 - Agent identity is privately owned by one human Member.
+- Agent management endpoints (create/list/detail/update, token rotate/revoke, project bind/unbind) require a human Member token; Agent credentials cannot act through their owner's Member ID.
 - Worker operations use a dedicated Worker Token, separate from Member and Agent credentials.
 - OIDC authorization-code flow validates browser-bound state, nonce, PKCE S256, ID-token signature/JWKS, issuer, audience and expiry.
 
@@ -42,7 +43,7 @@ The RC9 CI workflow includes:
 - Production Compose validation.
 - Blocking structural quality scan.
 
-The latest recorded full CI run for the authorization fixes is `45571799272`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
+The latest recorded full CI run for the authorization fixes is `45572688339`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
 
 ## 3. Remaining Deployment / Security Acceptance
 
