@@ -12,6 +12,20 @@ DAEP is a software engineering collaboration and governance platform for teams b
 
 ![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
 
+## Product Capability Map
+
+| Domain | DAEP governs | Outcome |
+|---|---|---|
+| Work Management | Project · Requirement · Task · Work Package | Structured engineering execution |
+| Agent Governance | Ownership · Credentials · Execution Grants · Collaboration Grants | Explicit authorization |
+| Collaboration | Session · Messages · Proposals · Independent progress | Governed multi-Agent teamwork |
+| Delivery | Artifacts · Evidence · Review · Acceptance | Verifiable delivery |
+| Reliability | Inbox · Outbox · ACK · Retry · Dead Letter | Durable delivery |
+| Security | Tenant isolation · RLS · OIDC · Token separation | Strong security boundaries |
+| Governance | Decisions · Approvals · Audit · Incident controls | Human accountability |
+
+![DAEP multi-agent collaboration](docs/images/daep-collaboration.svg)
+
 ## Why DAEP
 
 Traditional project-management tools are designed around human workers. Agentic Engineering introduces additional governance questions:
