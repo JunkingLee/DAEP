@@ -922,9 +922,12 @@ def register_agent_collaboration_routes(
                 raise HTTPException(404, "Collaboration proposal not found")
             lock_task(c, lookup["task_id"])
             row = c.execute(
-                """SELECT p.*,a.owner_member_id current_owner,a.status agent_status
+                """SELECT p.*,a.owner_member_id current_owner,a.status agent_status,
+                          s.status session_status,t.status task_status
                    FROM agent_collaboration_proposals p
                    JOIN agents a ON a.id=p.proposed_by_agent_id
+                   JOIN agent_collaboration_sessions s ON s.id=p.session_id
+                   JOIN tasks t ON t.id=p.task_id
                    WHERE p.id=? AND p.tenant_id=? AND p.proposed_by_agent_id=?""",
                 (proposal_id, current.get("tenant_id", "tenant-default"), current["agent_id"]),
             ).fetchone()
@@ -932,6 +935,12 @@ def register_agent_collaboration_routes(
                 raise HTTPException(404, "Collaboration proposal not found")
             if row["current_owner"] != row["owner_member_id"] or row["agent_status"] != "ACTIVE":
                 raise HTTPException(404, "Collaboration proposal not found")
+            _agent_collaboration_grant_context(
+                c, row["collaboration_grant_id"], current,
+                task_id=row["task_id"], required_scope="session.proposal.create",
+            )
+            if row["session_status"] != "OPEN" or row["task_status"] in ("DONE", "CANCELLED", "CLOSED", "ARCHIVED"):
+                raise HTTPException(409, "Only an OPEN collaboration Session on an active Task accepts proposal changes")
             if row["status"] != "PENDING":
                 raise HTTPException(409, "Only a pending collaboration proposal can be withdrawn")
             stamp = now()
