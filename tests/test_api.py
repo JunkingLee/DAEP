@@ -2432,16 +2432,18 @@ def test_rc36_platform_admin_project_creation_and_project_manager_scope():
     assert client.post(f"/api/v1/projects/{project_b['id']}/members",headers=ADMIN,json={
         'member_id':manager['id'],'role':'manager'}).status_code==200
 
-    # Project creation is a platform-level operation, not a project-manager privilege.
-    denied_manager=client.post('/api/v1/projects',headers=manager_h,json={'name':'Forbidden Manager Project'})
-    assert denied_manager.status_code==403,denied_manager.text
-    denied_member=client.post('/api/v1/projects',headers=target_h,json={'name':'Forbidden Member Project'})
-    assert denied_member.status_code==403,denied_member.text
+    # Project creation is a member-owned operation; the creator becomes project owner.
+    manager_project=client.post('/api/v1/projects',headers=manager_h,json={'name':'Manager-Owned Project'})
+    assert manager_project.status_code==200,manager_project.text
+    assert manager_project.json()['project_role']=='owner'
+    member_project=client.post('/api/v1/projects',headers=target_h,json={'name':'Member-Owned Project'})
+    assert member_project.status_code==200,member_project.text
+    assert member_project.json()['project_role']=='owner'
 
     # Project managers can operate in each explicitly assigned project, but not outside them.
     visible=client.get('/api/v1/projects',headers=manager_h)
     assert visible.status_code==200
-    assert {p['id'] for p in visible.json()}=={project_a['id'],project_b['id']}
+    assert {p['id'] for p in visible.json()}=={project_a['id'],project_b['id'],manager_project.json()['id']}
     assert client.get(f"/api/v1/projects/{outsider_project['id']}/members",headers=manager_h).status_code==403
     assert client.post(f"/api/v1/projects/{outsider_project['id']}/members",headers=manager_h,json={
         'member_id':target['id'],'role':'member'}).status_code==403
