@@ -491,6 +491,10 @@ def actor(authorization):
 
 def is_admin(a): return a.get('role') == 'admin' and a.get('tenant_id') == 'tenant-default'
 
+def require_member_actor(a):
+    if a.get('actor_type') != 'MEMBER':
+        raise HTTPException(403,'Human Member authentication required')
+
 def require_project_planning_access(c, project_id, a):
     """Allow project product owners to create requirements and tasks, without granting governance rights."""
     require_project_access(c,project_id,a,write=False)
@@ -1323,6 +1327,7 @@ def readiness():
 @app.post('/api/v1/auth/logout')
 def logout(authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     with conn() as c:
         stamp=now()
         c.execute("UPDATE members SET token_status='REVOKED',token_revoked_at=? WHERE id=?",(stamp,a['id']))
@@ -1332,6 +1337,7 @@ def logout(authorization:str=Header(None)):
 @app.patch('/api/v1/me')
 def update_me(body:dict,authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     name=str(body.get('name','')).strip()
     username=str(body.get('username','')).strip().lower()
     if not name or len(name)>120: raise HTTPException(422,'Name is required and must be at most 120 characters')
@@ -1345,7 +1351,9 @@ def update_me(body:dict,authorization:str=Header(None)):
 
 @app.post('/api/v1/auth/change-password')
 def change_password(body:dict,authorization:str=Header(None)):
-    a=actor(authorization); current=str(body.get('current_password','')); new=str(body.get('new_password',''))
+    a=actor(authorization)
+    require_member_actor(a)
+    current=str(body.get('current_password','')); new=str(body.get('new_password',''))
     if len(new)<12 or len(new)>256 or not current: raise HTTPException(422,'Password must be 12-256 characters')
     with conn() as c:
         row=c.execute("SELECT password_hash FROM members WHERE id=?",(a['id'],)).fetchone()
@@ -1358,6 +1366,7 @@ def change_password(body:dict,authorization:str=Header(None)):
 @app.get('/api/v1/me')
 def me(authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     with conn() as c:
         row=c.execute('SELECT username FROM members WHERE id=?',(a['id'],)).fetchone()
     return {k:a[k] for k in ('id','name','role')} | {'username': row['username'] if row else None}
@@ -1527,6 +1536,7 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
 @app.get('/api/v1/projects')
 def projects(authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     with conn() as c:
         if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
         else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
@@ -1565,7 +1575,9 @@ def close_project(pid:str,b:dict,authorization:str=Header(None)):
 
 @app.post('/api/v1/projects/{pid}/reopen')
 def reopen_project(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); reason=str(b.get('reason','')).strip()
+    a=actor(authorization)
+    require_member_actor(a)
+    reason=str(b.get('reason','')).strip()
     if len(reason)<10: raise HTTPException(422,'Reopen reason must be at least 10 characters')
     action_reset=_lifecycle_action_ctx.set('REOPEN')
     try:
@@ -1811,7 +1823,9 @@ def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorizat
 
 @app.post('/api/v1/projects/{pid}/approvals/{approval_id}/decision')
 def decide_project_approval(pid:str,approval_id:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); decision=str(b.get('decision','')).upper(); reason=str(b.get('reason','')).strip()
+    a=actor(authorization)
+    require_member_actor(a)
+    decision=str(b.get('decision','')).upper(); reason=str(b.get('reason','')).strip()
     if decision not in ('APPROVE','REJECT') or not reason or len(reason)>1000: raise HTTPException(422,'decision must be APPROVE or REJECT and reason is required')
     with conn() as c:
         require_project_access(c,pid,a)
@@ -2394,7 +2408,9 @@ def blocked(tid:str,b:dict,authorization:str=Header(None)):
     return {'event_id':eid,'status':'BLOCKED'}
 @app.post('/api/v1/tasks/{tid}/workflow-transition')
 def transition_task_workflow_endpoint(tid:str,b:dict,authorization:str=Header(None),idempotency_key:str=Header(None)):
-    a=actor(authorization); target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
+    a=actor(authorization)
+    require_member_actor(a)
+    target=str(b.get('target_stage','')).strip().upper(); comment=str(b.get('comment',''))[:4000]
     if not target: raise HTTPException(422,'target_stage is required')
     if target=='BLOCKED': raise HTTPException(409,'BLOCKED is controlled by the task blocked endpoint')
     with conn() as c:
@@ -3536,6 +3552,7 @@ def recommend_project_agents(pid:str,required_capabilities:str='',protocol:str='
 @app.post('/api/v1/tasks/{tid}/delegations')
 def create_task_delegation(tid:str,b:DelegationIn,authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     if b.recipient_member_id == a['id']: raise HTTPException(400,'A task cannot be delegated to yourself')
     agent_name=b.agent_name.strip()
     if not agent_name: raise HTTPException(422,'agent_name must not be blank')
@@ -3564,7 +3581,9 @@ def create_task_delegation(tid:str,b:DelegationIn,authorization:str=Header(None)
 
 @app.post('/api/v1/delegations/{did}/respond')
 def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); decision=b.get('decision')
+    a=actor(authorization)
+    require_member_actor(a)
+    decision=b.get('decision')
     if decision not in ('ACCEPT','REJECT'): raise HTTPException(422,'decision must be ACCEPT or REJECT')
     with conn() as c:
         begin_serialized_write(c)
@@ -3600,6 +3619,7 @@ def respond_task_delegation(did:str,b:dict,authorization:str=Header(None)):
 @app.get('/api/v1/tasks/{tid}/delegations')
 def list_task_delegations(tid:str,authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     with conn() as c:
         require_task_access(c,tid,a)
         rows=c.execute('SELECT * FROM task_delegations WHERE task_id=? ORDER BY created_at DESC',(tid,)).fetchall()
@@ -3617,7 +3637,9 @@ def list_task_delegations(tid:str,authorization:str=Header(None)):
 
 @app.get('/api/v1/projects/{pid}/delegations')
 def project_delegations(pid:str,limit:int=100,authorization:str=Header(None)):
-    a=actor(authorization); limit=max(1,min(limit,500))
+    a=actor(authorization)
+    require_member_actor(a)
+    limit=max(1,min(limit,500))
     with conn() as c:
         require_project_access(c,pid,a)
         rows=c.execute("""SELECT d.*,rq.name AS requester_name,rc.name AS recipient_name,t.title AS task_title
@@ -4213,6 +4235,7 @@ SYSTEM_GOVERNANCE_GATES={
 @app.post('/api/v1/tasks/{tid}/work-result')
 def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
     a=actor(authorization)
+    require_member_actor(a)
     with conn() as c:
         begin_serialized_write(c)
         require_task_access(c,tid,a,assigned_only=True)
@@ -4250,7 +4273,9 @@ SYSTEM_GOVERNANCE_GATES={
 }
 @app.post('/api/v1/messages')
 def send_message(b:MessageIn,authorization:str=Header(None)):
-    a=actor(authorization); mid='msg_'+uuid.uuid4().hex[:12]
+    a=actor(authorization)
+    require_member_actor(a)
+    mid='msg_'+uuid.uuid4().hex[:12]
     with conn() as c:
         if not c.execute('SELECT 1 FROM members WHERE id=?',(b.recipient_member_id,)).fetchone(): raise HTTPException(404,'Recipient not found')
         if b.task_id:
@@ -4319,16 +4344,9 @@ def require_task_access(c, tid, a, assigned_only=False):
         if assigned_only and closed: raise HTTPException(409,'Project is closed')
         return
     if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment_sql="""SELECT id FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'"""
-        if DATABASE_URL.startswith(('postgresql://','postgres://')):
-            assignment_sql += " FOR UPDATE"
-        assignment=c.execute(assignment_sql,(tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
+        if assigned_only:
+            raise HTTPException(403,'Human Member task assignment required')
+        require_agent_task_grant(c,a,tid,'task.read')
         return
     if assigned_only:
         if closed: raise HTTPException(409,'Project is closed')
