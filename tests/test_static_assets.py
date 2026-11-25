@@ -63,7 +63,7 @@ def test_readme_svg_references_resolve_to_existing_assets():
     readmes = (root / "README.md", root / "README.en.md", root / "README.zh-CN.md")
     for readme in readmes:
         content = readme.read_text(encoding="utf-8")
-        references = re.findall(r"!\\[[^\\]]*\\]\\(([^)]+\\.svg)\\)", content)
+        references = re.findall(r"!\[[^\]]*\]\(([^)]+\.svg)\)", content)
         assert references, f"{readme.name} should include product SVG diagrams"
         for reference in references:
             assert (root / reference).is_file(), f"{readme.name} references missing asset: {reference}"
