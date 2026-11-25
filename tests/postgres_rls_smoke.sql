@@ -141,6 +141,14 @@ VALUES ('rls-artifact-version-a','rls-artifact-a','rls-child-a','rls-work-packag
        ('rls-artifact-version-b','rls-artifact-b','rls-child-b','rls-work-package-b',1,'MEMBER','rls-member-b','tenant-b','PENDING',now()::text)
 ON CONFLICT (id) DO NOTHING;
 INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES ('rls-approval-a','rls-probe-a','tenant-a','rls-member-a','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text),('rls-approval-b','rls-probe-b','tenant-b','rls-member-b','PROJECT_ROLE_CHANGE','{}','PENDING',now()::text) ON CONFLICT (id) DO NOTHING;
+INSERT INTO messages(id,recipient_member_id,tenant_id,task_id,message_type,title,content,priority,status,created_at,acked_at)
+VALUES ('rls-message-inbox-a','rls-member-a','tenant-a','rls-task-a','RLS_TEST','Tenant A message','A','NORMAL','PENDING',now()::text,NULL),
+       ('rls-message-inbox-b','rls-member-b','tenant-b','rls-task-b','RLS_TEST','Tenant B message','B','NORMAL','PENDING',now()::text,NULL)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO outbox(id,event_type,payload,status,attempts,available_at,created_at,tenant_id)
+VALUES ('rls-outbox-a','message.created','{"message_id":"rls-message-inbox-a"}','PENDING',0,now()::text,now()::text,'tenant-a'),
+       ('rls-outbox-b','message.created','{"message_id":"rls-message-inbox-b"}','PENDING',0,now()::text,now()::text,'tenant-b')
+ON CONFLICT (id) DO NOTHING;
 BEGIN;
 SET SESSION AUTHORIZATION daep_rls_probe;
 SELECT set_config('app.tenant_id', 'tenant-a', true);
@@ -297,6 +305,23 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM project_approvals WHERE id IN ('rls-approval-a','rls-approval-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS project approval isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM messages WHERE id IN ('rls-message-inbox-a','rls-message-inbox-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS message inbox isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM outbox WHERE id IN ('rls-outbox-a','rls-outbox-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS outbox isolation failed';
+  END IF;
+
+  UPDATE messages SET title='cross-tenant-message-write' WHERE id='rls-message-inbox-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS message update isolation failed';
+  END IF;
+  UPDATE outbox SET last_error='cross-tenant-outbox-write' WHERE id='rls-outbox-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN
+    RAISE EXCEPTION 'RLS outbox update isolation failed';
   END IF;
 
   UPDATE agents SET name='cross-tenant-agent-write' WHERE id='rls-agent-identity-b';
