@@ -1621,13 +1621,22 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
 @app.post('/api/v1/projects')
 def create_project(b:ProjectIn,authorization:str=Header(None)):
     a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
+    if a.get('actor_type') != 'MEMBER':
+        raise HTTPException(403,'Human member identity required')
+    # Platform administrators may create a project in an explicitly selected tenant;
+    # ordinary members may only create projects inside their own tenant. The client
+    # supplied tenant_id is never trusted for ordinary members.
+    tenant_id=b.tenant_id if is_admin(a) else a.get('tenant_id','tenant-default')
     pid='prj_'+uuid.uuid4().hex[:12]
+    stamp=now()
     with conn() as c:
-        if not c.execute('SELECT 1 FROM tenants WHERE id=?',(b.tenant_id,)).fetchone(): raise HTTPException(422,'Tenant not found')
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),b.tenant_id))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
+        if not c.execute('SELECT 1 FROM tenants WHERE id=?',(tenant_id,)).fetchone(): raise HTTPException(422,'Tenant not found')
+        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],stamp,tenant_id))
+        # The creator becomes the first project Owner. Project membership is the
+        # project-level authorization boundary; platform role does not leak into it.
+        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',stamp))
+        event(c,'project.created',a['id'],None,{'project_id':pid,'name':b.name},tenant_override=tenant_id)
+    return {'id':pid,'name':b.name,'description':b.description,'tenant_id':tenant_id,'project_role':'owner'}
 @app.get('/api/v1/projects')
 def projects(authorization:str=Header(None)):
     a=actor(authorization)

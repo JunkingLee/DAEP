@@ -5808,3 +5808,43 @@ def test_member_notification_preferences_defaults_validation_and_scope():
     denied = client.get('/api/v1/me/notification-preferences',
                         headers={'Authorization': 'Bearer invalid-agent-token'})
     assert denied.status_code == 401, denied.text
+
+
+def test_regular_member_can_create_project_and_become_owner():
+    member = client.post('/api/v1/members', headers=ADMIN, json={
+        'name': 'Project Creator',
+        'username': 'project-creator',
+        'password': 'project-creator-password-2026',
+        'role': 'member',
+    })
+    assert member.status_code == 200, member.text
+    body = member.json()
+    headers = {'Authorization': f"Bearer {body['token']}"}
+
+    created = client.post('/api/v1/projects', headers=headers, json={
+        'name': 'Member Owned Project',
+        'description': 'Created by a normal platform member',
+        'tenant_id': 'tenant-default',
+    })
+    assert created.status_code == 200, created.text
+    payload = created.json()
+    assert payload['project_role'] == 'owner'
+    assert payload['tenant_id'] == 'tenant-default'
+
+    projects = client.get('/api/v1/projects', headers=headers)
+    assert projects.status_code == 200, projects.text
+    project = next(item for item in projects.json() if item['id'] == payload['id'])
+    assert project['project_role'] == 'owner'
+
+    members = client.get(f"/api/v1/projects/{payload['id']}/members", headers=headers)
+    assert members.status_code == 200, members.text
+    assert any(item['id'] == body['id'] and item['project_role'] == 'owner'
+               for item in members.json())
+
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        event_row = db.execute(
+            "SELECT event_type,actor_member_id FROM events WHERE event_type='project.created' "
+            "AND json_extract(payload,'$.project_id')=?",
+            (payload['id'],),
+        ).fetchone()
+    assert event_row == ('project.created', body['id'])
