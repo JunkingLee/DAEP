@@ -1085,10 +1085,15 @@ def accept_agent_task_grant(grant_id:str,authorization:str=Header(None)):
         raise HTTPException(403,'Agent Token required')
     with conn() as c:
         begin_serialized_write(c)
+        grant_lookup=c.execute(
+            'SELECT task_id FROM agent_task_grants WHERE id=? AND agent_id=? AND tenant_id=?',
+            (grant_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()
+        if not grant_lookup:
+            raise HTTPException(404,'Agent grant not found for this Agent')
         task_lock_sql="SELECT id FROM tasks WHERE id=?"
         if DATABASE_URL.startswith(('postgresql://','postgres://')):
             task_lock_sql += " FOR UPDATE"
-        if not c.execute(task_lock_sql,(grant_id and c.execute('SELECT task_id FROM agent_task_grants WHERE id=? AND agent_id=? AND tenant_id=?',(grant_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()['task_id'],)).fetchone():
+        if not c.execute(task_lock_sql,(grant_lookup['task_id'],)).fetchone():
             raise HTTPException(404,'Agent grant task not found')
         sql="""SELECT g.*,ag.status agent_status,ag.owner_member_id current_agent_owner,
             ag.tenant_id agent_tenant_id,owner.password_status owner_status,
