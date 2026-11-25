@@ -8,10 +8,10 @@ Branch: `release/1.0.0-rc9`
 RC9 has passed the blocking structural quality gate on the current branch. The historical duplicate-definition and duplicate-route findings below are retained as remediation history, not as current findings.
 
 Current source snapshot:
-- `app/main.py`: 4,347 lines.
+- `app/main.py`: 4396 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
-- Latest recorded RC9 CI run `45573815527`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
+- Latest recorded RC9 CI run `45575412495`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
 A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
@@ -102,11 +102,31 @@ The current authorization tests also cover Agent-token attempts to list/create/d
 
 Latest full CI evidence for this batch: run `45573815527`, all 8 jobs successful.
 
+### Third authorization finding — Agent-to-Member impersonation across business APIs
+
+A broader route-level review found that Agent authentication intentionally carries the owning Member ID for attribution, but several Member-only routes did not independently check the actor type. A project-bound Agent could otherwise attempt to act through its Owner identity on profile/session, project and task-governance operations.
+
+Corrected on `release/1.0.0-rc9`:
+- Added a shared `require_member_actor()` guard.
+- Protected Member profile read/update, password change and logout; protected the Member project-list endpoint.
+- Protected project reopen and project approval decisions against Agent actors using an Owner Member ID.
+- Restricted formal task workflow transitions, work-result reporting, human-to-human delegation create/respond/list, and generic Member message creation to human Members.
+- Changed generic task authorization so Agent reads require a live accepted Task Execution Grant with `task.read`; project binding and legacy Agent assignment are not enough.
+- Added regression coverage for Owner-profile integrity, token/logout integrity, project listing, approval state, project reopen, workflow transition, delegation, generic messaging and work-result denial.
+- Added a grant lifecycle assertion: generic Agent task-event reads work with an accepted `task.read` grant and fail immediately after revocation.
+- Static route review confirmed every `/internal/v1/*` endpoint invokes `require_worker()`; all four internal routes are Worker-only.
+
+CI run `45575412495` passed all 8 jobs. Each Python version reported 263 passed and 2 skipped; Chromium Browser E2E, PostgreSQL migrations/RLS, Container Build, Production Compose and Quality Gate all succeeded.
+
+### README architecture SVG rendering defect
+
+The root English README and Chinese README referenced the correct relative path, but `docs/images/daep-architecture.svg` contained an extra closing `</g>` tag, making the SVG invalid XML. The malformed group closure was corrected. `tests/test_static_assets.py` now parses every `docs/images/*.svg` asset with Python's XML parser and verifies the SVG namespace, preventing malformed diagrams from silently reaching README again. The SVG validation test passed in CI run `45574650566`; the full current run `45575412495` also passed.
+
 ## Next Quality Work
 
 Prioritize in this order:
 
-1. **Authorization matrix audit** — enumerate Member, Project Owner/Manager/Reviewer, Agent, Worker and System Admin operations; verify positive and negative cases, especially cross-Tenant and cross-Owner boundaries.
+1. **Authorization matrix completion** — continue covering every mounted route, Project Owner/Manager/Reviewer distinctions, Agent collaboration-vs-execution grants, expiry races and cross-Tenant/cross-Owner boundaries. The highest-risk identity-impersonation paths above now have regression tests.
 2. **Transaction and concurrency audit** — inspect commit/rollback behavior around state transitions, Grant expiry/revocation, Outbox claim/replay, idempotency and parent Work Package synchronization.
 3. **Route inventory and API contract audit** — compare registered method/path/name/dependency sets with expected API contracts; include mounted routers and runtime-generated routes.
 4. **Coverage quality** — report coverage by module and critical business path; do not optimize only for a global percentage.
@@ -116,7 +136,7 @@ Prioritize in this order:
 
 Current code-level structural gate: **PASS**.
 
-Current CI baseline: **PASS (8/8 jobs in run 45572688339)**.
+Current CI baseline: **PASS (8/8 jobs in run 45575412495)**.
 
 This does not close the separate real-environment release gates. Real browser product acceptance, Production PostgreSQL backup/restore, and two-member/two-Agent interoperability remain NOT EXECUTED until evidence is collected in the target environment. See:
 - `docs/RC9_RELEASE_READINESS.md`
