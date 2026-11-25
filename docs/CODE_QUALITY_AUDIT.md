@@ -1,113 +1,92 @@
 # Code Quality Audit — RC9
 
-Date: 2026-11-25
+Date: 2026-11-25  
+Branch: `release/1.0.0-rc9`
 
 ## Executive Summary
 
-The current RC9 application is functionally mature, but the source tree still has a significant structural quality issue centered on `app/main.py`.
+RC9 has passed the blocking structural quality gate on the current branch. The historical duplicate-definition and duplicate-route findings below are retained as remediation history, not as current findings.
 
-The file is approximately 12,356 lines and contains repeated top-level function definitions and repeated FastAPI route registrations. This is not treated as a cosmetic issue: Python resolves later function definitions while FastAPI keeps route registrations in declaration order, so the source-level function symbol and the effective HTTP route implementation can diverge.
+Current source snapshot:
+- `app/main.py`: 4,347 lines.
+- The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
+- CI job `quality-gate` enforces this scanner on every push and pull request.
+- Latest recorded RC9 CI run `45567826933`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
-## Current Findings
+A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
-### P0 — No confirmed immediate production break from this scan
+## Historical Findings — Remediated at Structural Level
 
-This scan did not by itself establish an exploitable authorization bypass or data-loss defect.
+An earlier scan of `app/main.py` found:
+- 105 duplicate top-level function names.
+- 87 duplicate FastAPI method/path route keys.
+- Approximately 12,356 lines in the file.
 
-### P1 — Duplicate top-level functions
+The duplicates were not removed with a blind “keep last definition” transformation. That approach was attempted, caused CI regressions, and was rolled back. Subsequent changes converged route/helper implementations in stages, with regression tests and CI checks.
 
-Static scan of `app/main.py` found 105 function names defined more than once.
+The current scanner result supersedes those historical counts for its defined scope. The historical numbers are kept here to explain why the quality gate exists.
 
-The following core helpers are defined six times:
+## Current Structural Findings
 
-- `require_worker`
-- `require_project_access`
-- `task_project`
-- `require_task_access`
-- `event`
-- `dashboard`
-- OIDC helpers and handlers
-- `create_project`
-- `projects`
-- multiple health/member/task handlers
+### PASS — Duplicate definitions and direct route registrations
 
-Some repeated helpers are byte-for-byte/semantically equivalent, while some business handlers are different historical variants.
+The current scanner:
+- Parses Python files under `app`, `daep_mcp`, `daep_agent_bridge`, and `daep_worker`.
+- Detects duplicate top-level function names per module.
+- Detects duplicate direct FastAPI route decorators of the form `@app.get/post/put/patch/delete/options/head/websocket("...")`.
+- Exits non-zero if either category is detected.
+- Runs as the blocking CI job `quality-gate`.
 
-### P1 — Duplicate FastAPI routes
+Latest observed result: zero duplicate function names and zero duplicate direct route keys.
 
-The scan found approximately 117 distinct method/path combinations, with 87 registered more than once.
+### REMAINING — Main application module is still large
 
-Examples include:
+`app/main.py` remains approximately 4.3k lines. Although the duplicate-symbol/route issue is structurally controlled, the application is still relatively centralized.
 
-- `GET /`
-- `GET /health`
-- `GET /readyz`
-- `GET /api/v1/me`
-- `POST /api/v1/projects`
-- `GET /api/v1/projects`
-- OIDC endpoints
-- member endpoints
-- requirement/task endpoints
+Recommended future modularization domains:
+1. Authentication and identity.
+2. Tenant / project / task authorization.
+3. Project and requirement workflows.
+4. Task execution, Work Packages and Agent grants.
+5. Collaboration sessions, messages and proposals.
+6. Notifications, Inbox / Outbox and Worker operations.
+7. Integrations, health and operational endpoints.
 
-Many are registered six times.
+This should be a separate, incremental refactoring stream. Do not combine broad module extraction with release-blocking security fixes.
 
-### P1 — Known example of semantic drift
+## Scanner Scope and Limitations
 
-`create_project` has six definitions. The first route implementation contains the intended RC9 behavior allowing a normal human Member to create a Project and become Owner.
+A zero result does **not** prove that:
+- Two routers included under different prefixes cannot expose equivalent effective paths.
+- Dynamically assembled paths or decorators are collision-free.
+- Business logic is not duplicated under different function names.
+- Two different functions do not implement subtly divergent versions of the same rule.
+- Authorization is correct for every route and every actor type.
+- Transaction boundaries, concurrency behavior or database isolation are correct.
 
-Other historical definitions include versions that:
+The scanner intentionally checks a narrow, deterministic subset of structural hazards. It complements, but does not replace, route inventory tests, authorization tests, PostgreSQL/RLS tests, code review and runtime verification.
 
-- do not enforce the same tenant rules; or
-- require platform administration.
+## Next Quality Work
 
-FastAPI will match the first registered route, while the Python module name `create_project` refers to the last definition after module import. Therefore these duplicate definitions are not equivalent source representations even when the HTTP route currently behaves correctly.
+Prioritize in this order:
 
-This is a strong reason not to remove duplicates using a simple “keep the last definition” rule.
+1. **Authorization matrix audit** — enumerate Member, Project Owner/Manager/Reviewer, Agent, Worker and System Admin operations; verify positive and negative cases, especially cross-Tenant and cross-Owner boundaries.
+2. **Transaction and concurrency audit** — inspect commit/rollback behavior around state transitions, Grant expiry/revocation, Outbox claim/replay, idempotency and parent Work Package synchronization.
+3. **Route inventory and API contract audit** — compare registered method/path/name/dependency sets with expected API contracts; include mounted routers and runtime-generated routes.
+4. **Coverage quality** — report coverage by module and critical business path; do not optimize only for a global percentage.
+5. **Incremental modularization** — extract one bounded domain at a time, preserving behavior with characterization tests and full CI after each step.
 
-### P1 — Existing helper deduplication is incomplete
+## Release Decision
 
-The earlier helper-deduplication work was reverted after CI regression. The current branch therefore still contains the duplicated helpers.
+Current code-level structural gate: **PASS**.
 
-## Recommended Remediation Strategy
+Current CI baseline: **PASS (8/8 jobs in run 45567826933)**.
 
-Do **not** perform another blind whole-file deduplication.
+This does not close the separate real-environment release gates. Real browser product acceptance, Production PostgreSQL backup/restore, and two-member/two-Agent interoperability remain NOT EXECUTED until evidence is collected in the target environment. See:
+- `docs/RC9_RELEASE_READINESS.md`
+- `docs/RC9_FINAL_EVIDENCE_PACKAGE.md`
+- `docs/RC9_BROWSER_ACCEPTANCE_RUNBOOK.md`
+- `docs/RC9_PRODUCTION_BACKUP_RESTORE_DRILL.md`
+- `docs/RC9_AGENT_INTEROPERABILITY_DRILL.md`
 
-Use a staged migration:
-
-1. Freeze new feature additions to `app/main.py` except security/bug fixes.
-2. Add a static duplicate-definition/duplicate-route detector as a non-blocking quality report first.
-3. Establish characterization tests for the effective HTTP routes.
-4. Extract shared infrastructure helpers first:
-   - authentication/context
-   - tenant access
-   - project/task access
-   - audit/event
-   - worker/service access
-5. Migrate one business domain at a time into routers/modules.
-6. After each domain migration, run unit tests, PostgreSQL/RLS tests and Browser E2E.
-7. Only after route parity is demonstrated should obsolete historical definitions be removed.
-8. Finally make duplicate-route detection a blocking CI quality gate.
-
-## Safe vs. Unsafe Changes
-
-### Safe to automate
-
-- Detect duplicate function names.
-- Detect duplicate method/path registrations.
-- Detect exact duplicate function bodies.
-- Report file/line locations.
-- Report route-order collisions.
-
-### Requires behavior verification
-
-- Removing duplicate route blocks.
-- Choosing between different historical implementations.
-- Moving routes between modules.
-- Replacing authorization helpers.
-- Changing route registration order.
-
-## Current Decision
-
-No production behavior was changed by this audit.
-
-The codebase should now enter a dedicated **Code Quality / Modularization** phase before additional large feature work. The objective is to reduce structural risk without changing the established DAEP domain model or authorization semantics.
+No merge to `main` is implied by this audit.
