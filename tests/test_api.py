@@ -5918,9 +5918,16 @@ def test_agent_token_cannot_create_or_manage_agent_identities():
     assert bindings == 0
 
 
+
 def test_project_members_cannot_directly_grant_project_owner_role():
-    pid, owner_id, owner_token, task_id = setup_project_task()
-    owner_headers = {'Authorization': f'Bearer {owner_token}'}
+    owner = client.post('/api/v1/members', headers=ADMIN, json={
+        'name':'Project Owner Boundary','role':'member','password':'owner-boundary-password-2026'})
+    assert owner.status_code == 200, owner.text
+    owner_headers = {'Authorization': f"Bearer {owner.json()['token']}"}
+    project = client.post('/api/v1/projects', headers=owner_headers, json={
+        'name':'Project Owner Escalation Boundary'})
+    assert project.status_code == 200, project.text
+    pid = project.json()['id']
     manager = client.post('/api/v1/members', headers=ADMIN, json={
         'name':'Project Manager Boundary','role':'member','password':'manager-boundary-password-2026'})
     target = client.post('/api/v1/members', headers=ADMIN, json={
