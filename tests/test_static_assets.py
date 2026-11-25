@@ -67,3 +67,11 @@ def test_readme_svg_references_resolve_to_existing_assets():
         assert references, f"{readme.name} should include product SVG diagrams"
         for reference in references:
             assert (root / reference).is_file(), f"{readme.name} references missing asset: {reference}"
+
+
+def test_chinese_readme_uses_localized_diagrams():
+    root = Path(__file__).resolve().parents[1]
+    content = (root / "README.zh-CN.md").read_text(encoding="utf-8")
+    references = re.findall(r"!\\[[^\\]]*\\]\\(([^)]+\\.svg)\\)", content)
+    assert references, "README.zh-CN.md should include product SVG diagrams"
+    assert all("-zh-CN.svg" in reference for reference in references), references
