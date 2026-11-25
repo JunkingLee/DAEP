@@ -1782,3 +1782,15 @@
 ### 回归测试
 - 扩展真实 Chromium Agent 管理 E2E：登录并建立会话后，在刷新时人为延迟 `/api/v1/me`，断言恢复期间登录页始终隐藏、恢复提示可见，身份验证成功后工作台出现且恢复提示消失。
 - CI Browser E2E 将执行该回归路径；全量 CI 状态待本次提交后确认。
+
+## 29. README / 产品文档一致性检查（2026-11-25）
+
+- 本轮对根 README、中文 README、英文 README 与当前仓库文件/部署文档进行了交付前一致性检查。
+- 已确认：docker-compose.rc8.yaml 在当前 release/1.0.0-rc9 分支仍存在，因此 README 的本地 PostgreSQL/Worker Quick Start 引用并非断链；生产部署仍明确使用 compose.production.yaml。
+- 已确认：项目创建、Agent Owner/Grant、Task Collaboration Session/Grant/Proposal、Work Package、Evidence/Acceptance、Outbox/Worker、OIDC/RLS、MCP stdio Adapter 等产品边界与当前部署/集成文档一致。
+- 已确认：当前 MCP 交付形态是 Owner 环境中的本地 stdio Adapter 通过 HTTPS 调用 DAEP REST API，不应把 /api/v1/mcp/context 描述为远程 MCP Server。
+- 已确认：仓库当前没有 docs/README.zh-CN.md，因此中文/英文 README 中原有该链接属于断链；本轮已移除并改为有效的 Project Handoff 链接。
+- 已确认：仓库当前没有 LICENSE 文件；三个 README 原先写“See the repository license file.”与实际状态不一致。本轮统一改为“License: not yet specified”，避免暗示存在未提供的开源许可证。
+- 本轮未擅自修改产品行为；涉及权限/业务实现的描述以当前代码和验收文档为准，未发现需要立即修改实现的明确产品缺口。
+- 当前 CI：README badge 提交触发的 run 45557565229 在检查时仍为 in_progress；不能提前宣称通过。
+- 下一步唯一任务：等待本轮文档提交对应 CI 完成后，核实最新 HEAD 的完整 CI 结果；若全绿，再进入下一轮交付前代码结构/行为一致性检查。
