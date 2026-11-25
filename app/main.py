@@ -4183,7 +4183,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
     with conn() as c:
         begin_serialized_write(c)
         require_task_access(c,tid,a,assigned_only=True)
-        package_sql='SELECT id,parent_task_id,status,correlation_id FROM task_work_packages WHERE child_task_id=?'
+        package_sql='SELECT id,parent_task_id,status,correlation_id,assignee_member_id FROM task_work_packages WHERE child_task_id=?'
         if DATABASE_URL.startswith(('postgresql://','postgres://')): package_sql += ' FOR UPDATE'
         package=c.execute(package_sql,(tid,)).fetchone()
         if not package: raise HTTPException(404,'Task is not a registered work package')
@@ -4205,6 +4205,7 @@ def report_work_result(tid:str,b:WorkResultIn,authorization:str=Header(None)):
         else:
             status='BLOCKED'; progress=0
         c.execute('UPDATE tasks SET status=?,progress=?,updated_at=? WHERE id=?',(status,progress,now(),tid))
+        sync_work_package_parent(c,tid,package['assignee_member_id'],'work_result_reported')
         eid=event(c,'task.work_package.reported',a['id'],tid,payload,key)
     return {'task_id':tid,'status':status,'event_id':eid,'outcome':b.outcome}
 
