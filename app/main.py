@@ -1511,7 +1511,9 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
     # Platform administrators may create a project in an explicitly selected tenant;
     # ordinary members may only create projects inside their own tenant. The client
     # supplied tenant_id is never trusted for ordinary members.
-    tenant_id=b.tenant_id if is_admin(a) else a.get('tenant_id','tenant-default')
+    tenant_id=a.get('tenant_id','tenant-default')
+    if is_admin(a):
+        tenant_id=b.tenant_id or tenant_id
     pid='prj_'+uuid.uuid4().hex[:12]
     stamp=now()
     with conn() as c:
