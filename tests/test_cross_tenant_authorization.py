@@ -1,4 +1,4 @@
-import os, sqlite3, tempfile, json, json
+import os, sqlite3, tempfile, json
 
 os.environ.setdefault('DAEP_DB_PATH', os.path.join(tempfile.gettempdir(), 'daep-cross-tenant-v1.db'))
 os.environ.setdefault('DAEP_ADMIN_TOKEN', 'test-admin-token-with-32-characters-minimum')
@@ -150,6 +150,45 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
     assert denied_agent.status_code in (403, 404), denied_agent.text
 
     # Project Agent presence is also project/tenant scoped.
+    # Issue a real AgentTaskGrant in Tenant B and prove its authorization is
+    # bound to the Agent identity + tenant, not merely the grant ID.
+    grant_b = client.post(
+        f'/api/v1/tasks/{task_b_id}/agent-grants',
+        headers=headers_b,
+        json={'agent_id': agent_b_id, 'requested_scope': ['task.read', 'task.artifact.submit']},
+    )
+    assert grant_b.status_code == 200, grant_b.text
+    grant_b_id = grant_b.json()['id']
+
+    agent_b_token = agent_b.json().get('token') or agent_b.json().get('agent_token')
+    assert agent_b_token, agent_b.text
+    headers_agent_b = {'Authorization': f'Bearer {agent_b_token}'}
+    accepted_b = client.post(f'/api/v1/agent-grants/{grant_b_id}/accept', headers=headers_agent_b)
+    assert accepted_b.status_code == 200, accepted_b.text
+
+    # A's Agent must not be able to consume B's accepted grant, even with the
+    # exact grant ID. Create the A-owned Agent and use its token against B's task.
+    agent_a = client.post('/api/v1/agents', headers=headers_a, json={
+        'name': 'Tenant A Agent', 'description': 'Cross-tenant grant isolation test',
+    })
+    assert agent_a.status_code == 200, agent_a.text
+    agent_a_token = agent_a.json().get('token') or agent_a.json().get('agent_token')
+    assert agent_a_token, agent_a.text
+    headers_agent_a = {'Authorization': f'Bearer {agent_a_token}'}
+
+    denied_grant_accept = client.post(f'/api/v1/agent-grants/{grant_b_id}/accept', headers=headers_agent_a)
+    assert denied_grant_accept.status_code in (403, 404), denied_grant_accept.text
+
+    denied_grant_read = client.get(f'/api/v1/tasks/{task_b_id}', headers=headers_agent_a)
+    assert denied_grant_read.status_code in (403, 404), denied_grant_read.text
+
+    denied_grant_artifact = client.post(
+        f'/api/v1/tasks/{task_b_id}/artifacts',
+        headers=headers_agent_a,
+        json={'artifact_type': 'test_report', 'uri': 'tenant-a://agent-forgery', 'commit_sha': 'a-agent'},
+    )
+    assert denied_grant_artifact.status_code in (403, 404), denied_grant_artifact.text
+
     register_b = client.post(
         f'/api/v1/projects/{project_b_id}/agents/register',
         headers=headers_b,
