@@ -11,7 +11,7 @@ Current source snapshot:
 - `app/main.py`: 4,347 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
-- Latest recorded RC9 CI run `45571799272`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
+- Latest recorded RC9 CI run `45572688339`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
 A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
@@ -79,6 +79,19 @@ Corrected on `release/1.0.0-rc9`:
 - Browser E2E now covers the revoked-grant withdrawal denial.
 - This is a targeted fix, not a declaration that the full authorization matrix is complete. The remaining pass must still cover route-level negative tests for cross-tenant access, project roles, Agent grants, expired/revoked grants, and Worker identity.
 
+### Second authorization finding — Agent identity management
+
+The Agent token resolves to its human owner's Member ID for task attribution. Agent management routes previously relied on that ID alone in `_agent_owner()`, and the list/create/unbind routes did not consistently enforce a human actor type. An Agent token could therefore attempt to manage Agent identities through its owner's identity context.
+
+Corrected on `release/1.0.0-rc9`:
+- Added a shared `MEMBER` actor guard to Agent management operations.
+- `_agent_owner()` now rejects Agent actors before owner-ID checks.
+- Agent list/create/unbind routes explicitly require human Member authentication; detail/update/token/bind routes inherit the guard through `_agent_owner()`.
+- Added regression coverage asserting Agent tokens receive 403 for list/create/detail/update/token rotate/token revoke/project bind/project unbind, with database state unchanged.
+- CI run `45572688339` passed all 8 jobs, including Python 3.11/3.12/3.13 and Browser E2E.
+
+This closes the identified Agent-to-Member management impersonation path; the broader authorization matrix remains in progress.
+
 ## Next Quality Work
 
 Prioritize in this order:
@@ -93,7 +106,7 @@ Prioritize in this order:
 
 Current code-level structural gate: **PASS**.
 
-Current CI baseline: **PASS (8/8 jobs in run 45567826933)**.
+Current CI baseline: **PASS (8/8 jobs in run 45572688339)**.
 
 This does not close the separate real-environment release gates. Real browser product acceptance, Production PostgreSQL backup/restore, and two-member/two-Agent interoperability remain NOT EXECUTED until evidence is collected in the target environment. See:
 - `docs/RC9_RELEASE_READINESS.md`
