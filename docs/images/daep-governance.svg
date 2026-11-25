@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="720" viewBox="0 0 1440 720">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#08111f"/><stop offset="1" stop-color="#18283d"/></linearGradient><linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#5eead4"/><stop offset="1" stop-color="#60a5fa"/></linearGradient></defs>
+<rect width="1440" height="720" rx="32" fill="url(#bg)"/>
+<text x="72" y="78" fill="#fff" font-family="Inter,Arial" font-size="34" font-weight="700">DAEP Governance Loop</text>
+<text x="72" y="116" fill="#9fb3c8" font-family="Inter,Arial" font-size="18">Authorization and evidence are first-class controls across the delivery lifecycle</text>
+<g font-family="Inter,Arial" text-anchor="middle">
+<circle cx="180" cy="340" r="105" fill="#10243a" stroke="#35516d" stroke-width="2"/><text x="180" y="330" fill="#fff" font-size="22" font-weight="700">Ownership</text><text x="180" y="360" fill="#b8c9d9" font-size="15">Member owns Agent</text>
+<circle cx="420" cy="340" r="105" fill="#10243a" stroke="#35516d" stroke-width="2"/><text x="420" y="330" fill="#fff" font-size="22" font-weight="700">Grant</text><text x="420" y="360" fill="#b8c9d9" font-size="15">Explicit authorization</text>
+<circle cx="660" cy="340" r="105" fill="#10243a" stroke="#35516d" stroke-width="2"/><text x="660" y="330" fill="#fff" font-size="22" font-weight="700">Execution</text><text x="660" y="360" fill="#b8c9d9" font-size="15">Task / Work Package</text>
+<circle cx="900" cy="340" r="105" fill="#10243a" stroke="#35516d" stroke-width="2"/><text x="900" y="330" fill="#fff" font-size="22" font-weight="700">Evidence</text><text x="900" y="360" fill="#b8c9d9" font-size="15">Artifact / Commit</text>
+<circle cx="1140" cy="340" r="105" fill="#10243a" stroke="#35516d" stroke-width="2"/><text x="1140" y="330" fill="#fff" font-size="22" font-weight="700">Acceptance</text><text x="1140" y="360" fill="#b8c9d9" font-size="15">Human decision</text>
+</g>
+<g stroke="url(#line)" stroke-width="4" fill="none" stroke-linecap="round"><path d="M285 340h30M525 340h30M765 340h30M1005 340h30"/></g>
+<g fill="#60a5fa"><path d="M315 340l-14-9v18z"/><path d="M555 340l-14-9v18z"/><path d="M795 340l-14-9v18z"/><path d="M1035 340l-14-9v18z"/></g>
+<rect x="300" y="535" width="840" height="82" rx="20" fill="#10243a"/><text x="720" y="570" fill="#fff" font-family="Inter,Arial" font-size="18" text-anchor="middle" font-weight="700">Audit + Policy + Revocation + Tenant Isolation</text><text x="720" y="597" fill="#9fb3c8" font-family="Inter,Arial" font-size="14" text-anchor="middle">These controls operate across the loop — not as a final “security step”.</text>
+</svg>
