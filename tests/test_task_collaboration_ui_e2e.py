@@ -101,12 +101,34 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             expect(message_input).to_have_value("Human collaboration message from browser E2E")
             # Wait for the actual write request rather than the transient toast: the
             # proposal decision and message composer both refresh this modal async.
-            with page.expect_response(
-                lambda response: "/api/v1/tasks/" + setup["taskId"] + "/collaboration-messages" in response.url
-                and response.request.method == "POST"
-            ) as message_response:
-                modal.get_by_test_id("task-collab-send").click()
-            assert message_response.value.status == 200, message_response.value.text()
+            browser_errors = []
+            page.on("pageerror", lambda error: browser_errors.append(str(error)))
+            button_probe = modal.get_by_test_id("task-collab-send").evaluate("""button => ({
+                onclickType: typeof button.onclick,
+                onclickSource: button.onclick ? String(button.onclick).slice(0, 240) : null,
+                disabled: button.disabled,
+                connected: button.isConnected,
+                taskId: button.dataset.taskId,
+                sendFunctionType: typeof window.sendTaskCollaborationMessage,
+                buttonHtml: button.outerHTML
+            })""")
+            print("COLLAB_SEND_BUTTON_PROBE", button_probe)
+            try:
+                with page.expect_response(
+                    lambda response: "/api/v1/tasks/" + setup["taskId"] + "/collaboration-messages" in response.url
+                    and response.request.method == "POST",
+                    timeout=8000,
+                ) as message_response:
+                    modal.get_by_test_id("task-collab-send").click()
+                assert message_response.value.status == 200, message_response.value.text()
+            except Exception:
+                print("COLLAB_SEND_BROWSER_ERRORS", browser_errors)
+                print("COLLAB_SEND_AFTER_CLICK", modal.get_by_test_id("task-collab-send").evaluate("""button => ({
+                    onclickType: typeof button.onclick, disabled: button.disabled,
+                    connected: button.isConnected, inputValue: document.querySelector('#taskCollabMessage')?.value,
+                    toast: document.querySelector('#toast')?.textContent
+                })"""))
+                raise
             expect(modal).to_contain_text("Human collaboration message from browser E2E", timeout=15000)
 
             # The responsible Member controls the Session from the Task workspace.
