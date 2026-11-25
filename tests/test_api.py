@@ -5322,8 +5322,8 @@ def test_expired_collaboration_grant_accept_and_revoke_attempts_commit_expiratio
     assert accept_grant.status_code == 200, accept_grant.text
     accept_id = accept_grant.json()["id"]
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  ("2000-01-01T00:00:00+00:00", accept_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  ("1999-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00", accept_id))
     accepted = client.post(f"/api/v1/collaboration-grants/{accept_id}/accept",
                            headers=agent_headers)
     assert accepted.status_code == 409, accepted.text
@@ -5343,8 +5343,8 @@ def test_expired_collaboration_grant_accept_and_revoke_attempts_commit_expiratio
     assert revoke_grant.status_code == 200, revoke_grant.text
     revoke_id = revoke_grant.json()["id"]
     with main_module.conn() as c:
-        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
-                  ("2000-01-01T00:00:00+00:00", revoke_id))
+        c.execute("UPDATE agent_collaboration_grants SET created_at=?,expires_at=? WHERE id=?",
+                  ("1999-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00", revoke_id))
     revoked = client.delete(f"/api/v1/collaboration-grants/{revoke_id}",
                             headers=owner_headers)
     assert revoked.status_code == 409, revoked.text
