@@ -177,7 +177,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             page.on("dialog", lambda dialog: dialog.accept("Owner revoked from browser E2E") if dialog.type == "prompt" else dialog.accept())
             modal.get_by_role("button", name="撤销我的授权").click()
             expect(modal).to_contain_text("已撤销", timeout=15000)
-            revoked_access = page.evaluate("""async ({taskId,grantId,agentToken}) => {
+            revoked_access = page.evaluate("""async ({taskId,grantId,agentToken,pendingProposalId}) => {
                 const call=async(path,method,body) => {
                     const response=await fetch(path,{method,headers:{
                         'Authorization':'Bearer '+agentToken,'Content-Type':'application/json'
@@ -187,9 +187,9 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 const history=await call('/api/v1/tasks/'+taskId+'/collaboration-messages?grant_id='+grantId,'GET');
                 const message=await call('/api/v1/tasks/'+taskId+'/collaboration-messages','POST',{grant_id:grantId,content:'must be rejected after revoke'});
                 const proposal=await call('/api/v1/tasks/'+taskId+'/collaboration-proposals','POST',{grant_id:grantId,proposal_type:'HELP_REQUEST',payload:{summary:'must be rejected'}});
-                const withdraw=await call('/api/v1/collaboration-proposals/'+setupPendingProposalId+'/withdraw','POST');
+                const withdraw=await call('/api/v1/collaboration-proposals/'+pendingProposalId+'/withdraw','POST');
                 return {history,message,proposal,withdraw};
-            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"],"setupPendingProposalId":setup["pendingProposalId"]})
+            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"],"pendingProposalId":setup["pendingProposalId"]})
             assert revoked_access == {"history":403,"message":403,"proposal":403,"withdraw":403}, revoked_access
 
             # Validate the durable Member inbox after the Task workspace flow is complete.
