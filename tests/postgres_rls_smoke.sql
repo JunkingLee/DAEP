@@ -11,7 +11,8 @@ DECLARE
     'agent_task_grants','agent_task_execution_policies',
     'agent_task_contributions','agent_collaboration_sessions',
     'agent_collaboration_grants','agent_collaboration_messages',
-    'agent_collaboration_proposals'
+    'agent_collaboration_proposals','project_workflows','project_gates',
+    'project_risk_events','project_risk_occurrences','member_notification_preferences'
   ];
 BEGIN
   FOREACH table_name IN ARRAY expected_tables LOOP
@@ -153,6 +154,36 @@ INSERT INTO agent_collaboration_proposals(
  ('rls-proposal-a','tenant-a','rls-probe-a','rls-task-a','rls-session-a','HELP_REQUEST','rls-agent-identity-a','rls-member-a','rls-collab-grant-a','{}','PENDING',now()::text),
  ('rls-proposal-b','tenant-b','rls-probe-b','rls-task-b','rls-session-b','HELP_REQUEST','rls-agent-identity-b','rls-member-b','rls-collab-grant-b','{}','PENDING',now()::text)
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO project_workflows(project_id,tenant_id,config,updated_by,updated_at)
+VALUES ('rls-probe-a','tenant-a','{}','rls-member-a',now()::text),
+       ('rls-probe-b','tenant-b','{}','rls-member-b',now()::text)
+ON CONFLICT (project_id) DO NOTHING;
+INSERT INTO project_gates(project_id,gate_key,tenant_id,config,updated_by,updated_at)
+VALUES ('rls-probe-a','review','tenant-a','{}','rls-member-a',now()::text),
+       ('rls-probe-b','review','tenant-b','{}','rls-member-b',now()::text)
+ON CONFLICT (project_id,gate_key) DO NOTHING;
+INSERT INTO project_risk_events(
+ id,tenant_id,project_id,task_id,artifact_version_id,risk_key,artifact_type,quality_check_key,
+ title,description,severity,status,occurrence_count,first_seen_at,last_seen_at,created_at,updated_at
+) VALUES
+ ('rls-risk-a','tenant-a','rls-probe-a','rls-task-a','rls-artifact-version-a','risk-a','test_report','check-a',
+  'A risk','A','LOW','OPEN',1,now()::text,now()::text,now()::text,now()::text),
+ ('rls-risk-b','tenant-b','rls-probe-b','rls-task-b','rls-artifact-version-b','risk-b','test_report','check-b',
+  'B risk','B','LOW','OPEN',1,now()::text,now()::text,now()::text,now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO project_risk_occurrences(
+ id,tenant_id,project_id,task_id,risk_id,artifact_version_id,quality_check_key,severity,message,occurred_at
+) VALUES
+ ('rls-risk-occurrence-a','tenant-a','rls-probe-a','rls-task-a','rls-risk-a','rls-artifact-version-a','check-a','LOW','A',now()::text),
+ ('rls-risk-occurrence-b','tenant-b','rls-probe-b','rls-task-b','rls-risk-b','rls-artifact-version-b','check-b','LOW','B',now()::text)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO member_notification_preferences(
+ member_id,tenant_id,collaboration_grant_events,collaboration_expiry_reminders,reminder_days_json,created_at,updated_at
+) VALUES
+ ('rls-member-a','tenant-a',true,true,'[7,3,1]',now()::text,now()::text),
+ ('rls-member-b','tenant-b',true,true,'[7,3,1]',now()::text,now()::text)
+ON CONFLICT (member_id) DO NOTHING;
 
 INSERT INTO project_agents(id,project_id,member_id,tenant_id,agent_name,capabilities,protocols,status,metadata,last_seen,created_at,updated_at)
 VALUES
@@ -324,6 +355,22 @@ BEGIN
     RAISE EXCEPTION 'RLS artifact version isolation failed';
   END IF;
 
+  IF (SELECT count(*) FROM project_workflows WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project workflow isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM project_gates WHERE project_id IN ('rls-probe-a','rls-probe-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project gate isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM project_risk_events WHERE id IN ('rls-risk-a','rls-risk-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project risk event isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM project_risk_occurrences WHERE id IN ('rls-risk-occurrence-a','rls-risk-occurrence-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS project risk occurrence isolation failed';
+  END IF;
+  IF (SELECT count(*) FROM member_notification_preferences WHERE member_id IN ('rls-member-a','rls-member-b')) <> 1 THEN
+    RAISE EXCEPTION 'RLS notification preference isolation failed';
+  END IF;
+
   IF (SELECT count(*) FROM project_agents WHERE id IN ('rls-agent-a','rls-agent-b')) <> 1 THEN
     RAISE EXCEPTION 'RLS project Agent isolation failed';
   END IF;
@@ -355,6 +402,22 @@ BEGIN
   IF changed_count <> 0 THEN
     RAISE EXCEPTION 'RLS outbox update isolation failed';
   END IF;
+
+  UPDATE project_workflows SET config='cross-tenant' WHERE project_id='rls-probe-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN RAISE EXCEPTION 'RLS project workflow update isolation failed'; END IF;
+  UPDATE project_gates SET config='cross-tenant' WHERE project_id='rls-probe-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN RAISE EXCEPTION 'RLS project gate update isolation failed'; END IF;
+  UPDATE project_risk_events SET title='cross-tenant' WHERE id='rls-risk-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN RAISE EXCEPTION 'RLS project risk event update isolation failed'; END IF;
+  UPDATE project_risk_occurrences SET message='cross-tenant' WHERE id='rls-risk-occurrence-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN RAISE EXCEPTION 'RLS project risk occurrence update isolation failed'; END IF;
+  UPDATE member_notification_preferences SET reminder_days_json='[1]' WHERE member_id='rls-member-b';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 0 THEN RAISE EXCEPTION 'RLS notification preference update isolation failed'; END IF;
 
   UPDATE agents SET name='cross-tenant-agent-write' WHERE id='rls-agent-identity-b';
   GET DIAGNOSTICS changed_count = ROW_COUNT;
