@@ -1643,3 +1643,31 @@
 - Grant 的授权权仍属于 Agent Owner；Task 负责人不能替其他 Owner 授权。
 - 当前仍需补齐 Worker 投递失败与 DEAD 状态的可见性、恢复/重试审计，以及重复投递与偏好变更边界测试。
 - 下一阶段建议：完善通知运维闭环，重点覆盖 Outbox RETRY/DEAD、Owner 可见失败原因、受控重试与审计；再验证通知偏好关闭/重新开启时不补发历史通知、不漏发后续新事件。
+
+
+## 64. Task 协作消息输入草稿在异步刷新期间丢失的修复（2026-11-25）
+
+### 问题与定位
+- Browser E2E 在 Agent Proposal 被接受后，发送协作消息的 POST 请求未发出，导致测试等待超时。
+- 多轮检查确认按钮存在、可点击，按钮 `onclick` 已绑定，`sendTaskCollaborationMessage` 函数也可调用；浏览器没有 JavaScript 异常。
+- 通过 E2E 运行时探针确认：点击后输入框内容为空，页面提示“请先输入协作消息”。因此根因不是按钮事件绑定或后端接口，而是 Task 详情异步刷新重新渲染协作区域时，覆盖了用户刚输入的草稿。
+
+### 修复
+- 在 `openTask()` 完成异步数据读取、即将重新渲染详情 Modal 时，读取当前协作消息输入框的实时值。
+- 调用 `openModal()` 重新渲染后，将草稿恢复到新输入框，避免并发详情刷新/提案决策刷新覆盖用户输入。
+- 不改变协作消息 API、Proposal 决策权限、Session 生命周期或 Grant 授权规则。
+- 增加 E2E 运行时诊断：在失败时输出按钮绑定状态、发送函数可见性、按钮连接/禁用状态、输入值及浏览器异常，便于后续定位类似 UI 异步竞态。
+
+### 关键提交与验证
+- `3f51f127d78f054bf51818229efddb30561af0c1` — 增加协作消息发送按钮运行时诊断。
+- `cb51b18f101db161885dd84266703884295a6717` — 修复 Task 详情刷新时协作消息草稿丢失。
+- CI Run [45536568079](https://github.com/JunkingLee/DAEP/actions/runs/45536568079)，HEAD `cb51b18f101db161885dd84266703884295a6717`：七个 Job 全部 SUCCESS。
+  - Python 3.11/3.12/3.13 全部通过；Python 3.12 为 `256 passed, 2 skipped`。
+  - Chromium Browser E2E：`3 passed in 8.18s`，包括 Task Collaboration UI 场景。
+  - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
+- 当前分支：`release/1.0.0-rc9`。
+
+### 当前状态与后续
+- Task 协作消息输入草稿丢失问题已修复，并由真实 Chromium Browser E2E 验证。
+- 本轮为前端状态保持修复，不新增数据库 Schema/Migration，不涉及历史数据迁移或利旧。
+- 下一步进入交付前需求追踪与代码/文档一致性核查；仍需以最终全量测试与仓库当前 HEAD 为准，不因单次 CI 成功而跳过交付审查。
