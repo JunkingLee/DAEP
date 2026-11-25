@@ -13,6 +13,14 @@ DAEP 不创建、不托管、不启动、不停止、不唤醒用户的 Agent Ru
 > 🇨🇳 [中文 README](README.zh-CN.md)  
 > 🇬🇧 [English README](README.en.md)
 
+## 一眼看懂 DAEP / DAEP at a Glance
+
+![DAEP architecture](docs/images/daep-architecture.svg)
+
+DAEP is not an Agent Runtime. It is the control plane that connects **human accountability → explicit authorization → governed Agent execution → evidence → human acceptance → audit**.
+
+![DAEP delivery lifecycle](docs/images/daep-lifecycle.svg)
+
 ## 产品价值 / Product Value
 
 DAEP 解决 Agentic Engineering 中传统项目管理工具难以解决的问题：
