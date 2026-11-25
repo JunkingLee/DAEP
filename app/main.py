@@ -544,9 +544,11 @@ def require_task_access(c, tid, a, assigned_only=False):
         require_project_access(c,pid,a)
         if assigned_only and closed:
             raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
+        assignment_sql="""SELECT id FROM agent_task_assignments
+            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'"""
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            assignment_sql += " FOR UPDATE"
+        assignment=c.execute(assignment_sql,(tid,pid,a['agent_id'])).fetchone()
         if not assignment:
             raise HTTPException(403,'Accepted Agent task assignment required')
         return
@@ -4314,59 +4316,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-def require_worker(authorization):
-    expected=os.getenv('DAEP_WORKER_TOKEN','')
-    if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
-    if secrets.compare_digest(hashlib.sha256(expected.encode()).digest(),hashlib.sha256(ADMIN_TOKEN.encode()).digest()): raise HTTPException(503,'Worker credential must be different from DAEP_ADMIN_TOKEN')
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Worker bearer token required')
-    supplied=authorization[7:]
-    expected_digest=hashlib.sha256(expected.encode()).digest()
-    supplied_digest=hashlib.sha256(supplied.encode()).digest()
-    if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
-    _service_ctx.set(True)
-def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
-    if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
-        raise HTTPException(403,'Tenant isolation violation')
-    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
-    if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
-            (project_id,a['agent_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent project binding required')
-        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
-        return
-    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
-    if not row: raise HTTPException(403,'Project membership required')
-    if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
-def task_project(c, tid):
-    r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
-    return r['project_id'] if r else None
-def require_task_access(c, tid, a, assigned_only=False):
-    pid=task_project(c,tid)
-    if not pid: raise HTTPException(404,'Task not found')
-    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    closed=bool(project and project['status']=='CLOSED')
-    if is_admin(a):
-        if assigned_only and closed: raise HTTPException(409,'Project is closed')
-        return
-    if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
-        return
-    if assigned_only:
-        if closed: raise HTTPException(409,'Project is closed')
-        ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
-        if not ok: raise HTTPException(403,'Task assignment required')
-    else: require_project_access(c,pid,a)
-
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
     tenant=tenant_override or 'tenant-default'
@@ -6185,59 +6134,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-
-def require_worker(authorization):
-    expected=os.getenv('DAEP_WORKER_TOKEN','')
-    if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
-    if secrets.compare_digest(hashlib.sha256(expected.encode()).digest(),hashlib.sha256(ADMIN_TOKEN.encode()).digest()): raise HTTPException(503,'Worker credential must be different from DAEP_ADMIN_TOKEN')
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Worker bearer token required')
-    supplied=authorization[7:]
-    expected_digest=hashlib.sha256(expected.encode()).digest()
-    supplied_digest=hashlib.sha256(supplied.encode()).digest()
-    if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
-    _service_ctx.set(True)
-def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
-    if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
-        raise HTTPException(403,'Tenant isolation violation')
-    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
-    if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
-            (project_id,a['agent_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent project binding required')
-        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
-        return
-    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
-    if not row: raise HTTPException(403,'Project membership required')
-    if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
-def task_project(c, tid):
-    r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
-    return r['project_id'] if r else None
-def require_task_access(c, tid, a, assigned_only=False):
-    pid=task_project(c,tid)
-    if not pid: raise HTTPException(404,'Task not found')
-    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    closed=bool(project and project['status']=='CLOSED')
-    if is_admin(a):
-        if assigned_only and closed: raise HTTPException(409,'Project is closed')
-        return
-    if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
-        return
-    if assigned_only:
-        if closed: raise HTTPException(409,'Project is closed')
-        ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
-        if not ok: raise HTTPException(403,'Task assignment required')
-    else: require_project_access(c,pid,a)
 
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
@@ -8064,59 +7960,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
     if not r: raise HTTPException(401,'Invalid token')
     data=dict(r); _tenant_ctx.set(data.get('tenant_id','')); _admin_ctx.set(is_admin(data))
     return data
-
-def require_worker(authorization):
-    expected=os.getenv('DAEP_WORKER_TOKEN','')
-    if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
-    if secrets.compare_digest(hashlib.sha256(expected.encode()).digest(),hashlib.sha256(ADMIN_TOKEN.encode()).digest()): raise HTTPException(503,'Worker credential must be different from DAEP_ADMIN_TOKEN')
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Worker bearer token required')
-    supplied=authorization[7:]
-    expected_digest=hashlib.sha256(expected.encode()).digest()
-    supplied_digest=hashlib.sha256(supplied.encode()).digest()
-    if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
-    _service_ctx.set(True)
-def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
-    if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
-        raise HTTPException(403,'Tenant isolation violation')
-    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
-    if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
-            (project_id,a['agent_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent project binding required')
-        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
-        return
-    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
-    if not row: raise HTTPException(403,'Project membership required')
-    if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
-def task_project(c, tid):
-    r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
-    return r['project_id'] if r else None
-def require_task_access(c, tid, a, assigned_only=False):
-    pid=task_project(c,tid)
-    if not pid: raise HTTPException(404,'Task not found')
-    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    closed=bool(project and project['status']=='CLOSED')
-    if is_admin(a):
-        if assigned_only and closed: raise HTTPException(409,'Project is closed')
-        return
-    if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
-        return
-    if assigned_only:
-        if closed: raise HTTPException(409,'Project is closed')
-        ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
-        if not ok: raise HTTPException(403,'Task assignment required')
-    else: require_project_access(c,pid,a)
 
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
@@ -10050,59 +9893,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
 
-def require_worker(authorization):
-    expected=os.getenv('DAEP_WORKER_TOKEN','')
-    if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
-    if secrets.compare_digest(hashlib.sha256(expected.encode()).digest(),hashlib.sha256(ADMIN_TOKEN.encode()).digest()): raise HTTPException(503,'Worker credential must be different from DAEP_ADMIN_TOKEN')
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Worker bearer token required')
-    supplied=authorization[7:]
-    expected_digest=hashlib.sha256(expected.encode()).digest()
-    supplied_digest=hashlib.sha256(supplied.encode()).digest()
-    if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
-    _service_ctx.set(True)
-def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
-    if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
-        raise HTTPException(403,'Tenant isolation violation')
-    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
-    if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
-            (project_id,a['agent_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent project binding required')
-        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
-        return
-    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
-    if not row: raise HTTPException(403,'Project membership required')
-    if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
-def task_project(c, tid):
-    r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
-    return r['project_id'] if r else None
-def require_task_access(c, tid, a, assigned_only=False):
-    pid=task_project(c,tid)
-    if not pid: raise HTTPException(404,'Task not found')
-    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    closed=bool(project and project['status']=='CLOSED')
-    if is_admin(a):
-        if assigned_only and closed: raise HTTPException(409,'Project is closed')
-        return
-    if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment=c.execute("""SELECT 1 FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'""",
-            (tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
-        return
-    if assigned_only:
-        if closed: raise HTTPException(409,'Project is closed')
-        ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
-        if not ok: raise HTTPException(403,'Task assignment required')
-    else: require_project_access(c,pid,a)
-
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
     tenant=tenant_override or 'tenant-default'
@@ -11920,61 +11710,6 @@ async def websocket_endpoint(ws:WebSocket,token:str='',after:int=0):
             try: await asyncio.wait_for(ws.receive_text(),timeout=3.0)
             except asyncio.TimeoutError: pass
     except WebSocketDisconnect: pass
-
-def require_worker(authorization):
-    expected=os.getenv('DAEP_WORKER_TOKEN','')
-    if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
-    if secrets.compare_digest(hashlib.sha256(expected.encode()).digest(),hashlib.sha256(ADMIN_TOKEN.encode()).digest()): raise HTTPException(503,'Worker credential must be different from DAEP_ADMIN_TOKEN')
-    if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'Worker bearer token required')
-    supplied=authorization[7:]
-    expected_digest=hashlib.sha256(expected.encode()).digest()
-    supplied_digest=hashlib.sha256(supplied.encode()).digest()
-    if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
-    _service_ctx.set(True)
-def require_project_access(c, project_id, a, write=False):
-    project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
-    if not project: raise HTTPException(404,'Project not found')
-    if project['tenant_id'] != a.get('tenant_id','tenant-default') and not is_admin(a):
-        raise HTTPException(403,'Tenant isolation violation')
-    if write and project['status']=='CLOSED': raise HTTPException(409,'Project is closed')
-    if is_admin(a): return
-    if a.get('actor_type')=='AGENT':
-        binding=c.execute("SELECT 1 FROM agent_project_bindings WHERE project_id=? AND agent_id=? AND status='ACTIVE'",
-            (project_id,a['agent_id'])).fetchone()
-        if not binding: raise HTTPException(403,'Agent project binding required')
-        if write: raise HTTPException(403,'Agent cannot perform project-level governance or administration')
-        return
-    row=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(project_id,a['id'])).fetchone()
-    if not row: raise HTTPException(403,'Project membership required')
-    if write and row['role'] not in ('owner','manager'): raise HTTPException(403,'Project manager role required')
-def task_project(c, tid):
-    r=c.execute('SELECT r.project_id FROM tasks t JOIN requirements r ON r.id=t.requirement_id WHERE t.id=?',(tid,)).fetchone()
-    return r['project_id'] if r else None
-def require_task_access(c, tid, a, assigned_only=False):
-    pid=task_project(c,tid)
-    if not pid: raise HTTPException(404,'Task not found')
-    project=c.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()
-    closed=bool(project and project['status']=='CLOSED')
-    if is_admin(a):
-        if assigned_only and closed: raise HTTPException(409,'Project is closed')
-        return
-    if a.get('actor_type')=='AGENT':
-        require_project_access(c,pid,a)
-        if assigned_only and closed:
-            raise HTTPException(409,'Project is closed')
-        assignment_sql="""SELECT id FROM agent_task_assignments
-            WHERE task_id=? AND project_id=? AND agent_id=? AND status='ACCEPTED'"""
-        if DATABASE_URL.startswith(('postgresql://','postgres://')):
-            assignment_sql += " FOR UPDATE"
-        assignment=c.execute(assignment_sql,(tid,pid,a['agent_id'])).fetchone()
-        if not assignment:
-            raise HTTPException(403,'Accepted Agent task assignment required')
-        return
-    if assigned_only:
-        if closed: raise HTTPException(409,'Project is closed')
-        ok=c.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',(tid,a['id'])).fetchone()
-        if not ok: raise HTTPException(403,'Task assignment required')
-    else: require_project_access(c,pid,a)
 
 def event(c,typ,member,task,payload,key=None,tenant_override=None):
     eid='evt_'+uuid.uuid4().hex
