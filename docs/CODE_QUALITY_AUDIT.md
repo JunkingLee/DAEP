@@ -11,7 +11,7 @@ Current source snapshot:
 - `app/main.py`: 4396 lines.
 - The blocking AST scanner reports zero duplicate top-level function names (within each scanned module) and zero duplicate direct `app.<method>()` route keys.
 - CI job `quality-gate` enforces this scanner on every push and pull request.
-- Latest recorded RC9 CI run `45576103698`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
+- Latest recorded RC9 CI run `45576459940`: all 8 jobs succeeded, including quality-gate, Python 3.11/3.12/3.13, Chromium E2E, PostgreSQL migrations/RLS, container build and production Compose validation.
 
 A green structural gate is meaningful, but it is not a complete security audit, code-duplication audit, route-parity proof, or production acceptance.
 
@@ -116,11 +116,11 @@ Corrected on `release/1.0.0-rc9`:
 - Added a grant lifecycle assertion: generic Agent task-event reads work with an accepted `task.read` grant and fail immediately after revocation.
 - Static route review confirmed every `/internal/v1/*` endpoint invokes `require_worker()`; all four internal routes are Worker-only.
 
-CI run `45575412495` passed all 8 jobs. Each Python version reported 263 passed and 2 skipped; Chromium Browser E2E, PostgreSQL migrations/RLS, Container Build, Production Compose and Quality Gate all succeeded.
+CI run `45576459940` passed all 8 jobs. Each Python version reported 263 passed and 2 skipped; Chromium Browser E2E, PostgreSQL migrations/RLS, Container Build, Production Compose and Quality Gate all succeeded.
 
 ### README architecture SVG rendering defect
 
-The root English README and Chinese README referenced the correct relative path, but `docs/images/daep-architecture.svg` contained an extra closing `</g>` tag, making the SVG invalid XML. The malformed group closure was corrected. `tests/test_static_assets.py` now parses every `docs/images/*.svg` asset with Python's XML parser and verifies the SVG namespace, preventing malformed diagrams from silently reaching README again. The SVG validation test passed in CI run `45574650566`; the full current run `45575412495` also passed.
+The root English README and Chinese README referenced the correct relative path, but `docs/images/daep-architecture.svg` contained an extra closing `</g>` tag, making the SVG invalid XML. The malformed group closure was corrected. `tests/test_static_assets.py` now parses every `docs/images/*.svg` asset with Python's XML parser and verifies the SVG namespace, preventing malformed diagrams from silently reaching README again. SVG XML parsing and README image-reference resolution both passed in full CI run `45576459940`.
 
 ### Fourth authorization finding — Worker credential class separation
 
@@ -132,7 +132,7 @@ Corrected on `release/1.0.0-rc9`:
 - The service-context override is scoped and reset around the collision check.
 - Regression tests cover both Member-token and Agent-token collisions and verify the Member request context remains usable afterward.
 
-CI run `45576103698` passed all 8 jobs; each Python version reported 264 passed and 2 skipped. Worker credential separation is now enforced at runtime, while production secret injection and rotation remain deployment acceptance tasks.
+CI run `45576459940` passed all 8 jobs; each Python version reported 265 passed and 2 skipped. Worker credential separation is now enforced at runtime, while production secret injection and rotation remain deployment acceptance tasks.
 
 ## Next Quality Work
 
