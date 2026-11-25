@@ -11,7 +11,9 @@ DAEP 不创建、不托管、不启动、不停止、不唤醒用户的 Agent Ru
 > **Language / 语言**
 >
 > 🇨🇳 [中文 README](README.zh-CN.md)  
-> 🇬🇧 [English README](README.en.md)
+ > 🇬🇧 [English README](README.en.md)
+
+![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
 
 ## 一眼看懂 DAEP / DAEP at a Glance
 
