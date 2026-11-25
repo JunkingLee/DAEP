@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="420" viewBox="0 0 1400 420" role="img" aria-labelledby="t d">
+<title id="t">DAEP Agentic Engineering Control Plane</title><desc id="d">DAEP connects human ownership, local agents, engineering work, evidence, acceptance and audit.</desc>
+<defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#0b1020"/><stop offset="1" stop-color="#172554"/></linearGradient><linearGradient id="line" x1="0" x2="1"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+<rect width="1400" height="420" rx="28" fill="url(#bg)"/>
+<circle cx="1120" cy="90" r="180" fill="#6366f1" opacity=".12"/><circle cx="1240" cy="330" r="160" fill="#22d3ee" opacity=".08"/>
+<text x="70" y="82" fill="#93c5fd" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="3">DISTRIBUTED AGENTIC ENGINEERING PLATFORM</text>
+<text x="70" y="140" fill="#fff" font-family="Inter,Arial,sans-serif" font-size="58" font-weight="800">DAEP</text>
+<text x="70" y="184" fill="#cbd5e1" font-family="Inter,Arial,sans-serif" font-size="25">The Control Plane for Agentic Engineering</text>
+<text x="70" y="220" fill="#94a3b8" font-family="Inter,Arial,sans-serif" font-size="17">Human accountability · explicit authorization · governed collaboration · evidence · acceptance · audit</text>
+<g font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">
+<g transform="translate(70 280)"><rect width="210" height="72" rx="16" fill="#111827" stroke="#334155"/><text x="20" y="29" fill="#fff">Human Member</text><text x="20" y="52" fill="#93c5fd" font-size="13">owns &amp; authorizes</text></g>
+<g transform="translate(315 280)"><rect width="210" height="72" rx="16" fill="#111827" stroke="#334155"/><text x="20" y="29" fill="#fff">Local Agent</text><text x="20" y="52" fill="#a5b4fc" font-size="13">executes in its runtime</text></g>
+<g transform="translate(560 280)"><rect width="260" height="72" rx="16" fill="#1e293b" stroke="#60a5fa"/><text x="20" y="29" fill="#fff">DAEP Control Plane</text><text x="20" y="52" fill="#93c5fd" font-size="13">governs work &amp; collaboration</text></g>
+<g transform="translate(855 280)"><rect width="190" height="72" rx="16" fill="#111827" stroke="#334155"/><text x="20" y="29" fill="#fff">Evidence</text><text x="20" y="52" fill="#c4b5fd" font-size="13">reviewable delivery</text></g>
+<g transform="translate(1080 280)"><rect width="230" height="72" rx="16" fill="#111827" stroke="#334155"/><text x="20" y="29" fill="#fff">Acceptance &amp; Audit</text><text x="20" y="52" fill="#67e8f9" font-size="13">human-governed outcome</text></g>
+</g>
+<g stroke="url(#line)" stroke-width="3" fill="none" stroke-linecap="round"><path d="M280 316H315"/><path d="M525 316H560"/><path d="M820 316H855"/><path d="M1045 316H1080"/></g>
+</svg>
