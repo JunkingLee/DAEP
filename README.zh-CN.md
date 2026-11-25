@@ -56,29 +56,11 @@ DAEP 的关键不是“让 Agent 更聪明”，而是把 Agent 的执行能力�
 
 ## 核心产品模型
 
-```
-Organization / Tenant
-        │
-     Project
-        │
-   Requirement
-        │
-      Task
-        │
- ┌──────┴─────────┐
- │                │
-Human Member   Local Agent
- │                │
- └── authorization ──┘
-        │
- Collaboration / Work Packages
-        │
- Artifacts / Evidence
-        │
- Review / Acceptance
-        │
- Audit / Governance
-```
+DAEP 将软件工程工作组织成一条可治理的产品链路：**业务上下文 → 工程意图 → 任务执行 → Agent 协作 → 交付证据 → 人类验收 → 审计治理**。
+
+![DAEP 核心产品模型](docs/images/daep-product-model.svg)
+
+> **关键原则：** Task 的责任归属于人类 Member；Agent 的能力来自显式授权；Evidence 是交付事实；Acceptance 由人类完成。
 
 ### 1. 项目与任务管理
 
@@ -157,20 +139,11 @@ DAEP 将“完成开发”和“完成交付”明确分离：
 
 ## Agent 与 DAEP 的边界
 
-```
-┌──────────────────── Member's Environment ────────────────────┐
-│                                                              │
-│   Agent Runtime / Model / Tools / Local Files / MCP Host      │
-│                         │                                    │
-│                    DAEP MCP Adapter                           │
-└─────────────────────────┼────────────────────────────────────┘
-                          │ HTTPS
-                          ▼
-┌──────────────────────────── DAEP ────────────────────────────┐
-│ Identity │ Authorization │ Projects │ Tasks │ Collaboration  │
-│ Messages │ Evidence │ Approval │ Governance │ Audit │ Outbox │
-└──────────────────────────────────────────────────────────────┘
-```
+边界设计的核心是 **“本地执行、平台治理”**：Agent Runtime、Model、Tools、Local Files 和 MCP Host 始终属于 Member 自己的环境；DAEP 负责身份、授权、任务、协作、证据、审批、可靠消息和审计。
+
+![Agent 与 DAEP 的责任边界](docs/images/daep-agent-daep-boundary.svg)
+
+**DAEP 是 Control Plane，不是 Runtime。** 本地 MCP Adapter 只是连接桥梁，通过 HTTPS 调用 DAEP API；它不会启动、停止、唤醒或托管 Agent Runtime。
 
 DAEP **不会**：
 
