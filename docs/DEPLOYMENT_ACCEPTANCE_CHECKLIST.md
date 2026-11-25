@@ -38,7 +38,7 @@
 |---|---|---|---|
 | ENV-01 | 环境变量完整 | 对照当前部署配置逐项核对数据库连接、应用密钥、OIDC、公开站点/API 地址、CORS、Worker、MCP 等必需配置；无缺失项 | 待执行 |
 | ENV-02 | 密钥注入 | 所有秘密通过部署平台 Secret / 环境注入机制提供；仓库、镜像层、Compose 明文、前端资源和日志中均无秘密 | 待执行 |
-| ENV-03 | HTTPS 与域名 | Web、API、OIDC 回调和 MCP 对外端点使用预期域名与 TLS；证书有效且续期机制明确 | 待执行 |
+| ENV-03 | HTTPS 与域名 | Web、API、OIDC 回调使用预期域名与 TLS；证书有效且续期机制明确。当前 MCP 接入为 Owner 本机 stdio Adapter 通过 HTTPS 调用 DAEP REST API，不存在 DAEP 托管的远程 MCP endpoint | 待执行 |
 | ENV-04 | 网络边界 | 数据库和内部 Worker 接口不暴露公网；仅开放业务必需入口；跨域来源符合白名单策略 | 待执行 |
 | ENV-05 | 健康检查 | API、数据库依赖及 Worker 健康检查状态正常；重启后能恢复，不出现持续 CrashLoop | 待执行 |
 | ENV-06 | 持久化 | PostgreSQL 数据目录 / 卷持久化，容器重建后业务数据仍存在 | 待执行 |
@@ -62,7 +62,7 @@
 |---|---|---|---|
 | AG-01 | Agent 归属 | Member 创建或绑定自己的 Agent；确认 Agent 唯一归属其 Owner，不存在 Project 级 Agent 归属 | 待执行 |
 | AG-02 | 凭证安全 | 使用真实 Agent 凭证完成认证；凭证只在服务端安全存储/传输，不出现在 UI、日志或审计详情中 | 待执行 |
-| AG-03 | MCP 连通 | 从外部 Agent Runtime 连接部署后的 MCP endpoint，完成认证、工具发现与调用 | 待执行 |
+| AG-03 | MCP 连通 | 在 Owner 自己的主机启动 DAEP MCP stdio Adapter，由 MCP Host 加载本地 Adapter；配置 `DAEP_API_URL` 指向 DAEP HTTPS API、`DAEP_AGENT_TOKEN` 使用对应 Agent Token，完成工具发现和实际调用 | 待执行 |
 | AG-04 | 工具白名单 | 验证 Agent 只能调用允许的 Agent 工具；Session 管理、Grant 管理等 Owner/Member 管理接口不能由 Agent 越权调用 | 待执行 |
 | AG-05 | 运行时边界 | 确认 DAEP 只管理身份、连接、授权、消息、协作上下文与审计；Agent Runtime 仍运行在用户自己的环境，DAEP 不负责启动或调度 Runtime | 待执行 |
 
@@ -131,4 +131,4 @@
 - 所有身份、租户隔离、Agent Owner 授权、Grant 生命周期与 MCP 工具边界项目必须 PASS。
 - 所有部署基础设施与 Worker/Outbox 关键项目必须 PASS；若某项不适用，需记录理由并经负责人确认。
 - 不允许存在未评估的 FAIL；BLOCKED 项必须明确阻塞原因、责任人和解除条件。
-- 代码 CI 全绿仅代表自动化基线通过。真实 OIDC、生产 PostgreSQL/RLS、Worker Token、外部 Agent Runtime/MCP 连通性和端到端用户流程，必须在目标部署环境实际验收后，才能宣布部署交付完成。
+- 代码 CI 全绿仅代表自动化基线通过。真实 OIDC、生产 PostgreSQL/RLS、Worker Token、外部 Agent Runtime 经 Owner 本机 MCP stdio Adapter 访问 DAEP REST API 的连通性和端到端用户流程，必须在目标部署环境实际验收后，才能宣布部署交付完成。
