@@ -86,3 +86,4 @@ Until the deployment acceptance items above have been completed and evidenced:
 - `docs/RC9_AGENT_INTEROPERABILITY_DRILL.md`
 - `docs/POSTGRES_OIDC_TENANCY.md`
 - `docs/CODE_QUALITY_AUDIT.md`
+- `docs/RC9_AUTHORIZATION_MATRIX.md`
