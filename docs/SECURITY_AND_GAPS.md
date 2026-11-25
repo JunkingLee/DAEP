@@ -16,7 +16,7 @@ This document distinguishes controls implemented in the RC9 codebase, controls e
 - Member profile, password, logout and project-list endpoints require a human Member identity; an Agent token cannot mutate or revoke its owner's Member account.
 - Human project-governance decisions (project approval decisions, project reopen, workflow transitions, formal work-result reporting and task delegation) reject Agent actors.
 - Generic task reads by an Agent require an active Task Execution Grant with `task.read`; project binding or a legacy Agent assignment alone is insufficient.
-- Worker operations use a dedicated Worker Token, separate from Member and Agent credentials.
+- Worker operations use a dedicated Worker Token, separate from Member and Agent credentials; runtime validation rejects a Worker secret whose digest matches any stored Member or Agent credential.
 - OIDC authorization-code flow validates browser-bound state, nonce, PKCE S256, ID-token signature/JWKS, issuer, audience and expiry.
 
 ### Authorization and tenancy
@@ -47,7 +47,7 @@ The RC9 CI workflow includes:
 - Production Compose validation.
 - Blocking structural quality scan.
 
-The latest recorded full CI run for the authorization fixes is `45575412495`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
+The latest recorded full CI run for the authorization fixes is `45576103698`, with all 8 jobs successful: Python 3.11/3.12/3.13, Browser E2E, PostgreSQL migrations/RLS, container build, Production Compose and quality gate.
 
 ## 3. Remaining Deployment / Security Acceptance
 
