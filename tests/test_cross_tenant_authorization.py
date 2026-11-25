@@ -180,6 +180,7 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
     assert all(item['id'] != project_b_id for item in own_projects.json())
 
 
+def test_cross_tenant_collaboration_and_notification_boundaries():
     # Task-level collaboration context is tenant/project scoped even when the
     # caller knows the target Task UUID.
     for path in (
@@ -202,3 +203,29 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
     assert notification_prefs.status_code == 200, notification_prefs.text
     assert str(member_b_id) not in json.dumps(notification_prefs.json(), ensure_ascii=False)
 
+
+    # Artifact APIs must enforce the tenant through the Task -> Requirement -> Project chain.
+    artifact_b = client.post(
+        f'/api/v1/tasks/{task_b_id}/artifacts',
+        headers=headers_b,
+        json={'artifact_type': 'test_report', 'uri': 'tenant-b://evidence/test-report', 'commit_sha': 'b123'},
+    )
+    assert artifact_b.status_code == 200, artifact_b.text
+    artifact_b_id = artifact_b.json()['id']
+
+    denied_artifact = client.get(f'/api/v1/tasks/{task_b_id}/artifact-quality', headers=headers_a)
+    assert denied_artifact.status_code in (403, 404), denied_artifact.text
+
+    # A must not be able to submit evidence into B's task by knowing only the Task ID.
+    denied_artifact_submit = client.post(
+        f'/api/v1/tasks/{task_b_id}/artifacts',
+        headers=headers_a,
+        json={'artifact_type': 'test_report', 'uri': 'tenant-a://forged-evidence', 'commit_sha': 'a123'},
+    )
+    assert denied_artifact_submit.status_code in (403, 404), denied_artifact_submit.text
+
+    # The artifact itself must remain tenant-scoped in storage.
+    with sqlite3.connect(os.environ['DAEP_DB_PATH']) as db:
+        row = db.execute('SELECT tenant_id FROM artifacts WHERE id=?', (artifact_b_id,)).fetchone()
+        assert row is not None
+        assert row[0] == tenant_b
