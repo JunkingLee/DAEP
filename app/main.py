@@ -514,6 +514,14 @@ def require_agent_task_grant(c, a, task_id, action):
     allowed_actions={'task.read','task.progress.report','task.blocked.report','task.artifact.submit'}
     if action not in allowed_actions:
         raise HTTPException(403,'Agent action is not delegable')
+    # PostgreSQL lock order is intentionally task -> grant. Grant revocation
+    # already locks the task before updating the grant; using the same order
+    # prevents a revoke-vs-execution deadlock and closes the check/update gap.
+    task_lock_sql="SELECT id FROM tasks WHERE id=?"
+    if DATABASE_URL.startswith(('postgresql://','postgres://')):
+        task_lock_sql += " FOR UPDATE"
+    if not c.execute(task_lock_sql,(task_id,)).fetchone():
+        raise HTTPException(403,'Task is not available')
     sql="""SELECT g.*,ag.status AS agent_status,ag.owner_member_id AS current_owner_member_id,
         ag.tenant_id AS agent_tenant_id,owner.password_status AS owner_status,
         owner.tenant_id AS owner_tenant_id,p.status AS project_status,
@@ -526,7 +534,7 @@ def require_agent_task_grant(c, a, task_id, action):
         JOIN projects p ON p.id=g.project_id
         WHERE g.task_id=? AND g.agent_id=? AND g.tenant_id=?"""
     if DATABASE_URL.startswith(('postgresql://','postgres://')):
-        sql += " FOR UPDATE OF g,t"
+        sql += " FOR UPDATE OF g"
     grant=c.execute(sql,(task_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()
     if not grant:
         raise HTTPException(403,'No AgentTaskGrant authorizes this task')
@@ -1077,6 +1085,11 @@ def accept_agent_task_grant(grant_id:str,authorization:str=Header(None)):
         raise HTTPException(403,'Agent Token required')
     with conn() as c:
         begin_serialized_write(c)
+        task_lock_sql="SELECT id FROM tasks WHERE id=?"
+        if DATABASE_URL.startswith(('postgresql://','postgres://')):
+            task_lock_sql += " FOR UPDATE"
+        if not c.execute(task_lock_sql,(grant_id and c.execute('SELECT task_id FROM agent_task_grants WHERE id=? AND agent_id=? AND tenant_id=?',(grant_id,a['agent_id'],a.get('tenant_id','tenant-default'))).fetchone()['task_id'],)).fetchone():
+            raise HTTPException(404,'Agent grant task not found')
         sql="""SELECT g.*,ag.status agent_status,ag.owner_member_id current_agent_owner,
             ag.tenant_id agent_tenant_id,owner.password_status owner_status,
             owner.tenant_id owner_tenant_id,t.status task_status,
