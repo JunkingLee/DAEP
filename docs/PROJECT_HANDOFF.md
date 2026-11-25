@@ -1671,3 +1671,33 @@
 - Task 协作消息输入草稿丢失问题已修复，并由真实 Chromium Browser E2E 验证。
 - 本轮为前端状态保持修复，不新增数据库 Schema/Migration，不涉及历史数据迁移或利旧。
 - 下一步进入交付前需求追踪与代码/文档一致性核查；仍需以最终全量测试与仓库当前 HEAD 为准，不因单次 CI 成功而跳过交付审查。
+
+
+## 65. CollaborationGrant 过期拒绝操作的事务提交修复（2026-11-25）
+
+### 审查发现
+- 交付前权限/生命周期审查发现：Agent 接受已过期 Grant、Owner 撤销已过期 Grant 时，原实现先更新状态为 EXPIRED，随后在同一个数据库事务内抛出 HTTP 409。
+- SQLite 与 PostgreSQL 连接上下文均在异常退出时回滚事务，因此 API 虽然正确拒绝操作，但过期状态更新不会持久化；对应审计/通知也会一起回滚。
+- 这会造成 Grant 在数据库中继续保留 AUTHORIZED 状态，直到 Worker 或后续查询再次物化过期状态。
+
+### 修复
+- 将过期处理与 HTTP 409 响应拆开：事务内完成 EXPIRED 状态更新、过期审计和 Owner 通知；事务正常提交后，再返回 HTTP 409。
+- 覆盖 Agent accept 与 Member Owner revoke 两条路径；未改变有效 Grant 的接受/撤销权限规则。
+- 新增回归测试，验证两条过期拒绝路径均持久化 EXPIRED，并且每条路径恰好产生一条过期审计事件。
+- 测试夹具同时设置 created_at 早于 expires_at，满足数据库时间约束。
+
+### 提交与验证
+- `bcfc62fb3de78755e280df121125230cf85a08a2` — 修复过期 Grant 在拒绝操作时的事务回滚问题。
+- `6a67c5efeef26cf01eb90c9ab45188e7b78cf7e7` — 新增 accept/revoke 过期路径回归测试。
+- `3ffd7abce85357ddfc95fa25c4dd211ae8ab1561` — 修正回归测试时间夹具。
+- CI Run [45537563659](https://github.com/JunkingLee/DAEP/actions/runs/45537563659)，HEAD `3ffd7abce85357ddfc95fa25c4dd211ae8ab1561`：七个 Job 全部 SUCCESS。
+  - Python 3.11 / 3.12 / 3.13：各 `257 passed, 2 skipped`。
+  - Chromium Browser E2E：`3 passed in 10.39s`。
+  - PostgreSQL Migration/RLS、Container Build、Production Compose 全部 SUCCESS。
+- 本轮不新增 Schema/Migration，不涉及历史数据迁移或利旧。
+
+### 当前审查结论
+- 已检查 CollaborationGrant 的 Owner 身份校验、Agent 身份/租户/Owner 关系、Task/Session/Project 关系、Scope 与 Resource Scope 检查，以及 MCP Agent 路由 allowlist；相关边界均有对应代码和测试保护。
+- REST 与 MCP 协作操作使用相同的服务端 Grant 校验；MCP Agent allowlist 不开放 Session 创建/修改、Grant 创建/撤销/续期等 Owner/Member 管理接口。
+- 通知 Delivery API 按当前 Member 收件箱过滤，不暴露 Outbox lease 凭据；偏好只影响通知生成/提醒，不改变 Grant 生命周期。
+- 交付前仍建议进行一次部署环境验收（真实 OIDC、Worker Token、外部 Agent Runtime/MCP 连通性和生产 PostgreSQL 配置），这些依赖不能仅由 CI 自动测试替代。
