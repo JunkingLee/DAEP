@@ -43,6 +43,20 @@ if "ALL" not in api.get("cap_drop", []):
     fail("API must drop all Linux capabilities")
 if "no-new-privileges:true" not in api.get("security_opt", []):
     fail("API must enable no-new-privileges")
+
+for key in (
+    "DAEP_OIDC_ISSUER",
+    "DAEP_OIDC_CLIENT_ID",
+    "DAEP_OIDC_CLIENT_SECRET",
+    "DAEP_OIDC_REDIRECT_URI",
+    "DAEP_OIDC_AUTO_PROVISION",
+    "DAEP_OIDC_DEFAULT_TENANT",
+    "DAEP_OIDC_DEFAULT_ROLE",
+    "DAEP_OIDC_SCOPES",
+    "DAEP_OIDC_AUDIENCE",
+):
+    if key not in environment:
+        fail(f"API must receive optional OIDC setting {key}")
 if "/tmp" not in api.get("tmpfs", []):
     fail("API must mount /tmp as tmpfs")
 
