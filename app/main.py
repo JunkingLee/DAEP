@@ -4454,40 +4454,6 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
         event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
-@app.post('/api/v1/projects')
-def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects/{pid}/members')
-def project_members(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
-@app.post('/api/v1/projects/{pid}/members')
-def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    mid=b.get('member_id'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
-    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        if role=='manager' and not is_admin(a):
-            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
-        member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
-        project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
-        if current and current['role']!=role:
-            raise HTTPException(409,'Use a project role-change request to change an existing member role')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
-        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -6205,40 +6171,6 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
         event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
-@app.post('/api/v1/projects')
-def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects/{pid}/members')
-def project_members(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
-@app.post('/api/v1/projects/{pid}/members')
-def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    mid=b.get('member_id'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
-    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        if role=='manager' and not is_admin(a):
-            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
-        member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
-        project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
-        if current and current['role']!=role:
-            raise HTTPException(409,'Use a project role-change request to change an existing member role')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
-        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -8070,19 +8002,6 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
         event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
-@app.post('/api/v1/projects')
-def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects/{pid}/members')
-def project_members(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.username,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
 @app.get('/api/v1/projects/{pid}/member-candidates')
 def project_member_candidates(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -8101,27 +8020,6 @@ def project_member_candidates(pid:str,authorization:str=Header(None)):
         """,(pid,project['tenant_id'])).fetchall()
         return [dict(x) for x in rows]
 
-@app.post('/api/v1/projects/{pid}/members')
-def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    mid=b.get('member_id') or b.get('member_username'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
-    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        if role=='manager' and not is_admin(a):
-            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
-        member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
-        project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
-        if current and current['role']!=role:
-            raise HTTPException(409,'Use a project role-change request to change an existing member role')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
-        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -9827,40 +9725,6 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
         event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
-@app.post('/api/v1/projects')
-def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization); pid='prj_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects/{pid}/members')
-def project_members(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
-@app.post('/api/v1/projects/{pid}/members')
-def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    mid=b.get('member_id'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
-    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        if role=='manager' and not is_admin(a):
-            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
-        member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
-        project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
-        if current and current['role']!=role:
-            raise HTTPException(409,'Use a project role-change request to change an existing member role')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
-        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -11660,42 +11524,6 @@ def rotate_member_token(member_id:str,authorization:str=Header(None)):
         event(c,'member.token.rotated',a['id'],None,{'member_id':member_id},tenant_override=target['tenant_id'])
     return {'member_id':member_id,'token':token,'token_status':'ACTIVE','token_created_at':created}
 
-@app.post('/api/v1/projects')
-def create_project(b:ProjectIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    if not is_admin(a): raise HTTPException(403,'Platform administrator required')
-    pid='prj_'+uuid.uuid4().hex[:12]
-    with conn() as c:
-        c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
-    return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects/{pid}/members')
-def project_members(pid:str,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a)
-        return [dict(x) for x in c.execute('SELECT m.id,m.name,m.role AS account_role,pm.role AS project_role,pm.work_function,pm.joined_at FROM project_members pm JOIN members m ON m.id=pm.member_id WHERE pm.project_id=? ORDER BY pm.joined_at',(pid,))]
-@app.post('/api/v1/projects/{pid}/members')
-def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization)
-    mid=b.get('member_id'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager'): raise HTTPException(422,'Invalid project role')
-    if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        if role=='manager' and not is_admin(a):
-            own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
-            if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
-        member_row=c.execute('SELECT tenant_id FROM members WHERE id=?',(mid,)).fetchone()
-        project_row=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not member_row: raise HTTPException(404,'Member not found')
-        if project_row['tenant_id'] != member_row['tenant_id']: raise HTTPException(400,'Member belongs to a different tenant')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,mid)).fetchone()
-        if current and current['role']!=role:
-            raise HTTPException(409,'Use a project role-change request to change an existing member role')
-        c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
-        event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
-        return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
