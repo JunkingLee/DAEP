@@ -66,6 +66,17 @@ A zero result does **not** prove that:
 
 The scanner intentionally checks a narrow, deterministic subset of structural hazards. It complements, but does not replace, route inventory tests, authorization tests, PostgreSQL/RLS tests, code review and runtime verification.
 
+## Authorization Audit Update — 2026-11-25
+
+The first focused authorization pass found inconsistent platform-admin checks in project workflow and gate administration:
+- Workflow and project Gate configuration compared the account role directly to `admin`, bypassing the shared platform-admin predicate.
+- Workflow-exit and project-gate enforcement treated any `members.role='admin'` row as platform admin without checking the platform tenant.
+
+Corrected on `release/1.0.0-rc9`:
+- All four checks now require the platform role **and** `tenant_id='tenant-default'`, consistent with `is_admin()`.
+- Added a regression test for platform-admin identity scoping.
+- This is a targeted fix, not a declaration that the full authorization matrix is complete. The remaining pass must still cover route-level negative tests for cross-tenant access, project roles, Agent grants, expired/revoked grants, and Worker identity.
+
 ## Next Quality Work
 
 Prioritize in this order:
