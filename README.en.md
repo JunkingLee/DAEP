@@ -221,6 +221,7 @@ A Release Candidate is not the same as production GA certification. Before produ
 - [Outbox Worker](docs/OUTBOX_WORKER.md)
 - [Production operations and recovery](docs/RC21_PRODUCTION_OPERATIONS.md)
 - [Security and known gaps](docs/SECURITY_AND_GAPS.md)
+- [RC9 Authorization Matrix](docs/RC9_AUTHORIZATION_MATRIX.md)
 - [MCP Adapter](daep_mcp/README.md)
 
 ## License
