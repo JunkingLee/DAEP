@@ -83,7 +83,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
             expect(modal).to_contain_text("读取协作历史")
             expect(modal).to_contain_text("Agent collaboration message from browser E2E")
             expect(modal).to_contain_text("Need human review from browser E2E")
-            expect(modal.get_by_role("button", name="接受建议")).to_be_visible()
+            expect(modal.get_by_role("button", name="接受建议").first).to_be_visible()
 
             # The Member owner can review and revoke only their own Agent grants
             # from the dedicated inbox, independently of the Task workspace.
@@ -97,7 +97,7 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
 
 
             page.once("dialog", lambda dialog: dialog.accept("Approved in browser E2E"))
-            modal.get_by_role("button", name="接受建议").click()
+            modal.get_by_role("button", name="接受建议").first.click()
             expect(modal).to_contain_text("已接受", timeout=15000)
 
             message_input = modal.locator("#taskCollabMessage")
