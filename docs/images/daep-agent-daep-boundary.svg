@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="t d">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#06101d"/><stop offset=".5" stop-color="#0d1b2e"/><stop offset="1" stop-color="#12182a"/></linearGradient>
+<linearGradient id="bridge" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#8b5cf6"/><stop offset=".5" stop-color="#3b82f6"/><stop offset="1" stop-color="#06b6d4"/></linearGradient>
+<filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity=".4"/></filter>
+<style>.h{font:700 34px Inter,Arial,sans-serif;fill:#f8fafc}.sub{font:500 17px Inter,Arial,sans-serif;fill:#94a3b8}.label{font:700 18px Inter,Arial,sans-serif;fill:#e2e8f0}.small{font:500 14px Inter,Arial,sans-serif;fill:#94a3b8}.tiny{font:600 13px Inter,Arial,sans-serif;fill:#cbd5e1}</style>
+</defs>
+<title id="t">Agent and DAEP Boundary</title><desc id="d">The member environment owns and runs the Agent Runtime. DAEP owns the control plane. A local MCP Adapter bridges the two over HTTPS.</desc>
+<rect width="1600" height="900" rx="32" fill="url(#bg)"/>
+<text x="80" y="82" class="h">Agent ↔ DAEP · Responsibility Boundary</text>
+<text x="80" y="116" class="sub">Local execution stays with the Member. Governance stays with DAEP.</text>
+
+<g filter="url(#shadow)">
+<rect x="80" y="180" width="650" height="570" rx="30" fill="#0b1728" stroke="#334b70" stroke-width="2"/>
+<rect x="120" y="220" width="570" height="64" rx="18" fill="#111f35" stroke="#2563eb"/>
+<text x="155" y="260" class="label">MEMBER ENVIRONMENT</text>
+<text x="490" y="260" class="tiny">OWNED + OPERATED BY MEMBER</text>
+<rect x="145" y="325" width="250" height="150" rx="22" fill="#111f35" stroke="#475569"/>
+<text x="175" y="365" class="label">Agent Runtime</text><text x="175" y="395" class="small">Model / tools</text><text x="175" y="419" class="small">Local files / processes</text><text x="175" y="443" class="small">Agent state</text>
+<rect x="425" y="325" width="230" height="150" rx="22" fill="#111f35" stroke="#475569"/>
+<text x="455" y="365" class="label">MCP Host</text><text x="455" y="395" class="small">Loads local adapter</text><text x="455" y="419" class="small">Controls local runtime</text><text x="455" y="443" class="small">Owns credentials</text>
+<rect x="145" y="515" width="510" height="150" rx="22" fill="#0f1d32" stroke="#7c3aed" stroke-width="2"/>
+<text x="175" y="555" class="label">DAEP MCP Adapter</text><text x="175" y="585" class="small">Local bridge · calls DAEP REST API over HTTPS</text><text x="175" y="611" class="small">Does not start, stop, wake or host the Agent Runtime</text>
+</g>
+
+<g filter="url(#shadow)">
+<rect x="870" y="180" width="650" height="570" rx="30" fill="#0b1728" stroke="#334b70" stroke-width="2"/>
+<rect x="910" y="220" width="570" height="64" rx="18" fill="#111f35" stroke="#06b6d4"/>
+<text x="945" y="260" class="label">DAEP CONTROL PLANE</text>
+<text x="1240" y="260" class="tiny">GOVERNED BY PLATFORM</text>
+<g>
+<rect x="915" y="325" width="160" height="100" rx="18" fill="#111f35"/><text x="940" y="360" class="label">Identity</text><text x="940" y="388" class="small">Member / Tenant</text>
+<rect x="1095" y="325" width="160" height="100" rx="18" fill="#111f35"/><text x="1120" y="360" class="label">Authorization</text><text x="1120" y="388" class="small">Grants / Roles</text>
+<rect x="1275" y="325" width="160" height="100" rx="18" fill="#111f35"/><text x="1300" y="360" class="label">Work</text><text x="1300" y="388" class="small">Project / Task</text>
+<rect x="915" y="450" width="160" height="100" rx="18" fill="#111f35"/><text x="940" y="485" class="label">Collaboration</text><text x="940" y="513" class="small">Session / Msg</text>
+<rect x="1095" y="450" width="160" height="100" rx="18" fill="#111f35"/><text x="1120" y="485" class="label">Evidence</text><text x="1120" y="513" class="small">Artifact / Review</text>
+<rect x="1275" y="450" width="160" height="100" rx="18" fill="#111f35"/><text x="1300" y="485" class="label">Governance</text><text x="1300" y="513" class="small">Approval / Audit</text>
+<rect x="915" y="575" width="520" height="90" rx="18" fill="#0f1d32" stroke="#06b6d4" stroke-width="2"/>
+<text x="945" y="612" class="label">Durable Delivery</text><text x="945" y="640" class="small">Inbox · Outbox · ACK · Retry · Dead Letter</text>
+</g>
+</g>
+
+<rect x="710" y="365" width="180" height="250" rx="28" fill="#0b1322" stroke="url(#bridge)" stroke-width="3" stroke-dasharray="10 8"/>
+<text x="744" y="410" class="label">BOUNDARY</text>
+<text x="744" y="442" class="small">HTTPS</text>
+<text x="744" y="474" class="small">API calls</text>
+<path d="M730 515H870" stroke="#7dd3fc" stroke-width="3"/><path d="M870 505l18 10-18 10z" fill="#7dd3fc"/>
+<text x="738" y="565" class="tiny">CONTROL ↔ EXECUTION</text>
+
+<rect x="80" y="790" width="1440" height="60" rx="18" fill="#111827" stroke="#334155"/>
+<text x="110" y="828" class="small">DAEP controls authorization and accountability. The Member controls the runtime, local tools, files, model and execution environment.</text>
+</svg>
