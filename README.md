@@ -141,4 +141,4 @@ RC 不等于 Production GA。真实生产环境仍需完成 PostgreSQL、OIDC、
 
 ## License
 
-See the repository license file.
+**License: not yet specified.** The repository currently does not include a `LICENSE` file; do not assume an open-source license applies.
