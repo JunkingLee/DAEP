@@ -3252,6 +3252,20 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     manager_headers={'Authorization':'Bearer '+manager.json()['token']}
     member_headers={'Authorization':'Bearer '+member_token}
 
+    # Create a real accepted CollaborationGrant owned by the departing Member.
+    owned_agent=client.post('/api/v1/agents',headers=member_headers,json={
+        'name':'Member Exit Collaboration Agent','description':'revoked when owner leaves project'})
+    assert owned_agent.status_code==200,owned_agent.text
+    session=client.get(f'/api/v1/tasks/{task_id}/collaboration-session',headers=member_headers)
+    assert session.status_code==200,session.text
+    collab_grant=client.post(f'/api/v1/tasks/{task_id}/collaboration-grants',headers=member_headers,json={
+        'agent_id':owned_agent.json()['agent']['id'],
+        'scopes':['session.read','session.message.send']})
+    assert collab_grant.status_code==200,collab_grant.text
+    accepted_collab=client.post(f"/api/v1/collaboration-grants/{collab_grant.json()['id']}/accept",
+        headers={'Authorization':'Bearer '+owned_agent.json()['token']})
+    assert accepted_collab.status_code==200,accepted_collab.text
+
     # Existing role changes must go through the independent approval workflow.
     direct_change=client.post(f'/api/v1/projects/{pid}/members',headers=manager_headers,json={
         'member_id':member_id,'role':'reviewer','work_function':'tester'})
@@ -3297,6 +3311,7 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     assert removed.json()['removed_assignment_count']==1
     assert removed.json()['revoked_agent_binding_count']==1
     assert removed.json()['revoked_agent_assignment_count']==1
+    assert removed.json()['revoked_collaboration_grant_count']==1
     assert removed.json()['cancelled_work_package_count']==1
     assert removed.json()['cancelled_message_count']==1
     assert removed.json()['cancelled_approval_count']==1
@@ -3312,6 +3327,9 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     assert db.execute('SELECT status FROM task_work_packages WHERE id=?',(package_id,)).fetchone()[0]=='CANCELLED'
     assert db.execute('SELECT status FROM agent_project_bindings WHERE project_id=? AND agent_id=?',(pid,agent_id)).fetchone()[0]=='REVOKED'
     assert db.execute('SELECT status FROM agent_task_assignments WHERE id=?',(assignment_id,)).fetchone()[0]=='REVOKED'
+    assert db.execute('SELECT status FROM agent_collaboration_grants WHERE id=?',(collab_grant.json()['id'],)).fetchone()[0]=='REVOKED'
+    assert db.execute("SELECT 1 FROM events WHERE event_type='agent.collaboration_grant.revoked' AND payload LIKE ?",
+        ('%'+collab_grant.json()['id']+'%',)).fetchone() is not None
     assert db.execute('SELECT status FROM messages WHERE id=?',(message_id,)).fetchone()[0]=='CANCELLED'
     assert db.execute('SELECT status FROM project_approvals WHERE id=?',(role_request.json()['approval_id'],)).fetchone()[0]=='CANCELLED'
     assert db.execute('SELECT 1 FROM assignments WHERE task_id=? AND member_id=?',
