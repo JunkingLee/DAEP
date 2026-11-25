@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="860" viewBox="0 0 1600 860" role="img" aria-labelledby="t d">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#06101d"/><stop offset=".55" stop-color="#0d1b2e"/><stop offset="1" stop-color="#11182b"/></linearGradient>
+<linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#2563eb"/><stop offset=".5" stop-color="#7c3aed"/><stop offset="1" stop-color="#06b6d4"/></linearGradient>
+<filter id="s"><feDropShadow dx="0" dy="16" stdDeviation="20" flood-opacity=".32"/></filter>
+<style>.h{font:700 34px Inter,Arial,sans-serif;fill:#f8fafc}.sub{font:500 17px Inter,Arial,sans-serif;fill:#94a3b8}.l{font:700 17px Inter,Arial,sans-serif;fill:#e2e8f0}.sm{font:500 13px Inter,Arial,sans-serif;fill:#94a3b8}.tiny{font:700 12px Inter,Arial,sans-serif;fill:#7dd3fc}</style>
+</defs>
+<title id="t">DAEP 控制平面架构</title><desc id="d">成员自有的 Agent 环境通过本地 MCP Adapter 连接 DAEP 控制平面；控制平面负责身份、授权、工程工作、协作、交付与治理。</desc>
+<rect width="1600" height="860" rx="34" fill="url(#bg)"/>
+<text x="72" y="78" class="h">DAEP · Control Plane Architecture</text>
+<text x="72" y="112" class="sub">左侧是成员自有的本地执行环境；右侧是受治理的工程状态与责任闭环。</text>
+
+<g filter="url(#s)">
+<rect x="72" y="170" width="420" height="570" rx="28" fill="#0b1728" stroke="#334b70" stroke-width="2"/>
+<text x="108" y="215" class="l">成员环境</text><text x="108" y="242" class="tiny">执行边界</text>
+<rect x="108" y="280" width="348" height="108" rx="20" fill="#111f35" stroke="#2563eb"/><text x="136" y="320" class="l">Agent Runtime / 模型</text><text x="136" y="348" class="sm">本地执行 · 状态 · 工具</text><text x="136" y="370" class="sm">由 Member 自有并运行</text>
+<rect x="108" y="410" width="348" height="108" rx="20" fill="#111f35" stroke="#7c3aed"/><text x="136" y="450" class="l">MCP Host + 本地工具</text><text x="136" y="478" class="sm">文件 · 进程 · 凭据</text><text x="136" y="500" class="sm">位于 DAEP Runtime 边界之外</text>
+<rect x="108" y="540" width="348" height="150" rx="20" fill="#0f1d32" stroke="#06b6d4" stroke-width="2"/><text x="136" y="580" class="l">DAEP MCP Adapter</text><text x="136" y="610" class="sm">本地桥接 → HTTPS → DAEP API</text><text x="136" y="635" class="sm">不托管 Runtime / 不唤醒 / 不调度</text>
+</g>
+
+<g filter="url(#s)">
+<rect x="570" y="170" width="958" height="570" rx="28" fill="#091321" stroke="#334b70" stroke-width="2"/>
+<text x="610" y="215" class="l">DAEP 控制平面</text><text x="610" y="242" class="tiny">治理 + 系统记录</text>
+<g fill="#111f35" stroke="#334b70">
+<rect x="610" y="280" width="200" height="96" rx="18"/><rect x="830" y="280" width="200" height="96" rx="18"/><rect x="1050" y="280" width="200" height="96" rx="18"/><rect x="1270" y="280" width="218" height="96" rx="18"/>
+<rect x="610" y="398" width="200" height="96" rx="18"/><rect x="830" y="398" width="200" height="96" rx="18"/><rect x="1050" y="398" width="200" height="96" rx="18"/><rect x="1270" y="398" width="218" height="96" rx="18"/>
+<rect x="610" y="516" width="200" height="96" rx="18"/><rect x="830" y="516" width="200" height="96" rx="18"/><rect x="1050" y="516" width="200" height="96" rx="18"/><rect x="1270" y="516" width="218" height="96" rx="18"/>
+</g>
+<g class="l"><text x="640" y="318">身份</text><text x="860" y="318">授权</text><text x="1080" y="318">项目</text><text x="1300" y="318">需求</text>
+<text x="640" y="436">任务</text><text x="860" y="436">协作</text><text x="1080" y="436">消息</text><text x="1300" y="436">工作包</text>
+<text x="640" y="554">证据</text><text x="860" y="554">评审 / 验收</text><text x="1080" y="554">治理 / 审计</text><text x="1300" y="554">Outbox / RLS</text></g>
+<g class="sm"><text x="640" y="346">Member · Tenant · OIDC</text><text x="860" y="346">角色 · Grant · 撤销</text><text x="1080" y="346">工程上下文</text><text x="1300" y="346">意图 + 验收标准</text>
+<text x="640" y="464">分配 · 状态</text><text x="860" y="464">Session · Proposal</text><text x="1080" y="464">Inbox · ACK · 重试</text><text x="1300" y="464">受治理的 Agent 工作</text>
+<text x="640" y="582">制品 · Commit</text><text x="860" y="582">人类决策</text><text x="1080" y="582">策略 · 审计轨迹</text><text x="1300" y="582">可靠投递 · 隔离</text></g>
+</g>
+
+<rect x="450" y="405" width="170" height="170" rx="28" fill="#0b1322" stroke="url(#accent)" stroke-width="3" stroke-dasharray="10 8"/>
+<text x="485" y="455" class="l">边界</text><text x="485" y="488" class="sm">HTTPS API</text><text x="485" y="514" class="sm">Adapter 调用</text><text x="485" y="540" class="sm">DAEP REST API</text>
+<path d="M492 590H570" stroke="#7dd3fc" stroke-width="4"/><path d="M570 580l18 10-18 10z" fill="#7dd3fc"/>
+<rect x="72" y="780" width="1456" height="48" rx="16" fill="#111827" stroke="#334155"/>
+<text x="100" y="811" class="sm">DAEP 是受治理工程工作的控制平面与系统记录源，不托管或运行 Agent Runtime。</text>
+</svg>
