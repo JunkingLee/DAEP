@@ -55,6 +55,11 @@ services:
       DAEP_OIDC_CLIENT_ID: ${DAEP_OIDC_CLIENT_ID:-}
       DAEP_OIDC_CLIENT_SECRET: ${DAEP_OIDC_CLIENT_SECRET:-}
       DAEP_OIDC_REDIRECT_URI: ${DAEP_OIDC_REDIRECT_URI:-}
+      DAEP_OIDC_AUTO_PROVISION: ${DAEP_OIDC_AUTO_PROVISION:-false}
+      DAEP_OIDC_DEFAULT_TENANT: ${DAEP_OIDC_DEFAULT_TENANT:-tenant-default}
+      DAEP_OIDC_DEFAULT_ROLE: ${DAEP_OIDC_DEFAULT_ROLE:-developer}
+      DAEP_OIDC_SCOPES: ${DAEP_OIDC_SCOPES:-openid profile email}
+      DAEP_OIDC_AUDIENCE: ${DAEP_OIDC_AUDIENCE:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
