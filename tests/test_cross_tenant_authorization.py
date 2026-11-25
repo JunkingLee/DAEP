@@ -170,7 +170,9 @@ def test_cross_tenant_project_requirement_task_agent_and_governance_are_isolated
             'reason': 'Cross-tenant delegation attempt',
         },
     )
-    assert denied_delegation.status_code in (403, 404), denied_delegation.text    # Artifact APIs must enforce the tenant through the Task -> Requirement -> Project chain.
+    assert denied_delegation.status_code in (403, 404), denied_delegation.text
+
+    # Artifact APIs must enforce the tenant through the Task -> Requirement -> Project chain.
     artifact_b = client.post(
         f'/api/v1/tasks/{task_b_id}/artifacts',
         headers=headers_b,
