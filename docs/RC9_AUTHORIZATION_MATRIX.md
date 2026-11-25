@@ -61,7 +61,7 @@ The shared `require_member_actor()` guard is applied to:
 
 ### Worker
 
-All currently registered `/internal/v1/*` routes invoke `require_worker()`:
+All currently registered `/internal/v1/*` routes invoke `require_worker()`. The configured Worker secret is also checked against stored Member and Agent token digests, so a misconfigured Worker secret cannot alias either identity class:
 - `POST /internal/v1/collaboration-grants/reminders/dispatch`
 - `POST /internal/v1/outbox/claim`
 - `POST /internal/v1/outbox/{outbox_id}/complete`
@@ -77,7 +77,7 @@ The focused Agent identity regression test verifies:
 - Task event reads are denied without `task.read`, allowed with an accepted grant, and denied again after grant revocation.
 - Denied operations do not mutate Owner profile state, project state or approval state.
 
-Latest full CI run for this matrix update: `45575412495` — 8/8 jobs passed; Python 3.11/3.12/3.13 each reported 263 passed and 2 skipped; Browser E2E, PostgreSQL Migration/RLS, Container Build, Production Compose and Quality Gate passed.
+Latest full CI run for this matrix update: `45576103698` — 8/8 jobs passed; Python 3.11/3.12/3.13 each reported 264 passed and 2 skipped; Browser E2E, PostgreSQL Migration/RLS, Container Build, Production Compose and Quality Gate passed.
 
 ## Remaining verification
 
@@ -86,7 +86,7 @@ The following still need dedicated negative tests or target-environment evidence
 2. Complete Owner / Manager / Reviewer / Member permission matrix across every project governance and quality-policy endpoint.
 3. Cross-Tenant attempts for every resource family, including historical/legacy rows and RLS behavior under production roles.
 4. Concurrent revoke/expiry versus Agent read/write races on PostgreSQL, not only SQLite functional tests.
-5. Worker secret separation against all stored Member and Agent credential digests, including misconfiguration scenarios.
+5. Concurrent revoke/expiry versus Agent read/write races on PostgreSQL, not only SQLite functional tests.
 6. Real two-Member / two-Agent interoperability and deployment-specific OIDC, database backup/restore and penetration testing.
 
 Do not mark these remaining items PASS based only on the focused tests above.
