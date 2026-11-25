@@ -5957,3 +5957,101 @@ def test_project_members_cannot_directly_grant_project_owner_role():
             'SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',
             (pid,target_id),
         ).fetchone() is None
+
+
+def test_agent_token_cannot_impersonate_owner_on_member_and_governance_apis():
+    from app.agent_identity import ensure_agent_schema
+    ensure_agent_schema(main_module.conn)
+
+    owner=client.post('/api/v1/members',headers=ADMIN,json={'name':'Agent Owner Identity Boundary'})
+    target=client.post('/api/v1/members',headers=ADMIN,json={'name':'Delegation Target Boundary'})
+    assert owner.status_code==200 and target.status_code==200
+    owner_headers={'Authorization':'Bearer '+owner.json()['token']}
+    project=client.post('/api/v1/projects',headers=owner_headers,json={'name':'Agent Owner Governance Boundary'})
+    assert project.status_code==200,project.text
+    pid=project.json()['id']
+    added=client.post(f'/api/v1/projects/{pid}/members',headers=owner_headers,json={
+        'member_id':target.json()['id'],'role':'member'})
+    assert added.status_code==200,added.text
+    requirement=client.post('/api/v1/requirements',headers=owner_headers,json={
+        'project_id':pid,'title':'Owner identity authorization boundary'})
+    assert requirement.status_code==200,requirement.text
+    task=client.post('/api/v1/tasks',headers=owner_headers,json={
+        'requirement_id':requirement.json()['id'],'title':'Task for Agent identity boundary',
+        'assignee_member_ids':[owner.json()['id']]})
+    assert task.status_code==200,task.text
+    tid=task.json()['id']
+
+    created=client.post('/api/v1/agents',headers=owner_headers,json={
+        'name':'Owner Boundary Agent','description':'must not impersonate its owner'})
+    assert created.status_code==200,created.text
+    agent=created.json()['agent']
+    agent_headers={'Authorization':'Bearer '+created.json()['token']}
+    binding=client.post(f"/api/v1/agents/{agent['id']}/projects",headers=owner_headers,json={
+        'project_id':pid,'role':'member','work_function':'developer'})
+    assert binding.status_code==200,binding.text
+
+    # A project binding is not a substitute for a Task Execution Grant.
+    assert client.get(f'/api/v1/tasks/{tid}/events',headers=agent_headers).status_code==403
+
+    task_grant=client.post(f'/api/v1/tasks/{tid}/agent-grants',headers=owner_headers,json={
+        'agent_id':agent['id'],'requested_scope':['task.read']})
+    assert task_grant.status_code==200,task_grant.text
+    accepted=client.post(f"/api/v1/agent-grants/{task_grant.json()['id']}/accept",headers=agent_headers)
+    assert accepted.status_code==200,accepted.text
+    assert client.get(f'/api/v1/tasks/{tid}/events',headers=agent_headers).status_code==200
+
+    # Agent credentials must never operate on the human Owner's Member identity.
+    assert client.get('/api/v1/me',headers=agent_headers).status_code==403
+    assert client.patch('/api/v1/me',headers=agent_headers,json={
+        'name':'Impersonated Owner','username':'impersonated.owner'}).status_code==403
+    assert client.post('/api/v1/auth/change-password',headers=agent_headers,json={
+        'current_password':'irrelevant-owner-password','new_password':'new-password-should-not-apply'}).status_code==403
+    assert client.post('/api/v1/auth/logout',headers=agent_headers).status_code==403
+    assert client.get('/api/v1/projects',headers=agent_headers).status_code==403
+
+    # Human-only governance and workflow mutations cannot be performed via Owner ID.
+    role_request=client.post(f'/api/v1/projects/{pid}/role-change-requests',headers=owner_headers,json={
+        'member_id':target.json()['id'],'new_role':'reviewer','reason':'Require a formal reviewer role'})
+    assert role_request.status_code==200,role_request.text
+    approval_id=role_request.json()['approval_id']
+    assert client.post(f'/api/v1/projects/{pid}/approvals/{approval_id}/decision',
+        headers=agent_headers,json={'decision':'APPROVE','reason':'Agent must not decide'}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/workflow-transition',headers=agent_headers,json={
+        'target_stage':'IN_PROGRESS','comment':'Agent must use scoped progress reporting'}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/delegations',headers=agent_headers,json={
+        'recipient_member_id':target.json()['id'],'agent_name':'another-agent',
+        'reason':'Agent cannot create a human delegation'}).status_code==403
+    assert client.post('/api/v1/delegations/not-a-real-delegation/respond',headers=agent_headers,
+        json={'decision':'ACCEPT'}).status_code==403
+    assert client.get(f'/api/v1/tasks/{tid}/delegations',headers=agent_headers).status_code==403
+    assert client.get(f'/api/v1/projects/{pid}/delegations',headers=agent_headers).status_code==403
+    assert client.post('/api/v1/messages',headers=agent_headers,json={
+        'recipient_member_id':target.json()['id'],'project_id':pid,
+        'title':'Agent identity bypass','content':'Must use collaboration messaging'}).status_code==403
+    assert client.post(f'/api/v1/tasks/{tid}/work-result',headers=agent_headers,json={
+        'outcome':'COMPLETE','summary':'Agent must not set formal work-package review status'}).status_code==403
+
+    # Revoke the only Task Execution Grant and verify generic task reads close immediately.
+    revoked=client.delete(f"/api/v1/agent-grants/{task_grant.json()['id']}",headers=owner_headers,
+        json={'reason':'Identity-boundary regression test'})
+    assert revoked.status_code==200,revoked.text
+    assert client.get(f'/api/v1/tasks/{tid}/events',headers=agent_headers).status_code==403
+
+    # Project Owner identity remains unchanged after all denied impersonation attempts.
+    with main_module.conn() as db:
+        owner_row=db.execute('SELECT name,username,token_status FROM members WHERE id=?',
+            (owner.json()['id'],)).fetchone()
+        approval=db.execute('SELECT status,decided_by FROM project_approvals WHERE id=?',
+            (approval_id,)).fetchone()
+    assert owner_row['name']=='Agent Owner Identity Boundary'
+    assert owner_row['token_status']=='ACTIVE'
+    assert approval['status']=='PENDING'
+    assert approval['decided_by'] is None
+
+    with main_module.conn() as db:
+        db.execute("UPDATE projects SET status='CLOSED' WHERE id=?",(pid,))
+    assert client.post(f'/api/v1/projects/{pid}/reopen',headers=agent_headers,json={
+        'reason':'Agent must not reopen a closed project'}).status_code==403
+    with main_module.conn() as db:
+        assert db.execute('SELECT status FROM projects WHERE id=?',(pid,)).fetchone()['status']=='CLOSED'
