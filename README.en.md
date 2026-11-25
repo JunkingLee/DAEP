@@ -10,6 +10,8 @@ DAEP is a software engineering collaboration and governance platform for teams b
 
 [中文版 README](README.zh-CN.md) · [English documentation index](docs/) · [中文文档索引](docs/README.zh-CN.md)
 
+![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
+
 ## Why DAEP
 
 Traditional project-management tools are designed around human workers. Agentic Engineering introduces additional governance questions:
@@ -24,6 +26,14 @@ Traditional project-management tools are designed around human workers. Agentic 
 - When something goes wrong, who made the decision and why?
 
 DAEP turns “the Agent says it is done” into an **authorized, observable, verifiable, reviewable and auditable engineering workflow**.
+
+## DAEP at a Glance
+
+![DAEP architecture](docs/images/daep-architecture.svg)
+
+DAEP is not trying to make an Agent “smarter”. It puts Agent execution inside an engineering system with **clear ownership, explicit authorization, verifiable evidence, human acceptance and auditability**.
+
+![DAEP delivery lifecycle](docs/images/daep-lifecycle.svg)
 
 ## Product Model
 
