@@ -65,10 +65,14 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                     grant_id:grant.id,proposal_type:'HELP_REQUEST',
                     payload:{summary:'Need human review from browser E2E'}
                 },agentToken);
+                const pendingProposal = await call('/api/v1/tasks/'+task.id+'/collaboration-proposals','POST',{
+                    grant_id:grant.id,proposal_type:'HELP_REQUEST',
+                    payload:{summary:'Must not be withdrawn after authorization is revoked'}
+                },agentToken);
                 await call('/api/v1/tasks/'+task.id+'/collaboration-messages','POST',{
                     grant_id:grant.id,message_type:'MESSAGE',content:'Agent collaboration message from browser E2E'
                 },agentToken);
-                return {taskId:task.id,proposalId:proposal.id,sessionId:session.id,grantId:grant.id,agentId,agentToken};
+                return {taskId:task.id,proposalId:proposal.id,pendingProposalId:pendingProposal.id,sessionId:session.id,grantId:grant.id,agentId,agentToken};
             }""")
             page.evaluate("(id) => openTask(id)", setup["taskId"])
             modal = page.locator("#modalBody")
@@ -183,9 +187,10 @@ def test_task_collaboration_workspace_proposal_and_messages(daep_server):
                 const history=await call('/api/v1/tasks/'+taskId+'/collaboration-messages?grant_id='+grantId,'GET');
                 const message=await call('/api/v1/tasks/'+taskId+'/collaboration-messages','POST',{grant_id:grantId,content:'must be rejected after revoke'});
                 const proposal=await call('/api/v1/tasks/'+taskId+'/collaboration-proposals','POST',{grant_id:grantId,proposal_type:'HELP_REQUEST',payload:{summary:'must be rejected'}});
-                return {history,message,proposal};
-            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"]})
-            assert revoked_access == {"history":403,"message":403,"proposal":403}, revoked_access
+                const withdraw=await call('/api/v1/collaboration-proposals/'+setupPendingProposalId+'/withdraw','POST');
+                return {history,message,proposal,withdraw};
+            }""", {"taskId":setup["taskId"],"grantId":setup["grantId"],"agentToken":setup["agentToken"],"setupPendingProposalId":setup["pendingProposalId"]})
+            assert revoked_access == {"history":403,"message":403,"proposal":403,"withdraw":403}, revoked_access
 
             # Validate the durable Member inbox after the Task workspace flow is complete.
             page.evaluate("closeModal(); go('inbox'); loadInbox('ALL')")
