@@ -4241,51 +4241,6 @@ def task_artifacts(tid:str,authorization:str=Header(None)):
         else:
             require_task_access(c,tid,a)
         return [dict(x) for x in c.execute('SELECT * FROM artifacts WHERE task_id=? ORDER BY created_at',(tid,))]
-Z','+00:00'))
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-        except (TypeError,ValueError):
-            return None
-    for message in messages:
-        records=by_message.get(message['id'],[])
-        dispatch='HEALTHY'; ack='NOT_DUE'; detail=None
-        if not records:
-            dispatch='MISSING'; detail='No message.created outbox record'
-        elif len(records)>1:
-            dispatch='DUPLICATE'; detail='Multiple message.created outbox records'
-        elif records[0]['status']=='DEAD':
-            dispatch='DEAD'; detail=records[0]['last_error'] or 'Outbox entered DEAD state'
-        elif records[0]['status'] in ('PENDING','IN_FLIGHT'):
-            created=parse_stamp(records[0]['created_at'])
-            if created and (stamp-created).total_seconds()>dispatch_sla_seconds:
-                dispatch='DISPATCH_OVERDUE'; detail='Broker dispatch exceeded SLA'
-        elif records[0]['status']!='SENT':
-            dispatch='HEALTHY'; detail='Unrecognized outbox state: '+str(records[0]['status'])
-        if dispatch in dispatch_counts: dispatch_counts[dispatch]+=1
-        if message['status'] in ('ACKNOWLEDGED','REJECTED'):
-            ack=message['status']
-        elif records and len(records)==1 and records[0]['status']=='SENT':
-            sent=parse_stamp(records[0]['sent_at'])
-            if sent and (stamp-sent).total_seconds()>ack_sla_seconds:
-                ack='ACK_OVERDUE'
-        if ack in ack_counts: ack_counts[ack]+=1
-        if dispatch!='HEALTHY':
-            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
-                'category':'DISPATCH_'+dispatch,'dispatch_status':dispatch,'ack_status':ack,
-                'age_seconds':max(0,int((stamp-(parse_stamp(message['created_at']) or stamp)).total_seconds())),
-                'detail':detail})
-        if ack=='ACK_OVERDUE':
-            incidents.append({'message_id':message['id'],'task_id':message['task_id'],
-                'category':'ACK_OVERDUE','dispatch_status':dispatch,'ack_status':ack,
-                'age_seconds':max(0,int((stamp-(parse_stamp(records[0]['sent_at']) or stamp)).total_seconds())),
-                'detail':'Broker dispatch completed but recipient ACK exceeded SLA'})
-    return {'project_id':project_id,'generated_at':stamp.isoformat(),
-        'policy':{'dispatch_sla_seconds':dispatch_sla_seconds,'ack_sla_seconds':ack_sla_seconds},
-        'checked_messages':len(messages),'truncated':len(messages)==limit,
-        'dispatch_counts':dispatch_counts,'ack_counts':ack_counts,
-        'incident_count':len(incidents),'incidents':incidents[:limit],
-        'malformed_outbox_records_seen':malformed,
-        'semantics':'ACK SLA starts at outbox sent_at only. SENT is broker dispatch completion, not recipient ACK.'}
-
 def require_worker(authorization):
     expected=os.getenv('DAEP_WORKER_TOKEN','')
     if len(expected)<32: raise HTTPException(503,'Dedicated DAEP_WORKER_TOKEN is not configured')
