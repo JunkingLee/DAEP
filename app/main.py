@@ -1612,10 +1612,12 @@ def project_member_candidates(pid:str,authorization:str=Header(None)):
 def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
     a=actor(authorization)
     mid=b.get('member_id') or b.get('member_username'); role=b.get('role','member'); work_function=b.get('work_function','other')
-    if role not in ('member','reviewer','manager') and role != 'owner': raise HTTPException(422,'Invalid project role')
+    if role not in ('member','reviewer','manager','owner'): raise HTTPException(422,'Invalid project role')
     if work_function not in ('developer','tester','product','architect','other'): raise HTTPException(422,'Invalid work function')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
+        if role=='owner' and not is_admin(a):
+            raise HTTPException(403,'Project Owner role cannot be granted directly; use the platform ownership process')
         if role=='manager' and not is_admin(a):
             own=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,a['id'])).fetchone()
             if not own or own['role']!='owner': raise HTTPException(403,'Only project owners may directly grant manager role; use an approval request')
