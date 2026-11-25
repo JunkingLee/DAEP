@@ -4461,13 +4461,6 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
     return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects')
-def projects(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
-        return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -4495,39 +4488,6 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
-@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
-def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
-        if not target: raise HTTPException(404,'Target is not a project member')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
-        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
-
-@app.post('/api/v1/projects/{pid}/role-change-requests')
-def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
-    reason=str(b.get('reason','')).strip()
-    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
-        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
-        if current==new_role: raise HTTPException(409,'Member already has requested role')
-        aid='apr_'+uuid.uuid4().hex
-        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
-        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
-                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
-        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
-
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -6252,13 +6212,6 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
     return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects')
-def projects(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
-        return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -6286,39 +6239,6 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
-@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
-def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
-        if not target: raise HTTPException(404,'Target is not a project member')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
-        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
-
-@app.post('/api/v1/projects/{pid}/role-change-requests')
-def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
-    reason=str(b.get('reason','')).strip()
-    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
-        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
-        if current==new_role: raise HTTPException(409,'Member already has requested role')
-        aid='apr_'+uuid.uuid4().hex
-        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
-        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
-                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
-        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
-
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -8157,13 +8077,6 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
     return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects')
-def projects(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
-        return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -8209,39 +8122,6 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
-@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
-def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
-        if not target: raise HTTPException(404,'Target is not a project member')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
-        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
-
-@app.post('/api/v1/projects/{pid}/role-change-requests')
-def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
-    reason=str(b.get('reason','')).strip()
-    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
-        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
-        if current==new_role: raise HTTPException(409,'Member already has requested role')
-        aid='apr_'+uuid.uuid4().hex
-        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
-        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
-                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
-        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
-
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -9954,13 +9834,6 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
     return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects')
-def projects(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
-        return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -9988,39 +9861,6 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
-@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
-def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
-        if not target: raise HTTPException(404,'Target is not a project member')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
-        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
-
-@app.post('/api/v1/projects/{pid}/role-change-requests')
-def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
-    reason=str(b.get('reason','')).strip()
-    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
-        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
-        if current==new_role: raise HTTPException(409,'Member already has requested role')
-        aid='apr_'+uuid.uuid4().hex
-        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
-        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
-                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
-        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
-
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
@@ -11829,13 +11669,6 @@ def create_project(b:ProjectIn,authorization:str=Header(None)):
         c.execute('INSERT INTO projects(id,name,description,created_by,created_at,tenant_id) VALUES(?,?,?,?,?,?)',(pid,b.name,b.description,a['id'],now(),a.get('tenant_id','tenant-default')))
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?)',(pid,a['id'],'owner','other',now()))
     return {'id':pid,'name':b.name,'description':b.description}
-@app.get('/api/v1/projects')
-def projects(authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        if is_admin(a): rows=c.execute('SELECT * FROM projects ORDER BY created_at DESC')
-        else: rows=c.execute('SELECT p.*,pm.role AS project_role,pm.work_function FROM projects p JOIN project_members pm ON pm.project_id=p.id WHERE pm.member_id=? AND p.tenant_id=? ORDER BY p.created_at DESC',(a['id'],a.get('tenant_id','tenant-default')))
-        return [dict(x) for x in rows]
 @app.get('/api/v1/projects/{pid}/members')
 def project_members(pid:str,authorization:str=Header(None)):
     a=actor(authorization)
@@ -11863,39 +11696,6 @@ def add_project_member(pid:str,b:dict,authorization:str=Header(None)):
         c.execute('INSERT INTO project_members(project_id,member_id,role,work_function,joined_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,member_id) DO UPDATE SET role=excluded.role,work_function=excluded.work_function',(pid,mid,role,work_function,now()))
         event(c,'project.member.role_set',a['id'],None,{'project_id':pid,'member_id':mid,'role':role},tenant_override=project_row['tenant_id'])
         return {'project_id':pid,'member_id':mid,'role':role,'work_function':work_function}
-@app.patch('/api/v1/projects/{pid}/members/{member_id}/function')
-def update_project_member_function(pid:str,member_id:str,b:ProjectMemberFunctionIn,authorization:str=Header(None)):
-    a=actor(authorization)
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT role,work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()
-        if not target: raise HTTPException(404,'Target is not a project member')
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        c.execute('UPDATE project_members SET work_function=? WHERE project_id=? AND member_id=?',(b.work_function,pid,member_id))
-        event(c,'project.member.work_function_set',a['id'],None,{'project_id':pid,'member_id':member_id,'work_function':b.work_function},tenant_override=project['tenant_id'])
-        return {'project_id':pid,'member_id':member_id,'project_role':target['role'],'work_function':b.work_function}
-
-@app.post('/api/v1/projects/{pid}/role-change-requests')
-def request_project_role_change(pid:str,b:dict,authorization:str=Header(None)):
-    a=actor(authorization); member_id=str(b.get('member_id','')).strip(); new_role=str(b.get('new_role','')).strip()
-    reason=str(b.get('reason','')).strip()
-    if not member_id or new_role not in ('member','reviewer','manager') or not reason or len(reason)>1000:
-        raise HTTPException(422,'member_id, valid new_role and reason (1-1000 chars) are required')
-    with conn() as c:
-        require_project_access(c,pid,a,write=True)
-        target=c.execute('SELECT tenant_id FROM members WHERE id=?',(member_id,)).fetchone()
-        project=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()
-        if not target or target['tenant_id']!=project['tenant_id']: raise HTTPException(404,'Member not found in project tenant')
-        if not c.execute('SELECT 1 FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone(): raise HTTPException(404,'Target is not a project member')
-        current=c.execute('SELECT role FROM project_members WHERE project_id=? AND member_id=?',(pid,member_id)).fetchone()['role']
-        if current==new_role: raise HTTPException(409,'Member already has requested role')
-        aid='apr_'+uuid.uuid4().hex
-        payload={'member_id':member_id,'previous_role':current,'new_role':new_role,'reason':reason}
-        c.execute("INSERT INTO project_approvals(id,project_id,tenant_id,requester_member_id,action,payload,status,created_at) VALUES(?,?,?,?,? ,?,'PENDING',?)",
-                  (aid,pid,project['tenant_id'],a['id'],'PROJECT_ROLE_CHANGE',json.dumps(payload),now()))
-        event(c,'project.role_change.requested',a['id'],None,{'approval_id':aid,'project_id':pid,**payload},tenant_override=project['tenant_id'])
-        return {'approval_id':aid,'status':'PENDING','project_id':pid,'payload':payload}
-
 @app.get('/api/v1/projects/{pid}/approvals')
 def list_project_approvals(pid:str,status:str='PENDING',limit:int=100,authorization:str=Header(None)):
     a=actor(authorization); limit=max(1,min(limit,200))
