@@ -5850,3 +5850,51 @@ def test_regular_member_can_create_project_and_become_owner():
             (payload['id'],),
         ).fetchone()
     assert event_row == ('project.created', body['id'])
+
+
+def test_agent_token_cannot_create_or_manage_agent_identities():
+    pid, owner_id, owner_token, task_id = setup_project_task()
+    owner_headers = {'Authorization': f'Bearer {owner_token}'}
+    created = client.post('/api/v1/agents', headers=owner_headers, json={
+        'name':'Owner Managed Agent','description':'identity boundary regression'})
+    assert created.status_code == 200, created.text
+    agent = created.json()['agent']
+    agent_token = created.json()['token']
+    agent_headers = {'Authorization': f'Bearer {agent_token}'}
+
+    before_count = None
+    with main_module.conn() as db:
+        before_count = db.execute('SELECT COUNT(*) AS n FROM agents').fetchone()['n']
+
+    denied = [
+        client.get('/api/v1/agents', headers=agent_headers),
+        client.post('/api/v1/agents', headers=agent_headers, json={
+            'name':'Nested Agent','description':'must be denied'}),
+        client.get(f"/api/v1/agents/{agent['id']}", headers=agent_headers),
+        client.patch(f"/api/v1/agents/{agent['id']}", headers=agent_headers, json={
+            'name':'Changed by Agent','description':'must be denied','status':'DISABLED'}),
+        client.post(f"/api/v1/agents/{agent['id']}/tokens/rotate", headers=agent_headers),
+        client.post(f"/api/v1/agents/{agent['id']}/tokens/revoke", headers=agent_headers),
+        client.post(f"/api/v1/agents/{agent['id']}/projects", headers=agent_headers, json={
+            'project_id':pid,'role':'member','work_function':'developer'}),
+        client.delete(f"/api/v1/agents/{agent['id']}/projects/{pid}", headers=agent_headers),
+    ]
+    assert [response.status_code for response in denied] == [403] * len(denied)
+
+    with main_module.conn() as db:
+        after_count = db.execute('SELECT COUNT(*) AS n FROM agents').fetchone()['n']
+        token_state = db.execute(
+            "SELECT status FROM agent_tokens WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
+            (agent['id'],),
+        ).fetchone()['status']
+        agent_state = db.execute(
+            "SELECT status FROM agents WHERE id=?", (agent['id'],)
+        ).fetchone()['status']
+        bindings = db.execute(
+            "SELECT COUNT(*) AS n FROM agent_project_bindings WHERE agent_id=? AND project_id=? AND status='ACTIVE'",
+            (agent['id'], pid),
+        ).fetchone()['n']
+    assert after_count == before_count
+    assert token_state == 'ACTIVE'
+    assert agent_state == 'ACTIVE'
+    assert bindings == 0
