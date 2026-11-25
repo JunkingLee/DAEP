@@ -3,6 +3,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DAEP_DB_PATH=/data/daep.db
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 COPY app ./app
 COPY daep_mcp ./daep_mcp
 COPY daep_worker ./daep_worker
