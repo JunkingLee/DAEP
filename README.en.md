@@ -13,7 +13,7 @@ DAEP is a software engineering collaboration and governance platform for teams b
 >
 > DAEP does not create, host, start, stop, wake, or take over a user's Agent Runtime. Every Agent is owned by one human Member and runs in that member's own environment. DAEP governs identity, authorization, work, collaboration context, messages, evidence, approvals, governance and audit.
 
-[中文版 README](README.zh-CN.md) · [English documentation index](docs/) · [中文文档索引](docs/README.zh-CN.md)
+[中文版 README](README.zh-CN.md) · [English documentation](docs/) · [Project handoff](docs/PROJECT_HANDOFF.md)
 
 ![DAEP — Agentic Engineering Control Plane](docs/images/daep-hero.svg)
 
@@ -252,4 +252,4 @@ A Release Candidate is not the same as production GA certification. Before produ
 
 ## License
 
-See the repository license file.
+**License: not yet specified.** The repository currently does not include a `LICENSE` file; do not assume an open-source license applies.
