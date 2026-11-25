@@ -124,8 +124,23 @@ def test_agent_management_full_browser_lifecycle(daep_server):
 
             # Reload to let the real session restoration and project bootstrap
             # populate the browser-side project collection.
+            # Delay the identity lookup so the session-restoration window is observable.
+            # The login screen must stay hidden until the stored token is validated.
+            page.add_init_script("""(() => {
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = async (input, init) => {
+                    const url = typeof input === 'string' ? input : input.url;
+                    if (url.includes('/api/v1/me') && (!init || !init.method || init.method === 'GET')) {
+                        await new Promise(resolve => setTimeout(resolve, 700));
+                    }
+                    return originalFetch(input, init);
+                };
+            })();""")
             page.reload(wait_until="domcontentloaded")
+            expect(page.get_by_test_id("login-screen")).to_be_hidden()
+            expect(page.locator("#boot")).to_be_visible()
             expect(page.get_by_test_id("app-shell")).to_be_visible(timeout=20000)
+            expect(page.locator("#boot")).to_be_hidden()
             # app-shell becomes visible before async project bootstrap completes;
             # wait for the initial overview navigation to settle before switching.
             expect(page.locator("#overview.page.active")).to_be_visible(timeout=20000)
