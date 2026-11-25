@@ -54,3 +54,16 @@ def test_readme_svg_assets_are_well_formed_xml():
     for svg_file in svg_files:
         parsed = ET.parse(svg_file)
         assert parsed.getroot().tag == "{http://www.w3.org/2000/svg}svg", svg_file.name
+
+
+def test_readme_svg_references_resolve_to_existing_assets():
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    readmes = (root / "README.md", root / "README.en.md", root / "README.zh-CN.md")
+    for readme in readmes:
+        content = readme.read_text(encoding="utf-8")
+        references = re.findall(r"!\\[[^\\]]*\\]\\(([^)]+\\.svg)\\)", content)
+        assert references, f"{readme.name} should include product SVG diagrams"
+        for reference in references:
+            assert (root / reference).is_file(), f"{readme.name} references missing asset: {reference}"
