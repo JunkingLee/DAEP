@@ -1701,3 +1701,28 @@
 - REST 与 MCP 协作操作使用相同的服务端 Grant 校验；MCP Agent allowlist 不开放 Session 创建/修改、Grant 创建/撤销/续期等 Owner/Member 管理接口。
 - 通知 Delivery API 按当前 Member 收件箱过滤，不暴露 Outbox lease 凭据；偏好只影响通知生成/提醒，不改变 Grant 生命周期。
 - 交付前仍建议进行一次部署环境验收（真实 OIDC、Worker Token、外部 Agent Runtime/MCP 连通性和生产 PostgreSQL 配置），这些依赖不能仅由 CI 自动测试替代。
+
+
+## 66. 真实部署验收清单（2026-11-25）
+
+### 本轮交付
+- 新增 `docs/DEPLOYMENT_ACCEPTANCE_CHECKLIST.md`，将部署验收拆分为可执行条目，覆盖：
+  - 部署配置、密钥注入、HTTPS、网络边界、健康检查与当前 Schema 初始化/升级。
+  - OIDC 登录、Member 身份、Tenant 隔离与角色边界。
+  - Agent Owner 归属、凭证安全、外部 Runtime/MCP 连通性及工具白名单。
+  - Task TEAM Policy、Owner 授权、Agent 接受、Session、协作消息、Proposal、撤销/过期与独立进度。
+  - Worker Token、Outbox 重试/DEAD/恢复审计、到期提醒、偏好边界和 Member 通知可见性。
+  - 日志脱敏、审计、负向权限测试、备份恢复与监控告警。
+- 每项包含 ID、操作和通过标准、结果/证据栏；另附验收记录模板与交付门槛。
+- 明确区分 CI 已覆盖范围与必须在真实部署环境执行的验收；不把 CI 通过误判为生产环境验收通过。
+- 遵循项目开发阶段约束：仅检查当前 Schema 初始化/升级，不包含历史数据迁移、回填、旧库利旧或迁移兼容验收。
+- 文档不包含任何真实密钥或凭证。
+
+### CI 状态
+- 代码基线 Run [45537563659](https://github.com/JunkingLee/DAEP/actions/runs/45537563659)，HEAD `3ffd7abce85357ddfc95fa25c4dd211ae8ab1561`：七个 Job 全部成功。
+- 上一轮交接文档提交 Run [45537774293](https://github.com/JunkingLee/DAEP/actions/runs/45537774293)：七个 Job 全部成功（Python 3.11/3.12/3.13、PostgreSQL Migration/RLS、Chromium Browser E2E、Container Build、Production Compose）。
+
+### 当前结论与下一步
+- 部署验收清单已落库；真实部署环境尚未由本轮自动化操作验证。
+- 当前可确认的是代码与 CI 自动化候选交付基线通过；不能据此宣称真实 OIDC、生产 PostgreSQL/RLS、Worker Token、外部 Agent Runtime/MCP 和完整用户流程已验收。
+- 下一步应在目标环境逐项执行清单，记录部署 SHA、执行人、结果和脱敏证据；阻塞项需登记责任人及解除条件。
