@@ -27,14 +27,14 @@ def main():
                 print(json.dumps({"kind":"syntax_error","file":str(path),"line":e.lineno,"message":e.msg})); continue
             for node in tree.body:
                 if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)):
-                    functions[node.name].append((str(path),node.lineno))
+                    functions[(str(path),node.name)].append(node.lineno)
                 for dec in getattr(node,"decorator_list",()):
                     if isinstance(dec,ast.Call) and isinstance(dec.func,ast.Attribute) and isinstance(dec.func.value,ast.Name) and dec.func.value.id=="app":
                         if dec.func.attr in {"get","post","put","patch","delete","options","head","websocket"} and dec.args:
                             arg=dec.args[0]
                             if isinstance(arg,ast.Constant) and isinstance(arg.value,str):
                                 routes[(dec.func.attr.upper(),arg.value)].append((str(path),node.name,node.lineno))
-    duplicate_functions={k:v for k,v in functions.items() if len(v)>1}
+    duplicate_functions={f"{path}:{name}":[(path,line) for line in lines] for (path,name),lines in functions.items() if len(lines)>1}
     duplicate_routes={f"{m} {p}":v for (m,p),v in routes.items() if len(v)>1}
     findings={
         "files_scanned":len(files),
