@@ -91,7 +91,12 @@ def _token():
 def _hash(raw):
     return hashlib.sha256(raw.encode()).hexdigest()
 
+def _require_member_actor(a):
+    if a.get('actor_type') != 'MEMBER':
+        raise HTTPException(403,'Human Member authentication required for Agent management')
+
 def _agent_owner(c, agent_id, a, is_admin):
+    _require_member_actor(a)
     row=c.execute("SELECT * FROM agents WHERE id=? AND tenant_id=?",(agent_id,a.get('tenant_id','tenant-default'))).fetchone()
     if not row: raise HTTPException(404,'Agent not found')
     if not is_admin(a) and row['owner_member_id'] != a['id']:
@@ -171,6 +176,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.get('/api/v1/agents')
     def list_agents(authorization: str = Header(default='')):
         a=actor(authorization)
+        _require_member_actor(a)
         with conn() as c:
             if is_admin(a):
                 rows=c.execute("SELECT id,name,description,status,owner_member_id,created_at,updated_at,last_seen_at FROM agents WHERE tenant_id=? ORDER BY created_at DESC",(a.get('tenant_id','tenant-default'),)).fetchall()
@@ -187,6 +193,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.post('/api/v1/agents')
     def create_agent(body: AgentCreateIn, authorization: str = Header(default='')):
         a=actor(authorization)
+        _require_member_actor(a)
         aid='agt_'+uuid.uuid4().hex[:16]
         ts=now()
         with conn() as c:
@@ -357,6 +364,7 @@ def register_agent_routes(app, conn, actor, is_admin, require_project_access, ev
     @app.delete('/api/v1/agents/{agent_id}/projects/{project_id}')
     def unbind_agent(agent_id: str, project_id: str, authorization: str = Header(default='')):
         a=actor(authorization)
+        _require_member_actor(a)
         with conn() as c:
             project=c.execute("SELECT tenant_id,status FROM projects WHERE id=?",(project_id,)).fetchone()
             if not project: raise HTTPException(404,'Project not found')
