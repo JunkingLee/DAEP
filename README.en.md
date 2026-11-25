@@ -146,6 +146,10 @@ DAEP provides durable messages and a transactional outbox:
 - Task / Agent / Collaboration / Message / Delivery audit trails.
 - Production Compose security checks and backup/restore verification tooling.
 
+## Governance Loop
+
+![DAEP governance loop](docs/images/daep-governance.svg)
+
 ## Agent / DAEP Boundary
 
 ```
