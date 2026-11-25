@@ -1747,3 +1747,20 @@
 ### 验证与后续
 - 本次修改将触发 CI 的 Production Compose 静态安全断言及全量测试。
 - CI 通过后仍需在真实环境验证 IdP、Broker Gateway、Worker Token、生产数据库角色/RLS 和外部 MCP Runtime；本轮没有真实生产凭证或目标环境，因此不标记真实部署门禁 PASS。
+
+
+## 68. Production 镜像缺少 Alembic 迁移资产的修复（2026-11-25）
+
+### 审查发现
+- Production Compose 的一次性 `migrate` 服务在镜像内执行 `alembic upgrade head`。
+- Dockerfile 原先只复制应用、Worker、MCP、Web 与 PostgreSQL 辅助脚本，没有复制 `alembic.ini` 和 `alembic/` 目录。
+- 因此即使宿主机 CI 的 Migration Job 和 Docker Build 分别通过，真实 Production Compose 的 migrate 容器仍会因镜像缺少 Alembic 配置/版本文件而无法完成 Schema upgrade。这是部署启动阻塞项。
+
+### 修复
+- Dockerfile 显式复制 `alembic.ini` 和完整 `alembic/` migration 目录到镜像工作目录。
+- Container Build CI 新增镜像内部断言：确认 `/app/alembic.ini`、`/app/alembic/versions` 和 migration Python 文件实际存在。
+- 不改变 Migration 内容、数据库结构或运行时授权逻辑；不涉及历史数据迁移/利旧。
+
+### 验证状态
+- 修复提交后由 CI Container Build Job 执行镜像内文件断言；全量 CI 结果待确认。
+- 真实 PostgreSQL Production Compose 启动与 upgrade 仍需按部署验收清单在目标环境执行。
