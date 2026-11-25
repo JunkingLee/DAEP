@@ -290,6 +290,7 @@ def register_agent_collaboration_routes(
         reason = str((body or {}).get("reason", "")).strip()
         if len(reason) > 1000:
             raise HTTPException(422, "reason must be at most 1000 characters")
+        expired = False
         with conn() as c:
             begin_serialized_write(c)
             lookup = c.execute(
@@ -315,25 +316,36 @@ def register_agent_collaboration_routes(
                     "UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=? WHERE id=?",
                     (stamp, grant_id),
                 )
-                raise HTTPException(409, "Collaboration grant has expired")
-            c.execute(
-                """UPDATE agent_collaboration_grants
-                   SET status='REVOKED',revoked_at=?,updated_at=?,revoked_by_member_id=?,revoke_reason=?
-                   WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
-                (stamp, stamp, current["id"], reason or None, grant_id),
-            )
-            event(
-                c, "agent.collaboration_grant.revoked", current["id"], row["task_id"],
-                {"grant_id": grant_id, "session_id": row["session_id"],
-                 "agent_id": row["agent_id"], "reason": reason or "Owner revoked collaboration grant"},
-                tenant_override=row["tenant_id"],
-            )
-            notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
-                "AGENT_COLLABORATION_GRANT","Agent 协作授权已撤销",
-                f"你已撤销 Agent「{row['agent_id']}」的 Task「{row['task_id']}」协作授权。",
-                "NORMAL",f"agent-collaboration-grant:revoked:{grant_id}")
-            return {"id": grant_id, "status": "REVOKED", "revoked_at": stamp,
-                    "revoked_by_member_id": current["id"]}
+                event(c, "agent.collaboration_grant.expired", current["id"], row["task_id"],
+                      {"grant_id": grant_id, "agent_id": row["agent_id"], "source": "revoke_attempt"},
+                      tenant_override=row["tenant_id"])
+                notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                    "AGENT_COLLABORATION_GRANT","Agent 协作授权已过期",
+                    f"Agent「{row['agent_id']}」在 Task「{row['task_id']}」的协作授权已过期，不能撤销已失效的授权。",
+                    "HIGH",f"agent-collaboration-grant:expired:{grant_id}")
+                expired = True
+            else:
+                c.execute(
+                    """UPDATE agent_collaboration_grants
+                       SET status='REVOKED',revoked_at=?,updated_at=?,revoked_by_member_id=?,revoke_reason=?
+                       WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                    (stamp, stamp, current["id"], reason or None, grant_id),
+                )
+                event(
+                    c, "agent.collaboration_grant.revoked", current["id"], row["task_id"],
+                    {"grant_id": grant_id, "session_id": row["session_id"],
+                     "agent_id": row["agent_id"], "reason": reason or "Owner revoked collaboration grant"},
+                    tenant_override=row["tenant_id"],
+                )
+                notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                    "AGENT_COLLABORATION_GRANT","Agent 协作授权已撤销",
+                    f"你已撤销 Agent「{row['agent_id']}」的 Task「{row['task_id']}」协作授权。",
+                    "NORMAL",f"agent-collaboration-grant:revoked:{grant_id}")
+                result = {"id": grant_id, "status": "REVOKED", "revoked_at": stamp,
+                          "revoked_by_member_id": current["id"]}
+        if expired:
+            raise HTTPException(409, "Collaboration grant has expired")
+        return result
 
     @router.post("/api/v1/collaboration-grants/{grant_id}/renew")
     def renew_collaboration_grant(grant_id: str, body: dict = None, authorization: str = Header(None)):
@@ -566,6 +578,7 @@ def register_agent_collaboration_routes(
         current = actor(authorization)
         if current.get("actor_type") != "AGENT":
             raise HTTPException(403, "Agent Token required")
+        expired = False
         with conn() as c:
             begin_serialized_write(c)
             lookup = c.execute(
@@ -597,23 +610,34 @@ def register_agent_collaboration_routes(
                     "UPDATE agent_collaboration_grants SET status='EXPIRED',updated_at=? WHERE id=?",
                     (stamp, grant_id),
                 )
-                raise HTTPException(409, "Collaboration grant has expired")
-            c.execute(
-                """UPDATE agent_collaboration_grants SET status='ACCEPTED',accepted_at=?,updated_at=?
-                   WHERE id=? AND status='AUTHORIZED'""",
-                (stamp, stamp, grant_id),
-            )
-            event(
-                c, "agent.collaboration_grant.accepted", None, row["task_id"],
-                {"grant_id": grant_id, "session_id": row["session_id"],
-                 "agent_id": current["agent_id"], "owner_member_id": row["owner_member_id"]},
-                tenant_override=row["tenant_id"],
-            )
-            notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
-                "AGENT_COLLABORATION_GRANT","Agent 已接受协作授权",
-                f"你的 Agent「{current['agent_id']}」已接受 Task「{row['task_id']}」的协作授权。",
-                "NORMAL",f"agent-collaboration-grant:accepted:{grant_id}")
-            return {"id": grant_id, "status": "ACCEPTED", "accepted_at": stamp}
+                event(c, "agent.collaboration_grant.expired", row["owner_member_id"], row["task_id"],
+                      {"grant_id": grant_id, "agent_id": row["agent_id"], "source": "accept_attempt"},
+                      tenant_override=row["tenant_id"])
+                notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                    "AGENT_COLLABORATION_GRANT","Agent 协作授权已过期",
+                    f"Agent「{row['agent_id']}」在 Task「{row['task_id']}」的协作授权已过期。",
+                    "HIGH",f"agent-collaboration-grant:expired:{grant_id}")
+                expired = True
+            else:
+                c.execute(
+                    """UPDATE agent_collaboration_grants SET status='ACCEPTED',accepted_at=?,updated_at=?
+                       WHERE id=? AND status='AUTHORIZED'""",
+                    (stamp, stamp, grant_id),
+                )
+                event(
+                    c, "agent.collaboration_grant.accepted", None, row["task_id"],
+                    {"grant_id": grant_id, "session_id": row["session_id"],
+                     "agent_id": current["agent_id"], "owner_member_id": row["owner_member_id"]},
+                    tenant_override=row["tenant_id"],
+                )
+                notify_member(c,row["owner_member_id"],row["tenant_id"],row["task_id"],row["project_id"],
+                    "AGENT_COLLABORATION_GRANT","Agent 已接受协作授权",
+                    f"你的 Agent「{current['agent_id']}」已接受 Task「{row['task_id']}」的协作授权。",
+                    "NORMAL",f"agent-collaboration-grant:accepted:{grant_id}")
+                result = {"id": grant_id, "status": "ACCEPTED", "accepted_at": stamp}
+        if expired:
+            raise HTTPException(409, "Collaboration grant has expired")
+        return result
 
 
     def _agent_collaboration_grant_context(c, grant_id, current, task_id=None, required_scope=None, resource_id=None):
