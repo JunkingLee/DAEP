@@ -357,7 +357,7 @@ main.content{container-type:inline-size}
 <div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true" data-testid="toast"></div>
 
 <script>
-let token='',me=null,inboxStatus='PENDING',projects=[],users=[],memberCandidates=[],selectedProject='',selectedProjectRole='',selectedWorkFunction='',requirements=[],projectTasks=[],projectMembers=[],workflowConfig=null,gateConfig={},qualityPolicy={},currentPage='overview',projectHealthItems=[],projectAgents=[],projectDelegations=[],activeTaskDetail=null,qualityRangeDays=30;
+let taskOpenRequestSeq=0,token='',me=null,inboxStatus='PENDING',projects=[],users=[],memberCandidates=[],selectedProject='',selectedProjectRole='',selectedWorkFunction='',requirements=[],projectTasks=[],projectMembers=[],workflowConfig=null,gateConfig={},qualityPolicy={},currentPage='overview',projectHealthItems=[],projectAgents=[],projectDelegations=[],activeTaskDetail=null,qualityRangeDays=30;
 const AUTH_STORAGE_KEY='daep.web.access_token';
 
 const $=id=>document.getElementById(id);
