@@ -2016,7 +2016,7 @@ def set_project_workflow(pid:str,b:WorkflowConfigIn,authorization:str=Header(Non
     a=actor(authorization)
     with conn() as c:
         require_project_access(c,pid,a,write=True)
-        if not (a['role']=='admin' or project_role(c,pid,a) in ('owner','manager')): raise HTTPException(403,'Project manager or platform administrator required')
+        if not (is_admin(a) or project_role(c,pid,a) in ('owner','manager')): raise HTTPException(403,'Project manager or platform administrator required')
         stages=sorted([x.model_dump() for x in b.stages],key=lambda x:x['order'])
         if [x['order'] for x in stages] != list(range(1,len(stages)+1)): raise HTTPException(422,'Stage order must be contiguous from 1')
         if len({x['key'] for x in stages}) != len(stages): raise HTTPException(422,'Stage keys must be unique')
@@ -2045,7 +2045,7 @@ def set_project_gate(pid:str,gate_key:str,b:GateConfigIn,authorization:str=Heade
     if not re.fullmatch(r'[A-Z0-9_]{2,60}',gate_key): raise HTTPException(422,'Invalid gate key')
     with conn() as c:
         require_project_access(c,pid,a,write=True)
-        if not (a['role']=='admin' or project_role(c,pid,a) in ('owner','manager')): raise HTTPException(403,'Project manager or platform administrator required')
+        if not (is_admin(a) or project_role(c,pid,a) in ('owner','manager')): raise HTTPException(403,'Project manager or platform administrator required')
         cfg=b.model_dump(); cfg['applies_to']=cfg.get('applies_to') or 'DONE'; stamp=now(); tenant=c.execute('SELECT tenant_id FROM projects WHERE id=?',(pid,)).fetchone()['tenant_id']
         c.execute('INSERT INTO project_gates(project_id,gate_key,tenant_id,config,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,gate_key) DO UPDATE SET config=excluded.config,updated_by=excluded.updated_by,updated_at=excluded.updated_at',(pid,gate_key,tenant,json.dumps(cfg),a['id'],stamp))
         event(c,'project.gate.updated',a['id'],None,{'project_id':pid,'gate_key':gate_key,'config':cfg},tenant_override=tenant)
@@ -2072,7 +2072,7 @@ def enforce_project_gate(c,pid,gate_key,actor_member_id,task_id=None,target_stag
     if not cfg or not cfg.get('enabled',True) or cfg.get('applies_to','DONE')!=target_stage: return
     if cfg.get('required_roles'):
         platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
-        if not platform or platform['role']!='admin':
+        if not platform or not (platform['role']=='admin' and platform['tenant_id']=='tenant-default'):
             member_role=project_role(c,pid,{'id':actor_member_id})
             function_row=c.execute('SELECT work_function FROM project_members WHERE project_id=? AND member_id=?',(pid,actor_member_id)).fetchone()
             work_function=function_row['work_function'] if function_row else None
@@ -2093,7 +2093,7 @@ def enforce_workflow_exit(c,pid,current_stage,actor_member_id):
     approval_role=stage.get('approval_role','none')
     if approval_role!='none':
         platform=c.execute('SELECT role FROM members WHERE id=?',(actor_member_id,)).fetchone()
-        if not platform or platform['role']!='admin':
+        if not platform or not (platform['role']=='admin' and platform['tenant_id']=='tenant-default'):
             role=project_role(c,pid,{'id':actor_member_id})
             if role!=approval_role: raise HTTPException(403,f'Leaving workflow stage {current_stage} requires {approval_role} role')
 def enforce_workflow_stage(c,pid,stage_key,actor_member_id,task_id=None):
