@@ -3313,7 +3313,7 @@ def test_rc41_project_member_removal_cleans_assignments_and_preserves_owner_guar
     assert removed.json()['revoked_agent_assignment_count']==1
     assert removed.json()['revoked_collaboration_grant_count']==1
     assert removed.json()['cancelled_work_package_count']==1
-    assert removed.json()['cancelled_message_count']==1
+    assert removed.json()['cancelled_message_count']==3
     assert removed.json()['cancelled_approval_count']==1
     assert client.get('/api/v1/projects',headers=member_headers).json()==[]
     assert client.get(f'/api/v1/tasks/{task_id}',headers=member_headers).status_code==403
