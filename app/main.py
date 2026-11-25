@@ -1666,7 +1666,12 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
         begin_serialized_write(c)
         affected_task_ids=[x['task_id'] for x in c.execute("""SELECT a.task_id FROM assignments a
             JOIN tasks t ON t.id=a.task_id JOIN requirements r ON r.id=t.requirement_id
-            WHERE a.member_id=? AND r.project_id=? ORDER BY a.task_id""",(member_id,pid)).fetchall()]
+            WHERE a.member_id=? AND r.project_id=?
+            UNION
+            SELECT g.task_id FROM agent_collaboration_grants g
+            WHERE g.owner_member_id=? AND g.project_id=?
+              AND g.status IN ('AUTHORIZED','ACCEPTED')
+            ORDER BY task_id""",(member_id,pid,member_id,pid)).fetchall()]
         for affected_task_id in affected_task_ids:
             _lock_agent_policy_task(c,affected_task_id)
             _revoke_task_agent_grants_for_assignee_change(c,affected_task_id,a['id'],'Human task assignee removed from project',now())
@@ -1717,6 +1722,28 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
               )
         """,(member_id,project['tenant_id'],pid)).rowcount
 
+        collaboration_grants=c.execute("""SELECT id,agent_id,task_id,session_id
+            FROM agent_collaboration_grants
+            WHERE owner_member_id=? AND project_id=? AND status IN ('AUTHORIZED','ACCEPTED')
+            ORDER BY task_id,id""",(member_id,pid)).fetchall()
+        revoked_collaboration_grants=0
+        for grant in collaboration_grants:
+            changed=c.execute("""UPDATE agent_collaboration_grants
+                SET status='REVOKED',revoked_at=?,updated_at=?,revoked_by_member_id=?,
+                    revoke_reason='Agent Owner removed from project'
+                WHERE id=? AND status IN ('AUTHORIZED','ACCEPTED')""",
+                (stamp,stamp,a['id'],grant['id'])).rowcount
+            if changed:
+                revoked_collaboration_grants+=1
+                event(c,'agent.collaboration_grant.revoked',a['id'],grant['task_id'],{
+                    'grant_id':grant['id'],'session_id':grant['session_id'],
+                    'agent_id':grant['agent_id'],'reason':'Agent Owner removed from project',
+                    'owner_member_id':member_id},tenant_override=project['tenant_id'])
+                enqueue_member_notification(c,member_id,project['tenant_id'],grant['task_id'],pid,
+                    'AGENT_COLLABORATION_GRANT','Agent 协作授权已撤销',
+                    f"由于你已退出项目，Agent「{grant['agent_id']}」在 Task「{grant['task_id']}」的协作授权已撤销。",
+                    'HIGH',f"agent-collaboration-grant:project-member-removed:{grant['id']}")
+
         pending_approvals=c.execute(
             "SELECT id,requester_member_id,payload FROM project_approvals WHERE project_id=? AND status='PENDING'",
             (pid,)).fetchall()
@@ -1739,6 +1766,7 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
             'removed_assignment_count':removed_assignments,
             'revoked_agent_binding_count':revoked_agent_bindings,
             'revoked_agent_assignment_count':revoked_agent_assignments,
+            'revoked_collaboration_grant_count':revoked_collaboration_grants,
             'cancelled_work_package_count':cancelled_work_packages,
             'cancelled_message_count':cancelled_messages,
             'cancelled_approval_count':cancelled_approvals
@@ -1747,6 +1775,7 @@ def remove_project_member(pid:str,member_id:str,authorization:str=Header(None)):
             'previous_role':target['role'],'removed_assignment_count':removed_assignments,
             'revoked_agent_binding_count':revoked_agent_bindings,
             'revoked_agent_assignment_count':revoked_agent_assignments,
+            'revoked_collaboration_grant_count':revoked_collaboration_grants,
             'cancelled_work_package_count':cancelled_work_packages,
             'cancelled_message_count':cancelled_messages,
             'cancelled_approval_count':cancelled_approvals}
