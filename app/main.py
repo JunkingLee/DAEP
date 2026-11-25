@@ -4315,6 +4315,17 @@ def require_worker(authorization):
     expected_digest=hashlib.sha256(expected.encode()).digest()
     supplied_digest=hashlib.sha256(supplied.encode()).digest()
     if not secrets.compare_digest(supplied_digest,expected_digest): raise HTTPException(401,'Invalid worker credential')
+    # A Worker secret must never alias a Member or Agent credential, even if
+    # an operator accidentally copies a valid application token into the env.
+    service_reset=_service_ctx.set(True)
+    try:
+        with conn() as c:
+            if c.execute('SELECT 1 FROM members WHERE token=? LIMIT 1',(expected_digest.hex(),)).fetchone():
+                raise HTTPException(503,'Worker credential must be distinct from Member credentials')
+            if c.execute('SELECT 1 FROM agent_tokens WHERE token_hash=? LIMIT 1',(expected_digest.hex(),)).fetchone():
+                raise HTTPException(503,'Worker credential must be distinct from Agent credentials')
+    finally:
+        _service_ctx.reset(service_reset)
     _service_ctx.set(True)
 def require_project_access(c, project_id, a, write=False):
     project=c.execute('SELECT tenant_id,status FROM projects WHERE id=?',(project_id,)).fetchone()
