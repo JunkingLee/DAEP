@@ -5302,6 +5302,62 @@ def test_agent_collaboration_message_access_rejects_unaccepted_wrong_agent_and_e
                        json={"grant_id": grant_id, "content": "expired"}).status_code == 403
 
 
+
+def test_expired_collaboration_grant_accept_and_revoke_attempts_commit_expiration():
+    _, _, owner_token, task_id = setup_project_task()
+    owner_headers = {"Authorization": "Bearer " + owner_token}
+    agent = client.post("/api/v1/agents", headers=owner_headers,
+                        json={"name": "Expired Grant Lifecycle Agent"})
+    assert agent.status_code == 200, agent.text
+    agent_headers = {"Authorization": "Bearer " + agent.json()["token"]}
+    session = client.get(f"/api/v1/tasks/{task_id}/collaboration-session",
+                         headers=owner_headers)
+    assert session.status_code == 200, session.text
+
+    # An Agent acceptance attempt against an expired invitation must commit EXPIRED
+    # before returning the expected conflict response.
+    accept_grant = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers,
+        json={"agent_id": agent.json()["agent"]["id"], "scopes": ["session.read"]})
+    assert accept_grant.status_code == 200, accept_grant.text
+    accept_id = accept_grant.json()["id"]
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  ("2000-01-01T00:00:00+00:00", accept_id))
+    accepted = client.post(f"/api/v1/collaboration-grants/{accept_id}/accept",
+                           headers=agent_headers)
+    assert accepted.status_code == 409, accepted.text
+    with main_module.conn() as c:
+        row = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                        (accept_id,)).fetchone()
+        expired_events = c.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='agent.collaboration_grant.expired' AND payload LIKE ?",
+            (f'%{accept_id}%',)).fetchone()[0]
+    assert row["status"] == "EXPIRED"
+    assert expired_events == 1
+
+    # The Owner revoke path has the same commit-before-conflict requirement.
+    revoke_grant = client.post(
+        f"/api/v1/tasks/{task_id}/collaboration-grants", headers=owner_headers,
+        json={"agent_id": agent.json()["agent"]["id"], "scopes": ["session.read"]})
+    assert revoke_grant.status_code == 200, revoke_grant.text
+    revoke_id = revoke_grant.json()["id"]
+    with main_module.conn() as c:
+        c.execute("UPDATE agent_collaboration_grants SET expires_at=? WHERE id=?",
+                  ("2000-01-01T00:00:00+00:00", revoke_id))
+    revoked = client.delete(f"/api/v1/collaboration-grants/{revoke_id}",
+                            headers=owner_headers)
+    assert revoked.status_code == 409, revoked.text
+    with main_module.conn() as c:
+        row = c.execute("SELECT status FROM agent_collaboration_grants WHERE id=?",
+                        (revoke_id,)).fetchone()
+        expired_events = c.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='agent.collaboration_grant.expired' AND payload LIKE ?",
+            (f'%{revoke_id}%',)).fetchone()[0]
+    assert row["status"] == "EXPIRED"
+    assert expired_events == 1
+
+
 def test_agent_collaboration_message_access_rejects_owner_relationship_drift():
     _, _, owner_token, task_id = setup_project_task()
     owner_headers = {"Authorization": "Bearer " + owner_token}
